@@ -328,17 +328,35 @@ function setSync(kind, msg) {
     setSync._t = setTimeout(() => bar.classList.add('hidden'), 1500);
   } else { bar.classList.remove('hidden'); }
 }
+// 安全闸:bindCloud 第一次没成功拉到云端 → 任何 pushState 都会被拒,
+// 防"加载失败 → 空 state → 用户操作 → push 空 state → 覆盖云端真实数据"的灾难场景
+let _initialPullOk = false;
+let _lastKnownGoodTaskCount = -1;  // 最近一次拉到 / push 时的任务数(用作骤降检测)
+
 async function bindCloud() {
   setSync('syncing', '加载中…');
   try {
     const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'pull', docId: uid } });
     const r = res && res.result;
     const remote = (r && r.ok) ? r.state : null;
-    state = remote ? sanitizeState(remote) : emptyState();
-    setSync('synced', remote ? '已同步' : '已同步(空)');
+    if (remote) {
+      state = sanitizeState(remote);
+      _initialPullOk = true;
+      _lastKnownGoodTaskCount = (state.tasks || []).length;
+      setSync('synced', '已同步');
+    } else {
+      // 云端真的空(可能新账号)— 允许后续 push,但记录
+      state = emptyState();
+      _initialPullOk = true;
+      _lastKnownGoodTaskCount = 0;
+      setSync('synced', '已同步(空)');
+    }
   } catch (e) {
+    // 网络/鉴权失败 — 严禁后续 push,避免空 state 覆盖云端
     state = emptyState();
-    setSync('error', '加载失败,以空数据继续');
+    _initialPullOk = false;
+    _lastKnownGoodTaskCount = -1;
+    setSync('error', '加载失败,本地暂用空数据 — 已锁定,不会覆盖云端');
     console.error('[bindCloud pull]', e);
   }
   applyAllAppearance();
@@ -346,7 +364,6 @@ async function bindCloud() {
   startWatch();
   startPeriodicPull();
   // 拉到云端旧数据后,如果 sanitize 补了缺字段,立刻 push 回去让云端自愈
-  // (这样桌面下次拉到的就是补全版本,无需重启 .exe 也能看到旧 mobile 加的任务)
   if (_stateNeedsBackfillPush) {
     _stateNeedsBackfillPush = false;
     setTimeout(() => { try { pushState(); } catch (_) {} }, 1500);
@@ -377,6 +394,8 @@ function startWatch() {
         applyingRemote = true;
         state = sanitizeState(data.state);
         applyingRemote = false;
+        _initialPullOk = true;  // watcher 收到 = 云端可达
+        _lastKnownGoodTaskCount = (state.tasks || []).length;
         setSync('synced', '已同步');
         applyAllAppearance();
         renderAll();
@@ -405,6 +424,22 @@ function startPeriodicPull() {
 }
 function pushState() {
   if (applyingRemote || !uid) return;
+  // 安全闸:第一次 pull 没成功 → 严禁 push(否则会用空 state 覆盖云端真实数据)
+  if (!_initialPullOk) {
+    console.warn('[push blocked] initial pull not ok — refusing to push (data protection)');
+    setSync('error', '云端未拉取成功,push 已锁定保护数据');
+    return;
+  }
+  // 骤降检测:任务数从 N 突然降到 < N-5(或一半)→ 拒绝 push,要用户手动确认
+  const nowCount = (state && state.tasks ? state.tasks.length : 0);
+  if (_lastKnownGoodTaskCount > 5 && nowCount < _lastKnownGoodTaskCount - 5) {
+    const ok = confirm(`⚠️ 任务数从 ${_lastKnownGoodTaskCount} 骤降到 ${nowCount},可能误删?\n点确定继续推送(覆盖云端),点取消保护数据。`);
+    if (!ok) {
+      console.warn('[push blocked by user] task count drop', _lastKnownGoodTaskCount, '->', nowCount);
+      setSync('error', '已取消推送(防误删)');
+      return;
+    }
+  }
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(async () => {
     try {
@@ -414,6 +449,7 @@ function pushState() {
       const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'push', docId: uid, state } });
       const r = res && res.result;
       if (!r || r.ok !== true) throw new Error((r && r.error) || '云函数返回失败');
+      _lastKnownGoodTaskCount = (state.tasks || []).length;  // push 成功后更新基准
       setSync('synced', '已同步');
     } catch (e) { setSync('error', '同步失败'); console.error('[push error]', e); }
   }, 1000);
@@ -430,8 +466,13 @@ async function pullStateOnce() {
       applyingRemote = true;
       state = sanitizeState(remote);
       applyingRemote = false;
+      _initialPullOk = true;
+      _lastKnownGoodTaskCount = (state.tasks || []).length;
       applyAllAppearance();
       renderAll();
+    } else if (remote) {
+      // 哪怕没更新也算云端可达
+      _initialPullOk = true;
     }
   } catch (_) {}
 }
@@ -466,6 +507,8 @@ async function manualPullState() {
     applyingRemote = true;
     state = sanitizeState(remote);
     applyingRemote = false;
+    _initialPullOk = true;
+    _lastKnownGoodTaskCount = (state.tasks || []).length;
     applyAllAppearance();
     renderAll();
     const after = _stateFingerprint(state);

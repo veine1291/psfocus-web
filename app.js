@@ -98,6 +98,19 @@ function fmtDate(ts) {
 function fmtTime(ts) { if (!ts) return ''; const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function fmtTaskTime(t) {
   if (!t) return '';
+  // 重复任务 — 显示"下一个未完成 occurrence"的时间(对齐桌面 renderTodoItem 的 dispStart 替换)
+  if (typeof _isRecurringTask === 'function' && _isRecurringTask(t)) {
+    const pending = (typeof _nextPendingOccurrence === 'function') ? _nextPendingOccurrence(t) : null;
+    if (pending != null) {
+      const recur = (t.schedules || []).find(s => s && s.repeat && s.repeat !== 'none');
+      const dur = (recur && recur.end && recur.start) ? (recur.end - recur.start) : 0;
+      const allDay = !!(recur && recur.allDay);
+      const a = fmtDate(pending);
+      if (allDay) return a;
+      if (dur > 0) return `${a} ${fmtTime(pending)}-${fmtTime(pending + dur)}`;
+      return `${a} ${fmtTime(pending)}`;
+    }
+  }
   const start = t.start, end = t.end;
   if (start) {
     const a = fmtDate(start);
@@ -110,7 +123,13 @@ function fmtTaskTime(t) {
 // 时间状态:overdue / today / future / ''(已完成或无时间)
 function timeStateClass(t) {
   if (!t || t.done) return '';
-  const ts = t.dueAt || t.start;
+  let ts;
+  // 重复任务用 nextPendingOccurrence(显示下一个未完成的)
+  if (typeof _isRecurringTask === 'function' && _isRecurringTask(t)) {
+    ts = (typeof _nextPendingOccurrence === 'function') ? _nextPendingOccurrence(t) : null;
+  } else {
+    ts = t.dueAt || t.start;
+  }
   if (!ts) return '';
   const today0 = startOfDay(new Date()).getTime();
   const today1 = today0 + 86400000;

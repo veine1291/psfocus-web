@@ -450,13 +450,18 @@ function _stateFingerprint(s) {
   parts.push('e' + (s.events||[]).length);
   return parts.join('|');
 }
+let _lastSyncErrorMsg = '';
 async function manualPullState() {
-  if (!tcbApp || !uid) return 'no-cloud';
+  _lastSyncErrorMsg = '';
+  if (!tcbApp) { _lastSyncErrorMsg = 'tcbApp 未就绪'; return 'no-cloud'; }
+  if (!uid) { _lastSyncErrorMsg = '未登录(uid 为空)'; return 'no-cloud'; }
   try {
     const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'pull', docId: uid } });
     const r = res && res.result;
-    const remote = (r && r.ok) ? r.state : null;
-    if (!remote) return 'no-cloud';
+    if (!r) { _lastSyncErrorMsg = '云函数无返回'; return 'error'; }
+    if (r.ok === false) { _lastSyncErrorMsg = r.error || 'fn ok=false'; return 'error'; }
+    const remote = r.state || null;
+    if (!remote) { _lastSyncErrorMsg = '云端无 state'; return 'no-change'; }
     const before = _stateFingerprint(state);
     applyingRemote = true;
     state = sanitizeState(remote);
@@ -466,6 +471,7 @@ async function manualPullState() {
     const after = _stateFingerprint(state);
     return (before !== after) ? 'updated' : 'no-change';
   } catch (e) {
+    _lastSyncErrorMsg = (e && (e.message || e.code || String(e))) || 'unknown';
     console.warn('[pull-refresh]', e);
     return 'error';
   }
@@ -5338,12 +5344,13 @@ function bindGlobalEvents() {
       busy = false;
       indicator.classList.remove('refreshing');
       reset();
+      const errSuffix = (typeof _lastSyncErrorMsg === 'string' && _lastSyncErrorMsg) ? (':' + _lastSyncErrorMsg) : '';
       const msg =
         result === 'updated'   ? '已拉取云端更新' :
-        result === 'no-change' ? '已是最新' :
-        result === 'no-cloud'  ? '请先登录或检查网络' :
-                                 '同步失败';
-      try { showToast && showToast(msg); } catch (_) {}
+        result === 'no-change' ? ('已是最新' + (errSuffix && _lastSyncErrorMsg === '云端无 state' ? errSuffix : '')) :
+        result === 'no-cloud'  ? ('请先登录或检查网络' + errSuffix) :
+                                 ('同步失败' + errSuffix);
+      try { showToast && showToast(msg, 4500); } catch (_) {}
     } else {
       reset();
     }

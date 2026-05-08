@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260508-1238';
+const _PSFOCUS_BUILD = '20260508-1254';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -811,11 +811,12 @@ function renderTabBar() {
   }).join('');
   bar.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
     const newTab = b.dataset.tab;
-    // 切到日历 tab(也包括从日历切回日历)→ 重置 cursor 到今天 + 清掉 selected day,
-    // 让用户每次进日历都看到当日的时间轴,不会停在上次浏览的某周某月
+    // 切到日历 tab(也包括从日历切回日历)→ 重置 cursor 到今天 + 清掉 selected day +
+    // 强制 day 模式(用户预期:进日历=看今日的时间轴),不会停在上次浏览的某周某月
     if (newTab === 'calendar') {
       ui.calCursor = Date.now();
       ui.calSelectedDay = null;
+      ui.calMode = 'day';
     }
     ui.tab = newTab;
     ui.settingsPage = null;
@@ -828,6 +829,8 @@ function renderTabBar() {
 }
 function renderTopbar() {
   const leftBtn = $('topbar-left-btn');
+  // 离开日历 tab 时移除 cal-nav-row 类(防止 #topbar-title 被定型成 flex row,影响其它 tab 的标题显示)
+  $('topbar-title').classList.remove('cal-nav-row');
   if (ui.tab === 'tasks') {
     const cl = getCurrentList();
     const titleEl = $('topbar-title');
@@ -844,11 +847,28 @@ function renderTopbar() {
     $('topbar-right-btn').classList.remove('hidden');
   } else if (ui.tab === 'calendar') {
     const c = new Date(ui.calCursor);
-    if (ui.calMode === 'month') $('topbar-title').textContent = `${c.getFullYear()} 年 ${c.getMonth()+1} 月`;
+    let dateText;
+    if (ui.calMode === 'month') dateText = `${c.getFullYear()} 年 ${c.getMonth()+1} 月`;
     else if (ui.calMode === 'week') {
       const ws = startOfWeek(c), we = addDays(ws, 6);
-      $('topbar-title').textContent = `${ws.getMonth()+1}/${ws.getDate()} – ${we.getMonth()+1}/${we.getDate()}`;
-    } else $('topbar-title').textContent = `${c.getMonth()+1} 月 ${c.getDate()} 日`;
+      dateText = `${ws.getMonth()+1}/${ws.getDate()} – ${we.getMonth()+1}/${we.getDate()}`;
+    } else dateText = `${c.getMonth()+1} 月 ${c.getDate()} 日`;
+    // 顶部标题改成 prev / 中间日期(=回今日按钮) / next 三段式 — 对齐桌面端 < 今天 > UI
+    const titleEl = $('topbar-title');
+    titleEl.classList.add('cal-nav-row');
+    titleEl.innerHTML = `
+      <button class="cal-nav-btn" data-action="cal-prev" aria-label="上一${ui.calMode==='month'?'月':ui.calMode==='week'?'周':'日'}"><span class="ico-chevron-left"></span></button>
+      <button class="cal-nav-today" data-action="cal-today">${esc(dateText)}</button>
+      <button class="cal-nav-btn" data-action="cal-next" aria-label="下一${ui.calMode==='month'?'月':ui.calMode==='week'?'周':'日'}"><span class="ico-chevron-right"></span></button>
+    `;
+    titleEl.querySelector('[data-action="cal-prev"]').onclick = (ev) => { ev.stopPropagation(); calNavigate(-1); };
+    titleEl.querySelector('[data-action="cal-next"]').onclick = (ev) => { ev.stopPropagation(); calNavigate(1); };
+    titleEl.querySelector('[data-action="cal-today"]').onclick = (ev) => {
+      ev.stopPropagation();
+      ui.calCursor = Date.now();
+      ui.calSelectedDay = null;
+      saveUI(); renderAll();
+    };
     $('topbar-subtitle').textContent = ui.calMode === 'month' ? '月' : (ui.calMode === 'week' ? '周' : '日');
     // 日历 tab: 左按钮 = 视图切换(显示当前视图字)
     const label = ui.calMode === 'month' ? '月' : (ui.calMode === 'week' ? '周' : '日');

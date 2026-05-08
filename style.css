@@ -1112,6 +1112,43 @@ html, body { overscroll-behavior-y: contain; }
   color: var(--text-dim);
   opacity: 0.7;
 }
+
+/* 顶栏日期切换三段式(日历 tab) — < 当前日期 > */
+#topbar-title.cal-nav-row {
+  flex-direction: row;
+  gap: 2px;
+  max-width: 80vw;
+  overflow: visible;
+  font-weight: 600;
+}
+.cal-nav-btn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+}
+.cal-nav-btn:active { background: var(--bg-active); }
+.cal-nav-btn .ico-chevron-left,
+.cal-nav-btn .ico-chevron-right {
+  width: 16px; height: 16px;
+}
+.cal-nav-today {
+  padding: 4px 12px;
+  background: transparent;
+  border: 0;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.cal-nav-today:active { background: var(--bg-active); }
 /* 兼容老 class — 防 cache 期没刷到 JS */
 .topbar-mode-pill {
   display: inline-flex; align-items: center;

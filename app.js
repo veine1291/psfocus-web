@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260508-1226';
+const _PSFOCUS_BUILD = '20260508-1238';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -810,7 +810,14 @@ function renderTabBar() {
     </button>`;
   }).join('');
   bar.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
-    ui.tab = b.dataset.tab;
+    const newTab = b.dataset.tab;
+    // 切到日历 tab(也包括从日历切回日历)→ 重置 cursor 到今天 + 清掉 selected day,
+    // 让用户每次进日历都看到当日的时间轴,不会停在上次浏览的某周某月
+    if (newTab === 'calendar') {
+      ui.calCursor = Date.now();
+      ui.calSelectedDay = null;
+    }
+    ui.tab = newTab;
     ui.settingsPage = null;
     saveUI(); renderAll();
     // 切 tab 也顺带拉一次云(防 watcher silent 断线)
@@ -5334,6 +5341,8 @@ function bindGlobalEvents() {
     const clamped = Math.min(d, MAX);
     indicator.style.transform = `translateY(${clamped - 50}px)`;
     indicator.style.opacity = String(Math.min(1, d / 30));
+    // 让整个 view 跟着手指一起下移,看起来像把列表从顶部"拽下来"露出 indicator
+    view.style.transform = `translateY(${clamped}px)`;
     const ready = d >= THRESHOLD;
     indicator.classList.toggle('ready', ready);
     const lbl = indicator.querySelector('.pull-refresh-label');
@@ -5341,9 +5350,14 @@ function bindGlobalEvents() {
   }
   function reset() {
     indicator.style.transition = 'transform .22s ease, opacity .22s ease';
+    view.style.transition = 'transform .22s ease';
     indicator.style.transform = '';
     indicator.style.opacity = '';
-    setTimeout(() => { indicator.style.transition = ''; }, 250);
+    view.style.transform = '';
+    setTimeout(() => {
+      indicator.style.transition = '';
+      view.style.transition = '';
+    }, 250);
   }
   view.addEventListener('touchstart', (e) => {
     if (busy) return;
@@ -5360,6 +5374,7 @@ function bindGlobalEvents() {
     dx = 0; dy = 0;
     dragging = true; locked = null;
     indicator.style.transition = 'none';
+    view.style.transition = 'none';
   }, { passive: true });
   view.addEventListener('touchmove', (e) => {
     if (!dragging) return;
@@ -5402,8 +5417,12 @@ function bindGlobalEvents() {
       busy = true;
       indicator.classList.remove('ready');
       indicator.classList.add('refreshing');
+      indicator.style.transition = 'transform .22s ease';
+      view.style.transition = 'transform .22s ease';
       indicator.style.transform = 'translateY(20px)';
       indicator.style.opacity = '1';
+      // refreshing 状态下让 view 留在 indicator 下方一段距离,跟手指松开后视觉连贯
+      view.style.transform = 'translateY(70px)';
       const lbl = indicator.querySelector('.pull-refresh-label');
       if (lbl) lbl.textContent = '正在同步…';
       let result = 'error';

@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260508-1019';
+const _PSFOCUS_BUILD = '20260508-1158';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2538,13 +2538,17 @@ function buildTaskTemplatePayload(task) {
 function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
   const p = tmpl.payload || {};
   opts = opts || {};
+  const hasExplicitStart = Number.isFinite(opts.startTs);
+  const hasExplicitEnd   = Number.isFinite(opts.endTs);
+  // 调用方传了具体时间(从时间轴拖出来)→ 一定不是全天;否则尊重模板
+  const allDay = hasExplicitStart ? false : !!p.allDay;
   // start 取值优先级:
   //   opts.startTs(明确传)→ 直接用
   //   日历选中日 = 今天 → 当前时刻 + 5min snap(对齐 Kayu 期望"从触发时间点创建")
   //   日历选中日 ≠ 今天 → 那天 09:00(只能落到目标日)
   //   未传 dayMs → 当前时刻
   let start;
-  if (Number.isFinite(opts.startTs)) {
+  if (hasExplicitStart) {
     start = opts.startTs;
   } else if (Number.isFinite(dayMs)) {
     const today0 = startOfDay(new Date()).getTime();
@@ -2566,8 +2570,16 @@ function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
     now.setMinutes(Math.ceil(min / 5) * 5);
     start = now.getTime();
   }
-  const dur = (Number.isFinite(p.duration) && p.duration > 0) ? p.duration : 30 * 60000;
-  const end = start + dur;
+  // end 取值优先级:
+  //   opts.endTs(拖出来的范围)且 > start → 用拖出来的(尊重用户拖的范围)
+  //   否则用模板 duration
+  let end;
+  if (hasExplicitEnd && opts.endTs > start) {
+    end = opts.endTs;
+  } else {
+    const dur = (Number.isFinite(p.duration) && p.duration > 0) ? p.duration : 30 * 60000;
+    end = start + dur;
+  }
   const sibs = state.tasks.filter(t => t.projectId === (projectId || null) && !t.parentTaskId && !t.parentEventId);
   const newOrder = sibs.length ? Math.max(...sibs.map(s => s.order || 0)) + 100 : 100;
   // 新 task 字段对齐桌面 sanitize 期望(防被严格过滤过滤掉)
@@ -2644,6 +2656,7 @@ function openSaveTaskAsTemplateSheet(taskId) {
 
 function openCreateFromTemplatePicker(opts) {
   // task / event 模板都能用来建任务(对齐桌面 cal-from-template 的混用)
+  opts = opts || {};
   const all = (state.templates || []).filter(t => t.kind === 'task' || t.kind === 'event');
   if (!all.length) {
     showToast('还没有可用模板,在桌面端创建模板后会同步过来');
@@ -2656,9 +2669,17 @@ function openCreateFromTemplatePicker(opts) {
   const apply = (tmpl) => {
     closePopover();
     const cl = getCurrentList();
-    const projectId = cl.kind === 'project' ? cl.project?.id : null;
-    const day = ui.tab === 'calendar' ? (ui.calSelectedDay || ui.calCursor) : Date.now();
-    const newTask = applyTaskTemplate(tmpl, day, projectId);
+    const projectId = (opts.projectId !== undefined && opts.projectId !== null)
+      ? opts.projectId
+      : (cl.kind === 'project' ? cl.project?.id : null);
+    let newTask;
+    if (Number.isFinite(opts.startTs)) {
+      // 从时间轴拖出来的:用拖出来的时间槽,忽略默认 day 计算
+      newTask = applyTaskTemplate(tmpl, null, projectId, { startTs: opts.startTs, endTs: opts.endTs });
+    } else {
+      const day = ui.tab === 'calendar' ? (ui.calSelectedDay || ui.calCursor) : Date.now();
+      newTask = applyTaskTemplate(tmpl, day, projectId);
+    }
     pushState();
     renderAll();
     showToast(`已新建任务「${newTask.title}」`);
@@ -5053,8 +5074,13 @@ function openCreateTaskSheet(opts) {
       const hasUsable = (state.templates || []).some(t => t.kind === 'task' || t.kind === 'event');
       if (hasUsable) {
         menuItems.push({ label: '从模板创建', icon: 'ico-template', action: () => {
-          closePopover(); closeSheet();
-          openCreateFromTemplatePicker();
+          closePopover();
+          // 把当前 sheet 的时间槽 + 项目带过去,模板套到拖出来的时间上,而不是回退到默认时间
+          const carryStart = sched && Number.isFinite(sched.start) ? sched.start : undefined;
+          const carryEnd   = sched && Number.isFinite(sched.end)   ? sched.end   : undefined;
+          const carryProj  = pickedProjectId || undefined;
+          closeSheet();
+          openCreateFromTemplatePicker({ startTs: carryStart, endTs: carryEnd, projectId: carryProj });
         }});
       } else {
         menuItems.push({ label: '从模板创建(暂无可用模板)', icon: 'ico-template', disabled: true });

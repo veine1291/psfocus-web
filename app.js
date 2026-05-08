@@ -315,13 +315,17 @@ function mapAuthError(e) {
   return '失败:' + (m || code || '未知错误');
 }
 
+// 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
+const _PSFOCUS_BUILD = '20260508-1019';
+console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
+
 // ===== 同步层 =====
 function setSync(kind, msg) {
   const bar = $('sync-bar'); if (!bar) return;
   bar.classList.remove('is-syncing','is-error');
   if (kind === 'syncing') bar.classList.add('is-syncing');
   if (kind === 'error')   bar.classList.add('is-error');
-  $('sync-text').textContent = msg || '';
+  $('sync-text').textContent = (msg || '') + '  · v' + _PSFOCUS_BUILD;
   if (kind === 'synced') {
     bar.classList.remove('hidden');
     clearTimeout(setSync._t);
@@ -451,7 +455,11 @@ function pushState() {
       if (!r || r.ok !== true) throw new Error((r && r.error) || '云函数返回失败');
       _lastKnownGoodTaskCount = (state.tasks || []).length;  // push 成功后更新基准
       setSync('synced', '已同步');
-    } catch (e) { setSync('error', '同步失败'); console.error('[push error]', e); }
+    } catch (e) {
+      const errMsg = (e && (e.message || e.code || String(e))) || '未知';
+      setSync('error', '同步失败:' + errMsg);
+      console.error('[push error]', e);
+    }
   }, 1000);
 }
 async function pullStateOnce() {

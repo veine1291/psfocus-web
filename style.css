@@ -2051,6 +2051,22 @@ html, body { overscroll-behavior-y: contain; }
   font-size: 12px;
   color: var(--text-dim);
 }
+.settings-version-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 18px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 14px;
+}
+.settings-version-label { color: var(--text); }
+.settings-version-value {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
 
 .theme-preset-grid,
 .palette-card-grid {

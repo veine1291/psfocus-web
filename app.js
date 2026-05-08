@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260508-1254';
+const _PSFOCUS_BUILD = '20260509-0604';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -4652,6 +4652,11 @@ function renderSettingsSystem(view) {
     <div class="settings-sub-title">底部 tab</div>
     <div class="settings-hint">长按 ☰ 拖拽重新排序;开关控制是否显示。设置永远固定在最右</div>
     <div class="tab-order-list" id="tab-order-list">${rowsHtml}</div>
+    <div class="settings-sub-title" style="margin-top:24px;">版本</div>
+    <div class="settings-version-row">
+      <span class="settings-version-label">移动端构建</span>
+      <span class="settings-version-value">${esc(_PSFOCUS_BUILD || '未知')}</span>
+    </div>
   `;
   bindTabOrderDrag(view.querySelector('#tab-order-list'), view);
   view.querySelectorAll('[data-action="toggle-tab-visible"]').forEach(b => b.onclick = () => {
@@ -5111,9 +5116,15 @@ function openCreateTaskSheet(opts) {
       if (!title) { closeSheet(); return; }
       const startMs = sched && sched.start || null;
       const endMs   = sched && sched.end   || null;
+      // 字段对齐桌面 sanitize 期望(同 applyTaskTemplate 那条 path),
+      // 缺 doneAt / color / images 会让桌面端把这条 task 过滤掉或渲染异常 — 之前漏了
       const newTask = {
         id: genId('t'),
-        title, done: false, createdAt: Date.now(), updatedAt: Date.now(),
+        title,
+        done: false,
+        doneAt: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
         projectId: pickedProjectId || null,
         parentTaskId: null,
         parentEventId: null,
@@ -5121,8 +5132,11 @@ function openCreateTaskSheet(opts) {
         start:  startMs,
         end:    endMs && endMs > startMs ? endMs : null,
         allDay: sched ? !!sched.allDay : false,
-        tags: [], subtasks: [],
+        color: '',
+        tags: [],
+        subtasks: [],
         schedules: sched ? [sched] : [],
+        images: [],
         completedOccurrences: [],
         kanbanColumn: null,
         order: 100,

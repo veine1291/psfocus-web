@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-0604';
+const _PSFOCUS_BUILD = '20260509-0614';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2151,8 +2151,63 @@ function bindTaskDetailEvents(body, id) {
     checkBtn.addEventListener('touchend', doToggle);
   }
 
-  // schedule pill 加按钮 → 时间编辑器(老的还能用,只编辑第一个 schedule + legacy)
-  body.querySelector('[data-action="dp-add-schedule"]').onclick = () => openTimeEditor(id);
+  // 把第一个 schedule 同步回 legacy 字段(start/end/allDay/dueAt)— 老桌面端只看 legacy
+  const _syncLegacyFromSchedules = () => {
+    if (!t.schedules || !t.schedules.length) {
+      t.start = null; t.end = null; t.allDay = false; t.dueAt = null;
+    } else {
+      const s0 = t.schedules[0];
+      t.start = s0.start || null;
+      t.end = s0.end || null;
+      t.allDay = !!s0.allDay;
+      t.dueAt = s0.start || null;
+    }
+  };
+
+  // 加时间按钮 → 走支持重复的 picker
+  body.querySelector('[data-action="dp-add-schedule"]').onclick = () => {
+    openQuickTimePickerSheet(null, (newSched) => {
+      if (!newSched) return;
+      if (!Array.isArray(t.schedules)) t.schedules = [];
+      t.schedules.push(newSched);
+      _syncLegacyFromSchedules();
+      pushState(); openTaskDetail(id); renderAll();
+    });
+  };
+
+  // schedule pill 点击文字/图标区域 → 编辑该 schedule(支持改重复设置)
+  body.querySelectorAll('.dp-sched-pill').forEach(pill => {
+    const xBtn = pill.querySelector('.dp-sched-x');
+    const sid = xBtn?.dataset.schedId;
+    const editArea = pill.querySelector('.dp-sched-text');
+    if (!editArea) return;
+    // 同时让 ico-clock 也能点
+    const clickAreas = [editArea, pill.querySelector('.ico-clock')].filter(Boolean);
+    clickAreas.forEach(el => {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const existing = (sid && sid !== 'legacy')
+          ? (t.schedules || []).find(s => s.id === sid)
+          : (t.schedules || [])[0] || (t.start ? { start: t.start, end: t.end, allDay: !!t.allDay, repeat: 'none' } : null);
+        openQuickTimePickerSheet(existing || null, (newSched) => {
+          if (!newSched) return;
+          if (!Array.isArray(t.schedules)) t.schedules = [];
+          if (sid && sid !== 'legacy') {
+            const idx = t.schedules.findIndex(s => s.id === sid);
+            if (idx >= 0) t.schedules[idx] = newSched;
+            else t.schedules.push(newSched);
+          } else {
+            // legacy 或第一段:整体覆盖第一段
+            if (t.schedules.length) t.schedules[0] = newSched;
+            else t.schedules.push(newSched);
+          }
+          _syncLegacyFromSchedules();
+          pushState(); openTaskDetail(id); renderAll();
+        });
+      });
+    });
+  });
 
   // schedule pill ×按钮 → 删除
   body.querySelectorAll('[data-action="dp-remove-schedule"]').forEach(b => b.onclick = (ev) => {
@@ -2161,15 +2216,8 @@ function bindTaskDetailEvents(body, id) {
     if (sid && sid !== 'legacy' && Array.isArray(t.schedules)) {
       t.schedules = t.schedules.filter(s => s.id !== sid);
     }
-    // 如果删完了,清掉 legacy 字段
-    if (!t.schedules || !t.schedules.length || sid === 'legacy') {
-      t.start = null; t.end = null; t.allDay = false; t.dueAt = null;
-      if (sid === 'legacy') t.schedules = [];
-    } else {
-      // 把第一个 schedule 同步回 legacy
-      const s0 = t.schedules[0];
-      t.start = s0.start || null; t.end = s0.end || null; t.allDay = !!s0.allDay; t.dueAt = s0.start || null;
-    }
+    if (sid === 'legacy') t.schedules = [];
+    _syncLegacyFromSchedules();
     pushState(); openTaskDetail(id); renderAll();
   });
 
@@ -3520,8 +3568,32 @@ function toggleOccurrenceDone(item, schedule, occStart) {
   } else {
     if (!Array.isArray(item.completedOccurrences)) item.completedOccurrences = [];
     const idx = item.completedOccurrences.indexOf(occStart);
-    if (idx >= 0) item.completedOccurrences.splice(idx, 1);
-    else { item.completedOccurrences.push(occStart); item.completedOccurrences.sort((a, b) => a - b); }
+    if (idx >= 0) {
+      // 取消已完成的 occurrence —— 不动 subtasks(用户可能想看回上次到哪)
+      item.completedOccurrences.splice(idx, 1);
+    } else {
+      // 完成本次 → 推进到下一次 occurrence,**重置子任务**(对齐 TickTick/Todoist:
+      // 子任务的勾选属于当次出现,新一次出现应当从未勾选开始)
+      item.completedOccurrences.push(occStart);
+      item.completedOccurrences.sort((a, b) => a - b);
+      const now = Date.now();
+      // legacy 行内 subtasks
+      if (Array.isArray(item.subtasks)) {
+        item.subtasks.forEach(s => {
+          if (s.done) { s.done = false; s.doneAt = null; }
+        });
+      }
+      // 通过 parentTaskId 挂的真任务子任务
+      if (typeof state !== 'undefined' && Array.isArray(state.tasks)) {
+        state.tasks.forEach(c => {
+          if (c.parentTaskId === item.id && c.done) {
+            c.done = false;
+            c.doneAt = null;
+            c.updatedAt = now;
+          }
+        });
+      }
+    }
   }
   item.updatedAt = Date.now();
 }

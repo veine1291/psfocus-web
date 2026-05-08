@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260508-1158';
+const _PSFOCUS_BUILD = '20260508-1226';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2539,11 +2539,10 @@ function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
   const p = tmpl.payload || {};
   opts = opts || {};
   const hasExplicitStart = Number.isFinite(opts.startTs);
-  const hasExplicitEnd   = Number.isFinite(opts.endTs);
   // 调用方传了具体时间(从时间轴拖出来)→ 一定不是全天;否则尊重模板
   const allDay = hasExplicitStart ? false : !!p.allDay;
   // start 取值优先级:
-  //   opts.startTs(明确传)→ 直接用
+  //   opts.startTs(明确传)→ 直接用(从时间轴拖出来时,只接管起点;时长仍走模板)
   //   日历选中日 = 今天 → 当前时刻 + 5min snap(对齐 Kayu 期望"从触发时间点创建")
   //   日历选中日 ≠ 今天 → 那天 09:00(只能落到目标日)
   //   未传 dayMs → 当前时刻
@@ -2570,16 +2569,9 @@ function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
     now.setMinutes(Math.ceil(min / 5) * 5);
     start = now.getTime();
   }
-  // end 取值优先级:
-  //   opts.endTs(拖出来的范围)且 > start → 用拖出来的(尊重用户拖的范围)
-  //   否则用模板 duration
-  let end;
-  if (hasExplicitEnd && opts.endTs > start) {
-    end = opts.endTs;
-  } else {
-    const dur = (Number.isFinite(p.duration) && p.duration > 0) ? p.duration : 30 * 60000;
-    end = start + dur;
-  }
+  // end 始终用模板 duration(用户拖出来的时长被故意忽略 —— Kayu 要求模板任务保留模板时长)
+  const dur = (Number.isFinite(p.duration) && p.duration > 0) ? p.duration : 30 * 60000;
+  const end = start + dur;
   const sibs = state.tasks.filter(t => t.projectId === (projectId || null) && !t.parentTaskId && !t.parentEventId);
   const newOrder = sibs.length ? Math.max(...sibs.map(s => s.order || 0)) + 100 : 100;
   // 新 task 字段对齐桌面 sanitize 期望(防被严格过滤过滤掉)
@@ -2674,8 +2666,8 @@ function openCreateFromTemplatePicker(opts) {
       : (cl.kind === 'project' ? cl.project?.id : null);
     let newTask;
     if (Number.isFinite(opts.startTs)) {
-      // 从时间轴拖出来的:用拖出来的时间槽,忽略默认 day 计算
-      newTask = applyTaskTemplate(tmpl, null, projectId, { startTs: opts.startTs, endTs: opts.endTs });
+      // 从时间轴拖出来的:用拖出来的起点,时长走模板自身(不接管 endTs)
+      newTask = applyTaskTemplate(tmpl, null, projectId, { startTs: opts.startTs });
     } else {
       const day = ui.tab === 'calendar' ? (ui.calSelectedDay || ui.calCursor) : Date.now();
       newTask = applyTaskTemplate(tmpl, day, projectId);

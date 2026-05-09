@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-2030';
+const _PSFOCUS_BUILD = '20260509-2110';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1002,6 +1002,30 @@ function _summaryModulesForDay(dayKey) {
   if (!Array.isArray(state.summaryDayModules[dayKey])) state.summaryDayModules[dayKey] = [];
   return state.summaryDayModules[dayKey];
 }
+// 让"今天"自动继承"最近一天"的模板(空 entries),实现"添加过的模块每天都在,无需每天单独加"
+// 只在今天 key 完全不存在时跑一次;用户删了今天的模块后,本次不会自动恢复 — 明天 ensure 会照搬今天(含删除)
+// 注:用"最近一天"(可能是空数组)而不是"最近有模块的一天" — 这样用户清空今天意图能传递到后续
+function _summaryEnsureTodayHasTemplates() {
+  const todayKey = _todayKey();
+  if (!state.summaryDayModules) state.summaryDayModules = {};
+  if (Object.prototype.hasOwnProperty.call(state.summaryDayModules, todayKey)) return;
+  const keys = Object.keys(state.summaryDayModules).sort();
+  const lastKey = keys[keys.length - 1];
+  const template = (lastKey && Array.isArray(state.summaryDayModules[lastKey])) ? state.summaryDayModules[lastKey] : null;
+  if (!template) { state.summaryDayModules[todayKey] = []; return; }
+  state.summaryDayModules[todayKey] = template.map(m => {
+    const out = {
+      id: 'mod-' + Math.random().toString(36).slice(2, 10),
+      kind: m.kind,
+      title: m.title,
+      entries: [],
+    };
+    if (m.max != null) out.max = m.max;
+    if (m.source) out.source = m.source;
+    if (m.taskId) out.taskId = m.taskId;
+    return out;
+  });
+}
 function _todayKey() { return _summaryDayKey(Date.now()); }
 function _dayKeyToTs(dayKey) {
   const [y, m, d] = dayKey.split('-').map(Number);
@@ -1107,6 +1131,8 @@ function _renderSummaryNoteHtml(text) {
 
 // === 主渲染 ===
 function renderSummaryTab(view) {
+  // 进 tab 时让"今天"自动继承前一天的模板(若今天还没设过)
+  _summaryEnsureTodayHasTemplates();
   const isData = summaryState.tab === 'data';
   view.innerHTML = `<div class="sum-view">
     <div class="sum-tabs-row">
@@ -1189,6 +1215,8 @@ function _renderSummaryInputBox() {
       <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="head" title="标题">H</button>
       <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ul" title="无序"><span class="ico-list"></span></button>
       <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ol" title="有序">1.</button>
+      <span class="sum-tb-sep"></span>
+      <button class="sum-tb-btn sum-tb-mod" data-action="summary-open-mod-sheet" title="管理模块"><span class="ico-target"></span></button>
       <div class="sum-input-spacer"></div>
       <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
     </div>
@@ -1281,7 +1309,6 @@ function _renderSummaryList() {
           ${items.length ? `<span class="sum-day-count">${items.length} 条</span>` : ''}
         </button>
         ${modSummary ? `<div class="sum-day-mods">${modSummary}</div>` : ''}
-        <button class="sum-day-add-mod" data-action="summary-open-mod-sheet" data-day-key="${esc(k)}" title="管理模块">+ 模块</button>
       </div>
       ${collapsed || !items.length ? '' : `<div class="sum-day-body">
         <div class="sum-day-items">${items.map(_renderSummaryItem).join('')}</div>
@@ -1348,9 +1375,15 @@ function _openSummaryModSheet(dayKey) {
   const dayMods = _summaryModulesForDay(dayKey);
   const pickerOpen = summaryState.modulePickerOpenInPopover;
   const picker = pickerOpen ? `<div class="sum-mod-picker">
-    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="rating" data-day-key="${esc(dayKey)}">📊 打分模块</button>
-    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="duration" data-day-key="${esc(dayKey)}">⏱ 时长模块</button>
-    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="checkin" data-day-key="${esc(dayKey)}">✓ 打卡模块</button>
+    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="rating" data-day-key="${esc(dayKey)}">
+      <span class="ico-target sum-mod-picker-icon"></span><span>打分模块</span>
+    </button>
+    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="duration" data-day-key="${esc(dayKey)}">
+      <span class="ico-clock sum-mod-picker-icon"></span><span>时长模块</span>
+    </button>
+    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="checkin" data-day-key="${esc(dayKey)}">
+      <span class="ico-check sum-mod-picker-icon"></span><span>打卡模块</span>
+    </button>
   </div>` : '';
   const cardsHtml = dayMods.length
     ? `<div class="sum-mod-popover-cards">${dayMods.map(m => _renderSummaryModuleCard(m, dayKey)).join('')}</div>`
@@ -1418,7 +1451,7 @@ function _renderSummaryModuleCard(m, dayKey) {
       const doneToday = _isCheckinDoneToday(m.taskId);
       const total = _checkinCountForTask(m.taskId);
       detailsHtml = `<div class="sum-mod-card-details">
-        <button class="sum-mod-checkin-pick" ${dataAttrs} data-action="summary-mod-pick-task">🔗 ${esc(taskName)}</button>
+        <button class="sum-mod-checkin-pick" ${dataAttrs} data-action="summary-mod-pick-task">${esc(taskName)}</button>
         <span class="sum-mod-checkin-status ${doneToday?'done':''}">${doneToday ? '✓ 已打卡' : '○ 未打卡'}</span>
         <span class="sum-mod-checkin-streak">累计 ${total} 天</span>
       </div>`;
@@ -1613,10 +1646,9 @@ const _summaryActions = {
     pushState();
     renderAll();
   },
-  // 模块管理 sheet
+  // 模块管理 sheet — 默认 today;day-header 已不再触发,这里就是 input 工具栏的 "管理模块" 按钮
   'summary-open-mod-sheet': (el) => {
-    const k = el.dataset.dayKey;
-    if (!k) return;
+    const k = (el && el.dataset.dayKey) || _todayKey();
     summaryState.modulePopoverForDay = k;
     summaryState.modulePickerOpenInPopover = false;
     _openSummaryModSheet(k);

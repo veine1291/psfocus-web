@@ -1,4 +1,4 @@
-/* =========================================================
+﻿/* =========================================================
    PS Focus Mobile — 完整版(任务/日历/统计/设置)
    ========================================================= */
 
@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-0934';
+const _PSFOCUS_BUILD = '20260509-1304';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1077,6 +1077,10 @@ function _renderSummaryNoteHtml(text) {
   html = html.replace(/\*\*([^\n]+?)\*\*/g, _PA + '$1' + _PB);
   html = html.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<i>$1</i>');
   html = html.split(_PA).join('<b>').split(_PB).join('</b>');
+  // inline #xxx 转 clickable tag span(行级标题 "# " 形式跳过)
+  html = html.replace(/(^|[^&\w])#([^\s#,。、,<&]+)/g, (m, before, tag) => {
+    return before + '<span class="sum-md-tag" data-action="summary-filter" data-filter="tag:' + esc(tag) + '">#' + esc(tag) + '</span>';
+  });
   const lines = html.split('\n');
   const out = [];
   let listKind = null;
@@ -1140,10 +1144,13 @@ function renderSummaryTab(view) {
       ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
     }, 0);
   }
+  // 异步加载摘要里的云图 — 跟 task detail 共用 bindCloudTimelineImages
+  if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(view);
 }
 
 function _renderSummaryTagBar() {
-  const tags = (state.summaryTags || []).slice().sort((a,b) => (a.order||0) - (b.order||0));
+  // 字典序排:子标签紧跟父级,避免 order 字段把不同父的标签穿插
+  const tags = (state.summaryTags || []).slice().sort((a,b) => (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN'));
   const chips = [`<button class="sum-chip ${summaryState.filter==='all'?'active':''}" data-action="summary-filter" data-filter="all">全部</button>`];
   for (const tg of tags) {
     const active = summaryState.filter === ('tag:' + tg.name);
@@ -1285,7 +1292,14 @@ function _renderSummaryList() {
 }
 
 function _renderSummaryItem(s) {
-  const tagsHtml = (s.tags || []).map(tg => `<span class="sum-item-tag" data-action="summary-filter" data-filter="tag:${esc(tg)}">#${esc(tg)}</span>`).join(' ');
+  // tag chip 行不再单独渲染 — note 里的 #xxx 已被转 clickable;只为 orphan tag(没出现在 note 里)显示
+  const noteTagsInText = new Set();
+  const noteText = s.note || '';
+  let mm;
+  const tagRe = /#([^\s#,。、,]+)/g;
+  while ((mm = tagRe.exec(noteText)) !== null) noteTagsInText.add(mm[1].trim());
+  const orphanTags = (s.tags || []).filter(tg => !noteTagsInText.has(tg));
+  const tagsHtml = orphanTags.map(tg => `<span class="sum-item-tag" data-action="summary-filter" data-filter="tag:${esc(tg)}">#${esc(tg)}</span>`).join(' ');
   const imagesHtml = (s.images || []).length
     ? `<div class="sum-item-images">${(s.images||[]).map(im => `<img class="sum-item-image" data-cloud-file-id="${esc(im.cloudFileID)}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">`).join('')}</div>`
     : '';

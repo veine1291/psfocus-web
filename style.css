@@ -3201,6 +3201,14 @@ html, body { overscroll-behavior-y: contain; }
 }
 .sum-item-note b { font-weight: 600; color: var(--text-strong); }
 .sum-item-note i { font-style: italic; }
+.sum-md-tag {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin: 0 1px;
+}
 .sum-md-line { white-space: pre-wrap; }
 .sum-md-blank { height: 0.5em; }
 .sum-md-h { font-size: 14px; font-weight: 600; margin: 6px 0 2px; color: var(--text-strong); }

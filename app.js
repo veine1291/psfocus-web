@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-1304';
+const _PSFOCUS_BUILD = '20260509-1604';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2139,6 +2139,19 @@ function bindCloudTimelineImages(root) {
       img.addEventListener('click', (ev) => {
         // 删除按钮在图上,得让删除走自己的 handler
         if (ev.target.closest('[data-action="dp-task-del-image"]')) return;
+        ev.stopPropagation();
+        openImageLightbox(slides, i);
+      });
+    });
+  });
+  // (4) 摘要笔记图片 → lightbox(同条 summary 内的图为一组)
+  root.querySelectorAll('.sum-item').forEach(item => {
+    const imgs = Array.from(item.querySelectorAll('.sum-item-image'));
+    if (!imgs.length) return;
+    const slides = imgs.map(img => ({ cloudFileID: img.dataset.cloudFileId || '', title: img.alt || '' }));
+    imgs.forEach((img, i) => {
+      img.style.cursor = 'zoom-in';
+      img.addEventListener('click', (ev) => {
         ev.stopPropagation();
         openImageLightbox(slides, i);
       });

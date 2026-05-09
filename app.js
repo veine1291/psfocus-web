@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-0915';
+const _PSFOCUS_BUILD = '20260509-0926';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -945,18 +945,841 @@ function renderTab(tab) {
 }
 
 // ============================================================
-// ===== 摘要 tab(类 flomo,见桌面 renderer/main.js 同款架构)=====
+// ===== 摘要 tab(类 flomo)— 移动端完整实现,跟桌面 main.js 同款架构
 // ============================================================
-// 阶段 4a 占位:tab 注册 + 空 view + 提示
-// 后续阶段 4b 会做完整 port(输入框、列表、模块系统、浮窗等)
 
+// === state ===
+let summaryState = {
+  tab: 'summary',              // 'summary' | 'data'
+  filter: 'all',               // 'all' | 'tag:<name>'
+  searchQuery: '',
+  collapsedDays: new Set(),
+  pendingImages: [],           // [{ id, cloudFileID, name }]
+  pendingModuleValues: {},     // { [modId]: value/valueMs }
+  modulePopoverForDay: null,   // sheet 形式打开时的 dayKey
+  modulePickerOpenInPopover: false,
+  expandedModuleCards: new Set(),
+};
+
+// === 辅助函数(对齐桌面 main.js)===
+function _summaryDayKey(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function _summaryDayLabel(ts) {
+  const d = new Date(ts);
+  const today = new Date();
+  const sameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+  const yest = new Date(today); yest.setDate(yest.getDate()-1);
+  if (sameDay(d, today)) return '今天';
+  if (sameDay(d, yest)) return '昨天';
+  return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+}
+function _summaryEnsureTag(name) {
+  if (!Array.isArray(state.summaryTags)) state.summaryTags = [];
+  const parts = name.split('/').filter(Boolean);
+  let acc = '';
+  for (const p of parts) {
+    acc = acc ? acc + '/' + p : p;
+    if (!state.summaryTags.find(t => t.name === acc)) {
+      const max = state.summaryTags.length ? Math.max(...state.summaryTags.map(x => x.order || 0)) : 0;
+      state.summaryTags.push({ name: acc, pinned: false, color: '', order: max + 100 });
+    }
+  }
+}
+function _summaryParseTagsFromText(text) {
+  const re = /#([^\s#,。、,]+)/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const tg = m[1].trim();
+    if (tg && !out.includes(tg)) out.push(tg);
+  }
+  return out;
+}
+function _summaryModulesForDay(dayKey) {
+  if (!state.summaryDayModules) state.summaryDayModules = {};
+  if (!Array.isArray(state.summaryDayModules[dayKey])) state.summaryDayModules[dayKey] = [];
+  return state.summaryDayModules[dayKey];
+}
+function _todayKey() { return _summaryDayKey(Date.now()); }
+function _dayKeyToTs(dayKey) {
+  const [y, m, d] = dayKey.split('-').map(Number);
+  return new Date(y, m - 1, d).getTime();
+}
+function _newSummaryModule(kind) {
+  const id = 'mod-' + Math.random().toString(36).slice(2, 10);
+  if (kind === 'rating')   return { id, kind, title: '心情', max: 5, entries: [] };
+  if (kind === 'duration') return { id, kind, title: '睡眠时长', source: 'manual', entries: [] };
+  if (kind === 'checkin')  return { id, kind, title: '打卡', taskId: null };
+  return null;
+}
+function _summaryFocusMsForDay(dayKey) {
+  const [y, m, d] = dayKey.split('-').map(Number);
+  const dayStart = new Date(y, m - 1, d, 0, 0, 0).getTime();
+  const dayEnd = dayStart + 86400000;
+  let total = 0;
+  for (const s of (state.sessions || [])) {
+    if (!s.startedAt) continue;
+    if (s.startedAt < dayStart || s.startedAt >= dayEnd) continue;
+    total += (s.duration || 0);
+  }
+  return total;
+}
+function _summaryFmtDurationMs(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) ms = 0;
+  const totalMin = Math.round(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+function _summaryParseDuration(s) {
+  if (!s) return 0;
+  s = String(s).trim().toLowerCase();
+  const mH = s.match(/(\d+(?:\.\d+)?)\s*h/);
+  const mM = s.match(/(\d+(?:\.\d+)?)\s*m/);
+  if (mH || mM) {
+    const h = mH ? parseFloat(mH[1]) : 0;
+    const m = mM ? parseFloat(mM[1]) : 0;
+    return Math.round((h * 60 + m) * 60000);
+  }
+  const num = parseFloat(s);
+  if (!isNaN(num)) return Math.round(num * 60000);
+  return 0;
+}
+function _summaryFmtTime(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function _checkinCountForTask(taskId) {
+  if (!taskId) return 0;
+  const t = (state.tasks || []).find(x => x.id === taskId);
+  if (!t) return 0;
+  return Array.isArray(t.completedOccurrences) ? t.completedOccurrences.length : 0;
+}
+function _isCheckinDoneToday(taskId) {
+  if (!taskId) return false;
+  const t = (state.tasks || []).find(x => x.id === taskId);
+  if (!t) return false;
+  const today0 = startOfDay(new Date()).getTime();
+  const today1 = today0 + 86400000;
+  return (t.completedOccurrences || []).some(occ => occ >= today0 && occ < today1);
+}
+
+// markdown 渲染(同桌面)
+function _renderSummaryNoteHtml(text) {
+  let html = esc(text || '');
+  const _PA = String.fromCharCode(0xE001);
+  const _PB = String.fromCharCode(0xE002);
+  html = html.replace(/\*\*([^\n]+?)\*\*/g, _PA + '$1' + _PB);
+  html = html.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<i>$1</i>');
+  html = html.split(_PA).join('<b>').split(_PB).join('</b>');
+  const lines = html.split('\n');
+  const out = [];
+  let listKind = null;
+  const closeList = () => { if (listKind) { out.push(`</${listKind}>`); listKind = null; } };
+  for (const line of lines) {
+    if (/^# (.+)$/.test(line)) {
+      closeList();
+      out.push(`<h3 class="sum-md-h">${line.replace(/^# /, '')}</h3>`);
+    } else if (/^- (.+)$/.test(line)) {
+      if (listKind !== 'ul') { closeList(); out.push('<ul class="sum-md-ul">'); listKind = 'ul'; }
+      out.push(`<li>${line.replace(/^- /, '')}</li>`);
+    } else if (/^\d+\. (.+)$/.test(line)) {
+      if (listKind !== 'ol') { closeList(); out.push('<ol class="sum-md-ol">'); listKind = 'ol'; }
+      out.push(`<li>${line.replace(/^\d+\. /, '')}</li>`);
+    } else {
+      closeList();
+      if (line.trim()) out.push(`<div class="sum-md-line">${line}</div>`);
+      else out.push('<div class="sum-md-blank"></div>');
+    }
+  }
+  closeList();
+  return out.join('');
+}
+
+// === 主渲染 ===
 function renderSummaryTab(view) {
-  view.innerHTML = `
-    <div style="padding:32px 18px;text-align:center;color:var(--text-dim);">
-      <div style="font-size:18px;font-weight:600;color:var(--text-strong);margin-bottom:8px;">摘要</div>
-      <div style="font-size:13px;line-height:1.6;">类 flomo 的日常笔记 + 模块系统</div>
-      <div style="font-size:12px;line-height:1.6;margin-top:12px;">手机端 port 进行中 — 第二阶段会上完整功能。<br>当前在桌面端使用。</div>
+  const isData = summaryState.tab === 'data';
+  view.innerHTML = `<div class="sum-view">
+    <div class="sum-tabs-row">
+      <div class="sum-tabs">
+        <button class="sum-tab ${!isData?'active':''}" data-action="summary-set-tab" data-tab="summary">摘要</button>
+        <button class="sum-tab ${isData?'active':''}" data-action="summary-set-tab" data-tab="data">数据</button>
+      </div>
+      ${!isData ? `<input type="text" class="sum-search" placeholder="搜索…" value="${esc(summaryState.searchQuery)}" data-action-input="summary-search-input">` : ''}
+    </div>
+    ${isData
+      ? `<div class="sum-data-empty">
+          <div class="sum-data-empty-title">数据</div>
+          <div class="sum-data-empty-hint">敬请期待 — 这里会展示模块多日趋势</div>
+        </div>`
+      : `<div class="sum-tag-bar">${_renderSummaryTagBar()}</div>
+         <div class="sum-main">
+           ${_renderSummaryInputBox()}
+           <div class="sum-list">${_renderSummaryList()}</div>
+         </div>`
+    }
+  </div>`;
+
+  // 输入框 paste 图片直接上传 + Ctrl/⌘+Enter 提交
+  const ta = view.querySelector('.sum-input');
+  if (ta) {
+    ta.addEventListener('paste', _summaryHandlePaste);
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (actions['summary-submit']) actions['summary-submit']();
+      }
+    });
+    setTimeout(() => {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+    }, 0);
+  }
+}
+
+function _renderSummaryTagBar() {
+  const tags = (state.summaryTags || []).slice().sort((a,b) => (a.order||0) - (b.order||0));
+  const chips = [`<button class="sum-chip ${summaryState.filter==='all'?'active':''}" data-action="summary-filter" data-filter="all">全部</button>`];
+  for (const tg of tags) {
+    const active = summaryState.filter === ('tag:' + tg.name);
+    chips.push(`<button class="sum-chip ${active?'active':''}" data-action="summary-filter" data-filter="tag:${esc(tg.name)}">#${esc(tg.name)}</button>`);
+  }
+  return chips.join('');
+}
+
+function _renderSummaryInputBox() {
+  const pendingImgs = summaryState.pendingImages.map(im => `<div class="sum-pending-img" data-img-id="${esc(im.id)}">
+    <img data-cloud-file-id="${esc(im.cloudFileID)}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+    <button class="sum-pending-img-x" data-action="summary-pending-img-del" data-img-id="${esc(im.id)}">×</button>
+  </div>`).join('');
+  // 输入框下方录入区(只 rating/duration,checkin 不录入)
+  const todayKey = _todayKey();
+  const todayMods = _summaryModulesForDay(todayKey).filter(m => m.kind === 'rating' || m.kind === 'duration');
+  const todayModsHtml = todayMods.length ? `<div class="sum-input-day-mods">
+    <div class="sum-input-day-mods-label">今日 · 待录入</div>
+    ${todayMods.map(m => _renderSummaryModuleEditor(m, todayKey)).join('')}
+  </div>` : '';
+  const hasPending = Object.keys(summaryState.pendingModuleValues || {}).length > 0;
+  return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
+    <textarea class="sum-input" rows="2" placeholder="现在的想法是…  输入 #xxx 自动加标签;粘贴图片直接上传"
+      data-action-input="summary-input-autosize"></textarea>
+    ${pendingImgs ? `<div class="sum-input-pending">${pendingImgs}</div>` : ''}
+    ${todayModsHtml}
+    <div class="sum-input-toolbar">
+      <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
+      <label class="sum-tb-btn sum-tb-img" title="上传图片">
+        <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
+        <span class="ico-image"></span>
+      </label>
+      <span class="sum-tb-sep"></span>
+      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="bold" title="粗体"><b>B</b></button>
+      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="italic" title="斜体"><i>I</i></button>
+      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="head" title="标题">H</button>
+      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ul" title="无序"><span class="ico-list"></span></button>
+      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ol" title="有序">1.</button>
+      <div class="sum-input-spacer"></div>
+      <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
+    </div>
+  </div>`;
+}
+
+function _renderSummaryModuleEditor(m, dayKey) {
+  const dataAttrs = `data-day-key="${esc(dayKey)}" data-mod-id="${esc(m.id)}"`;
+  const titleHtml = `<span class="sum-mod-editor-title">${esc(m.title || '')}</span>`;
+  if (m.kind === 'rating') {
+    const max = Math.max(1, parseInt(m.max, 10) || 5);
+    const pending = summaryState.pendingModuleValues[m.id];
+    const pendingNum = (pending != null) ? Math.max(0, Math.min(max, parseInt(pending, 10))) : null;
+    let dotsHtml = '';
+    for (let i = 1; i <= max; i++) {
+      const filled = pendingNum != null && i <= pendingNum;
+      dotsHtml += `<button class="sum-mod-dot ${filled?'filled':''} ${pendingNum != null ? 'pending' : ''}" ${dataAttrs} data-action="summary-rating-pending" data-i="${i}">●</button>`;
+    }
+    return `<div class="sum-mod-editor">
+      ${titleHtml}
+      <div class="sum-mod-rating-dots">${dotsHtml}</div>
+      <span class="sum-mod-editor-hint">${pendingNum != null ? `${pendingNum}/${max}` : '点 dot'}</span>
     </div>`;
+  }
+  if (m.kind === 'duration') {
+    if (m.source === 'focus') {
+      return `<div class="sum-mod-editor">
+        ${titleHtml}
+        <span class="sum-mod-editor-hint">自动 — 不需手填</span>
+      </div>`;
+    }
+    const pending = summaryState.pendingModuleValues[m.id];
+    const pendingMs = (pending != null) ? (parseInt(pending, 10) || 0) : null;
+    return `<div class="sum-mod-editor">
+      ${titleHtml}
+      <input class="sum-mod-duration-input" type="text" ${dataAttrs}
+        data-action-input="summary-duration-pending"
+        value="${pendingMs != null ? esc(_summaryFmtDurationMs(pendingMs)) : ''}"
+        placeholder="如 1h 30m">
+    </div>`;
+  }
+  return '';
+}
+
+function _renderSummaryList() {
+  const filter = summaryState.filter || 'all';
+  const q = (summaryState.searchQuery || '').toLowerCase().trim();
+  let list = (state.summaries || []).slice();
+  if (filter.startsWith('tag:')) {
+    const tg = filter.slice(4);
+    list = list.filter(s => (s.tags || []).some(x => x === tg || x.startsWith(tg + '/')));
+  }
+  if (q) {
+    list = list.filter(s =>
+      (s.note || '').toLowerCase().includes(q) ||
+      (s.tags || []).some(t => t.toLowerCase().includes(q))
+    );
+  }
+  list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const byDay = new Map();
+  for (const s of list) {
+    const k = _summaryDayKey(s.createdAt);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(s);
+  }
+  // 强制把"今天"加到 byDay 里(就算还没笔记)— 这样用户能在今天 +模块
+  const todayKey = _todayKey();
+  if (!byDay.has(todayKey) && filter === 'all' && !q) {
+    const sortedKeys = [todayKey, ...Array.from(byDay.keys()).sort().reverse()];
+    const newMap = new Map();
+    newMap.set(todayKey, []);
+    for (const k of sortedKeys) if (k !== todayKey && byDay.has(k)) newMap.set(k, byDay.get(k));
+    byDay.clear();
+    for (const [k, v] of newMap) byDay.set(k, v);
+  }
+  if (!byDay.size) {
+    return `<div class="sum-empty">${q || filter !== 'all' ? '没有符合的笔记' : '还没有笔记 — 上面输入框写一条'}</div>`;
+  }
+  let html = '';
+  for (const [k, items] of byDay) {
+    const collapsed = summaryState.collapsedDays.has(k);
+    const refTs = items.length ? items[0].createdAt : _dayKeyToTs(k);
+    const dayLabel = _summaryDayLabel(refTs);
+    const modSummary = _renderSummaryDayHeaderModules(k);
+    html += `<div class="sum-day ${collapsed?'collapsed':''}">
+      <div class="sum-day-header">
+        <button class="sum-day-toggle" data-action="summary-toggle-day" data-day-key="${esc(k)}">
+          <span class="sum-day-chev">${collapsed ? '▶' : '▼'}</span>
+          <span class="sum-day-label">${dayLabel}</span>
+          ${items.length ? `<span class="sum-day-count">${items.length} 条</span>` : ''}
+        </button>
+        ${modSummary ? `<div class="sum-day-mods">${modSummary}</div>` : ''}
+        <button class="sum-day-add-mod" data-action="summary-open-mod-sheet" data-day-key="${esc(k)}" title="管理模块">+ 模块</button>
+      </div>
+      ${collapsed || !items.length ? '' : `<div class="sum-day-body">
+        <div class="sum-day-items">${items.map(_renderSummaryItem).join('')}</div>
+      </div>`}
+    </div>`;
+  }
+  return html;
+}
+
+function _renderSummaryItem(s) {
+  const tagsHtml = (s.tags || []).map(tg => `<span class="sum-item-tag" data-action="summary-filter" data-filter="tag:${esc(tg)}">#${esc(tg)}</span>`).join(' ');
+  const imagesHtml = (s.images || []).length
+    ? `<div class="sum-item-images">${(s.images||[]).map(im => `<img class="sum-item-image" data-cloud-file-id="${esc(im.cloudFileID)}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">`).join('')}</div>`
+    : '';
+  const tStr = new Date(s.createdAt).toLocaleString('zh-CN');
+  return `<div class="sum-item" data-summary-id="${esc(s.id)}">
+    <div class="sum-item-meta">
+      <span class="sum-item-time">${esc(tStr)}</span>
+      <button class="sum-item-more" data-action="summary-item-more" data-id="${esc(s.id)}">⋯</button>
+    </div>
+    ${(s.note||'').trim() ? `<div class="sum-item-note">${_renderSummaryNoteHtml(s.note)}</div>` : ''}
+    ${tagsHtml ? `<div class="sum-item-tags">${tagsHtml}</div>` : ''}
+    ${imagesHtml}
+  </div>`;
+}
+
+function _renderSummaryDayHeaderModules(dayKey) {
+  const parts = [];
+  const focusMs = _summaryFocusMsForDay(dayKey);
+  if (focusMs > 0) parts.push(`<span class="sum-day-mod sum-day-mod-focus">专注 ${_summaryFmtDurationMs(focusMs)}</span>`);
+  const mods = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+  for (const m of mods) {
+    let txt = '';
+    if (m.kind === 'rating') {
+      const max = m.max || 5;
+      const entries = m.entries || [];
+      const first = entries[0];
+      const extra = Math.max(0, entries.length - 1);
+      txt = first ? `${m.title || '打分'} ${first.value}/${max}${extra > 0 ? ` <span class="sum-day-mod-extra">+${extra}</span>` : ''}` : `${m.title || '打分'} —`;
+    } else if (m.kind === 'duration') {
+      if (m.source === 'focus') continue;
+      const entries = m.entries || [];
+      const first = entries[0];
+      const extra = Math.max(0, entries.length - 1);
+      txt = first ? `${m.title || '时长'} ${_summaryFmtDurationMs(first.valueMs)}${extra > 0 ? ` <span class="sum-day-mod-extra">+${extra}</span>` : ''}` : `${m.title || '时长'} —`;
+    } else if (m.kind === 'checkin') {
+      const done = _isCheckinDoneToday(m.taskId);
+      txt = `${m.title || '打卡'} ${done?'✓':'○'}`;
+    }
+    if (txt) parts.push(`<span class="sum-day-mod">${txt}</span>`);
+  }
+  return parts.join('');
+}
+
+// 打开模块管理 sheet(手机版用底部 sheet 替代桌面的 popover)
+function _openSummaryModSheet(dayKey) {
+  const dayMods = _summaryModulesForDay(dayKey);
+  const pickerOpen = summaryState.modulePickerOpenInPopover;
+  const picker = pickerOpen ? `<div class="sum-mod-picker">
+    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="rating" data-day-key="${esc(dayKey)}">📊 打分模块</button>
+    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="duration" data-day-key="${esc(dayKey)}">⏱ 时长模块</button>
+    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="checkin" data-day-key="${esc(dayKey)}">✓ 打卡模块</button>
+  </div>` : '';
+  const cardsHtml = dayMods.length
+    ? `<div class="sum-mod-popover-cards">${dayMods.map(m => _renderSummaryModuleCard(m, dayKey)).join('')}</div>`
+    : `<div class="sum-mod-popover-empty">该天还没有模块</div>`;
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="sum-mod-popover-head">
+        <span class="sum-mod-popover-title">${esc(_summaryDayLabel(_dayKeyToTs(dayKey)))} · 模块</span>
+        <div class="sum-mod-popover-add-wrap">
+          <button class="sum-mod-popover-add ${pickerOpen?'open':''}" data-action="summary-toggle-picker-in-popover" data-day-key="${esc(dayKey)}">+ 加模块</button>
+          ${picker}
+        </div>
+      </div>
+      ${cardsHtml}
+    </div>
+  `);
+}
+
+function _renderSummaryModuleCard(m, dayKey) {
+  const dataAttrs = `data-day-key="${esc(dayKey)}" data-mod-id="${esc(m.id)}"`;
+  const expanded = summaryState.expandedModuleCards.has(m.id);
+  const kindLabel = m.kind === 'rating' ? '打分' : m.kind === 'duration' ? '时长' : '打卡';
+  const titleHtml = `<input class="sum-mod-title-input" type="text" ${dataAttrs}
+    data-action-blur="summary-mod-edit-title" value="${esc(m.title || '')}" placeholder="标题">`;
+  const delBtn = `<button class="sum-mod-del" ${dataAttrs} data-action="summary-mod-del">×</button>`;
+  const expandBtn = `<button class="sum-mod-expand" ${dataAttrs} data-action="summary-mod-toggle-expand">${expanded ? '▴' : '▾'}</button>`;
+  let detailsHtml = '';
+  if (expanded) {
+    if (m.kind === 'rating') {
+      const max = Math.max(1, parseInt(m.max, 10) || 5);
+      const entries = m.entries || [];
+      detailsHtml = `<div class="sum-mod-card-details">
+        <label class="sum-mod-meta-label">满分
+          <input class="sum-mod-rating-max" type="number" min="1" max="20" step="1" ${dataAttrs}
+            data-action-blur="summary-mod-edit-max" value="${max}"></label>
+        ${entries.length ? `<div class="sum-mod-entries">${entries.map(e => `
+          <span class="sum-mod-entry">
+            <span class="sum-mod-entry-val">${e.value}/${max}</span>
+            <span class="sum-mod-entry-time">${_summaryFmtTime(e.at)}</span>
+            <button class="sum-mod-entry-del" ${dataAttrs} data-action="summary-mod-entry-del" data-entry-id="${esc(e.id)}">×</button>
+          </span>`).join('')}</div>` : '<div class="sum-mod-empty">还没有记录</div>'}
+      </div>`;
+    } else if (m.kind === 'duration') {
+      const isAuto = m.source === 'focus';
+      const entries = isAuto ? null : (m.entries || []);
+      detailsHtml = `<div class="sum-mod-card-details">
+        <label class="sum-mod-meta-label">来源
+          <select class="sum-mod-duration-source" ${dataAttrs} data-action-change="summary-mod-edit-source">
+            <option value="manual" ${!isAuto?'selected':''}>手动</option>
+            <option value="focus"  ${ isAuto?'selected':''}>自动:专注</option>
+          </select></label>
+        ${isAuto
+          ? '<div class="sum-mod-empty">自动来源 — 实时算,不存历史</div>'
+          : (entries.length ? `<div class="sum-mod-entries">${entries.map(e => `
+              <span class="sum-mod-entry">
+                <span class="sum-mod-entry-val">${_summaryFmtDurationMs(e.valueMs)}</span>
+                <span class="sum-mod-entry-time">${_summaryFmtTime(e.at)}</span>
+                <button class="sum-mod-entry-del" ${dataAttrs} data-action="summary-mod-entry-del" data-entry-id="${esc(e.id)}">×</button>
+              </span>`).join('')}</div>` : '<div class="sum-mod-empty">还没有记录</div>')}
+      </div>`;
+    } else if (m.kind === 'checkin') {
+      const t = m.taskId ? (state.tasks || []).find(x => x.id === m.taskId) : null;
+      const taskName = t ? (t.title || '未命名任务') : '未关联';
+      const doneToday = _isCheckinDoneToday(m.taskId);
+      const total = _checkinCountForTask(m.taskId);
+      detailsHtml = `<div class="sum-mod-card-details">
+        <button class="sum-mod-checkin-pick" ${dataAttrs} data-action="summary-mod-pick-task">🔗 ${esc(taskName)}</button>
+        <span class="sum-mod-checkin-status ${doneToday?'done':''}">${doneToday ? '✓ 已打卡' : '○ 未打卡'}</span>
+        <span class="sum-mod-checkin-streak">累计 ${total} 天</span>
+      </div>`;
+    }
+  }
+  return `<div class="sum-mod-card ${expanded?'expanded':''}">
+    <div class="sum-mod-card-head">
+      <span class="sum-mod-kind-tag">${kindLabel}</span>
+      ${titleHtml}
+      ${expandBtn}
+      ${delBtn}
+    </div>
+    ${detailsHtml}
+  </div>`;
+}
+
+// === actions ===
+const _summaryActions = {
+  'summary-set-tab': (el) => {
+    summaryState.tab = el.dataset.tab || 'summary';
+    renderAll();
+  },
+  'summary-filter': (el) => {
+    summaryState.filter = el.dataset.filter || 'all';
+    renderAll();
+  },
+  'summary-search-input': (el) => {
+    summaryState.searchQuery = el.value || '';
+    const listEl = document.querySelector('.sum-list');
+    if (listEl) listEl.innerHTML = _renderSummaryList();
+  },
+  'summary-toggle-day': (el) => {
+    const k = el.dataset.dayKey;
+    if (!k) return;
+    if (summaryState.collapsedDays.has(k)) summaryState.collapsedDays.delete(k);
+    else summaryState.collapsedDays.add(k);
+    renderAll();
+  },
+  'summary-input-autosize': (el) => {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  },
+  'summary-tb-tag': () => {
+    const ta = document.querySelector('.sum-input');
+    if (!ta) return;
+    ta.focus();
+    const s = ta.selectionStart || 0;
+    const before = ta.value.slice(0, s);
+    const after = ta.value.slice(ta.selectionEnd || s);
+    const sep = (s > 0 && !/\s/.test(before.slice(-1))) ? ' ' : '';
+    ta.value = before + sep + '#' + after;
+    const np = (before + sep + '#').length;
+    ta.setSelectionRange(np, np);
+  },
+  'summary-tb-format': (el) => {
+    const fmt = el.dataset.fmt;
+    const ta = document.querySelector('.sum-input');
+    if (!ta) return;
+    ta.focus();
+    const v = ta.value;
+    const s = ta.selectionStart || 0;
+    const e = ta.selectionEnd || 0;
+    const before = v.slice(0, s);
+    const sel = v.slice(s, e);
+    const after = v.slice(e);
+    const _linePrefix = (prefix) => {
+      const lineStart = before.lastIndexOf('\n') + 1;
+      const beforeLine = v.slice(0, lineStart);
+      const lineAndAfter = v.slice(lineStart);
+      const segEnd = e - lineStart;
+      const segText = lineAndAfter.slice(0, segEnd);
+      const tail = lineAndAfter.slice(segEnd);
+      const lines = segText.split('\n');
+      const newLines = lines.map((l, i) => (i === 0 || l.length > 0 ? prefix + l : l));
+      const newSegText = newLines.join('\n');
+      ta.value = beforeLine + newSegText + tail;
+      const np = beforeLine.length + newSegText.length;
+      ta.setSelectionRange(np, np);
+    };
+    const _wrap = (mark) => {
+      const inner = sel || '文字';
+      ta.value = before + mark + inner + mark + after;
+      const ns = before.length + mark.length;
+      ta.setSelectionRange(ns, ns + inner.length);
+    };
+    if (fmt === 'bold')        _wrap('**');
+    else if (fmt === 'italic') _wrap('*');
+    else if (fmt === 'head')   _linePrefix('# ');
+    else if (fmt === 'ul')     _linePrefix('- ');
+    else if (fmt === 'ol')     _linePrefix('1. ');
+  },
+  'summary-upload-image': async (el) => {
+    const files = Array.from(el.files || []);
+    if (!files.length) return;
+    showToast(`上传 ${files.length} 张图…`);
+    let okCount = 0;
+    for (const f of files) {
+      try {
+        const cloudPath = `psfocus-summary-images/${uid}/${Date.now()}-${(f.name||'img').replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+        const res = await tcbApp.uploadFile({ cloudPath, filePath: f });
+        const fileID = res && res.fileID;
+        if (fileID) {
+          summaryState.pendingImages.push({
+            id: 'img-' + Math.random().toString(36).slice(2, 10),
+            cloudFileID: fileID, name: f.name, uploadedAt: Date.now(),
+          });
+          okCount++;
+        }
+      } catch (err) { console.warn('[sum-upload]', err); }
+    }
+    el.value = '';
+    if (okCount) showToast(`已加 ${okCount} 张`);
+    renderAll();
+  },
+  'summary-pending-img-del': (el) => {
+    const id = el.dataset.imgId;
+    summaryState.pendingImages = summaryState.pendingImages.filter(x => x.id !== id);
+    renderAll();
+  },
+  'summary-rating-pending': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId  = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'rating') return;
+    const i = parseInt(el.dataset.i, 10);
+    const max = Math.max(1, parseInt(mod.max, 10) || 5);
+    const value = Math.max(0, Math.min(max, i));
+    const cur = summaryState.pendingModuleValues[modId];
+    if (cur === value) delete summaryState.pendingModuleValues[modId];
+    else summaryState.pendingModuleValues[modId] = value;
+    renderAll();
+  },
+  'summary-duration-pending': (el) => {
+    const modId = el.dataset.modId;
+    const v = (el.value || '').trim();
+    if (!v) {
+      delete summaryState.pendingModuleValues[modId];
+      return;
+    }
+    const ms = _summaryParseDuration(v);
+    if (!ms) return;
+    summaryState.pendingModuleValues[modId] = ms;
+  },
+  'summary-submit': () => {
+    const ta = document.querySelector('.sum-input');
+    const text = ta ? ta.value.trim() : '';
+    const imgs = summaryState.pendingImages.slice();
+    const pendingMods = Object.keys(summaryState.pendingModuleValues || {});
+    const hasNoteOrImg = !!text || imgs.length > 0;
+    if (!hasNoteOrImg && !pendingMods.length) return;
+    const now = Date.now();
+    if (pendingMods.length) {
+      const todayKey = _todayKey();
+      const arr = (state.summaryDayModules && state.summaryDayModules[todayKey]) || [];
+      for (const modId of pendingMods) {
+        const mod = arr.find(x => x.id === modId);
+        if (!mod) continue;
+        const v = summaryState.pendingModuleValues[modId];
+        if (v == null) continue;
+        if (!Array.isArray(mod.entries)) mod.entries = [];
+        if (mod.kind === 'rating') {
+          mod.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value: parseInt(v, 10), at: now });
+        } else if (mod.kind === 'duration') {
+          mod.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), valueMs: parseInt(v, 10), at: now });
+        }
+      }
+    }
+    if (hasNoteOrImg) {
+      const tags = _summaryParseTagsFromText(text);
+      for (const tg of tags) _summaryEnsureTag(tg);
+      if (!Array.isArray(state.summaries)) state.summaries = [];
+      state.summaries.push({
+        id: 'sum-' + Math.random().toString(36).slice(2, 10),
+        createdAt: now, updatedAt: now,
+        note: text, tags, images: imgs,
+      });
+    }
+    summaryState.pendingImages = [];
+    summaryState.pendingModuleValues = {};
+    if (ta) ta.value = '';
+    pushState();
+    renderAll();
+  },
+  'summary-item-more': (el) => {
+    const id = el.dataset.id;
+    if (!confirm('删除这条摘要笔记?')) return;
+    state.summaries = (state.summaries || []).filter(s => s.id !== id);
+    pushState();
+    renderAll();
+  },
+  // 模块管理 sheet
+  'summary-open-mod-sheet': (el) => {
+    const k = el.dataset.dayKey;
+    if (!k) return;
+    summaryState.modulePopoverForDay = k;
+    summaryState.modulePickerOpenInPopover = false;
+    _openSummaryModSheet(k);
+  },
+  'summary-toggle-picker-in-popover': (el) => {
+    summaryState.modulePickerOpenInPopover = !summaryState.modulePickerOpenInPopover;
+    const k = el.dataset.dayKey || summaryState.modulePopoverForDay;
+    if (k) _openSummaryModSheet(k);
+  },
+  'summary-add-module': (el) => {
+    const kind = el.dataset.kind;
+    const dayKey = el.dataset.dayKey;
+    if (!dayKey) return;
+    const m = _newSummaryModule(kind);
+    if (!m) return;
+    _summaryModulesForDay(dayKey).push(m);
+    summaryState.modulePickerOpenInPopover = false;
+    pushState();
+    _openSummaryModSheet(dayKey);
+    renderAll();
+  },
+  'summary-mod-toggle-expand': (el) => {
+    const id = el.dataset.modId;
+    if (!id) return;
+    if (summaryState.expandedModuleCards.has(id)) summaryState.expandedModuleCards.delete(id);
+    else summaryState.expandedModuleCards.add(id);
+    const k = el.dataset.dayKey;
+    if (k) _openSummaryModSheet(k);
+  },
+  'summary-mod-del': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    if (!dayKey || !modId) return;
+    if (!confirm('删除此模块?其当天填写的所有记录也会一起删除。')) return;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    state.summaryDayModules[dayKey] = arr.filter(m => m.id !== modId);
+    pushState();
+    _openSummaryModSheet(dayKey);
+    renderAll();
+  },
+  'summary-mod-edit-title': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod) return;
+    const v = (el.value || '').trim();
+    if (v === mod.title) return;
+    mod.title = v;
+    pushState();
+  },
+  'summary-mod-edit-max': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'rating') return;
+    const v = Math.max(1, Math.min(20, parseInt(el.value, 10) || 5));
+    if (v === mod.max) return;
+    mod.max = v;
+    pushState();
+    _openSummaryModSheet(dayKey);
+  },
+  'summary-mod-edit-source': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'duration') return;
+    mod.source = el.value === 'focus' ? 'focus' : 'manual';
+    pushState();
+    _openSummaryModSheet(dayKey);
+  },
+  'summary-mod-entry-del': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod) return;
+    const eid = el.dataset.entryId;
+    mod.entries = (mod.entries || []).filter(e => e.id !== eid);
+    pushState();
+    _openSummaryModSheet(dayKey);
+    renderAll();
+  },
+  'summary-mod-pick-task': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'checkin') return;
+    const recurringTasks = (state.tasks || []).filter(t => {
+      const sched = (t.schedules || []).find(s => s && s.repeat && s.repeat !== 'none');
+      return !!sched;
+    });
+    if (!recurringTasks.length) {
+      showToast('没有重复任务,先在「任务」section 创建一个');
+      return;
+    }
+    const rows = recurringTasks.map(t => `<button class="modal-list-row" data-summary-pick-task-id="${esc(t.id)}">${esc(t.title || '未命名')}</button>`).join('');
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 8px;">选关联的重复任务</div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto;">${rows}</div>
+      </div>
+    `, (body) => {
+      body.querySelectorAll('[data-summary-pick-task-id]').forEach(b => b.onclick = () => {
+        mod.taskId = b.dataset.summaryPickTaskId;
+        pushState();
+        closeSheet();
+        _openSummaryModSheet(dayKey);
+        renderAll();
+      });
+    });
+  },
+};
+
+// 全局 dispatcher — 把 summary-* 的 click/input/blur/change 路由到 _summaryActions
+function _bindSummaryGlobalDispatchers() {
+  if (window._summaryDispatchersBound) return;
+  window._summaryDispatchersBound = true;
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest && e.target.closest('[data-action]');
+    if (!el) return;
+    const a = el.dataset.action;
+    if (a && a.startsWith('summary-') && _summaryActions[a]) _summaryActions[a](el, e);
+  });
+  document.addEventListener('input', (e) => {
+    const el = e.target.closest && e.target.closest('[data-action-input]');
+    if (!el) return;
+    const a = el.dataset.actionInput;
+    if (a && a.startsWith('summary-') && _summaryActions[a]) _summaryActions[a](el, e);
+  });
+  document.addEventListener('change', (e) => {
+    const el = e.target.closest && e.target.closest('[data-action-change],[data-action]');
+    if (!el) return;
+    const a = el.dataset.actionChange || el.dataset.action;
+    if (a && a.startsWith('summary-') && _summaryActions[a]) _summaryActions[a](el, e);
+  });
+  document.addEventListener('blur', (e) => {
+    const el = e.target.closest && e.target.closest('[data-action-blur]');
+    if (!el) return;
+    const a = el.dataset.actionBlur;
+    if (a && a.startsWith('summary-') && _summaryActions[a]) _summaryActions[a](el, e);
+  }, true);
+}
+_bindSummaryGlobalDispatchers();
+
+// 粘贴图片直接上传(textarea paste handler)
+async function _summaryHandlePaste(ev) {
+  const items = (ev.clipboardData && ev.clipboardData.items) || [];
+  const imgItems = [];
+  for (const it of items) if (it.type && it.type.startsWith('image/')) imgItems.push(it);
+  if (!imgItems.length) return;
+  ev.preventDefault();
+  showToast(`上传 ${imgItems.length} 张图…`);
+  let okCount = 0;
+  for (const it of imgItems) {
+    const f = it.getAsFile();
+    if (!f) continue;
+    try {
+      const cloudPath = `psfocus-summary-images/${uid}/${Date.now()}-paste.png`;
+      const res = await tcbApp.uploadFile({ cloudPath, filePath: f });
+      const fileID = res && res.fileID;
+      if (fileID) {
+        summaryState.pendingImages.push({
+          id: 'img-' + Math.random().toString(36).slice(2, 10),
+          cloudFileID: fileID, name: f.name || 'paste.png', uploadedAt: Date.now(),
+        });
+        okCount++;
+      }
+    } catch (err) { console.warn('[sum-paste]', err); }
+  }
+  if (okCount) {
+    showToast(`已粘贴 ${okCount} 张`);
+    renderAll();
+  } else {
+    showToast('粘贴失败');
+  }
 }
 
 function renderTimerTab(view) {

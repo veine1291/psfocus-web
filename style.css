@@ -2612,7 +2612,7 @@ html, body { overscroll-behavior-y: contain; }
 .img-lb-viewport {
   flex: 1 1 auto;
   overflow: hidden;
-  touch-action: pan-y;
+  touch-action: none;
   position: relative;
 }
 .img-lb-track {

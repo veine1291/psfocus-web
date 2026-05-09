@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-1604';
+const _PSFOCUS_BUILD = '20260509-1945';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1448,7 +1448,10 @@ const _summaryActions = {
   'summary-search-input': (el) => {
     summaryState.searchQuery = el.value || '';
     const listEl = document.querySelector('.sum-list');
-    if (listEl) listEl.innerHTML = _renderSummaryList();
+    if (listEl) {
+      listEl.innerHTML = _renderSummaryList();
+      if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(listEl);
+    }
   },
   'summary-toggle-day': (el) => {
     const k = el.dataset.dayKey;
@@ -2199,6 +2202,34 @@ function openImageLightbox(images, startIdx) {
   let idx = startIdx;
   const counter = lb.querySelector('.img-lb-counter');
   const titleEl = lb.querySelector('.img-lb-title');
+
+  // ===== zoom + pan 状态 (per-lightbox 实例) =====
+  let scale = 1, tx = 0, ty = 0;
+  const MIN_SCALE = 1, MAX_SCALE = 4, ZOOM_TAP_SCALE = 2.5;
+  const getCurImg = () => track.children[idx] && track.children[idx].querySelector('img');
+  const setImgTransition = (img, on) => {
+    if (img) img.style.transition = on ? 'transform .22s cubic-bezier(.2,.7,.3,1)' : 'none';
+  };
+  const applyImgTransform = (img) => {
+    if (img) img.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
+  };
+  const clampPan = () => {
+    const img = getCurImg();
+    if (!img || scale <= 1.001) { tx = 0; ty = 0; return; }
+    const vw = viewport.clientWidth;
+    const vh = viewport.clientHeight;
+    // base size 不带 transform — 用 offsetWidth (虽然 img 自身有 max-width 等,offsetWidth 是其 layout box)
+    const w = img.offsetWidth * scale;
+    const h = img.offsetHeight * scale;
+    const maxX = Math.max(0, (w - vw) / 2);
+    const maxY = Math.max(0, (h - vh) / 2);
+    if (tx > maxX) tx = maxX;
+    if (tx < -maxX) tx = -maxX;
+    if (ty > maxY) ty = maxY;
+    if (ty < -maxY) ty = -maxY;
+  };
+  const resetZoom = () => { scale = 1; tx = 0; ty = 0; };
+
   const updateUI = (animate) => {
     track.style.transition = animate ? 'transform .26s cubic-bezier(.2,.7,.3,1)' : 'none';
     track.style.transform = `translateX(${-idx * 100}%)`;
@@ -2206,47 +2237,177 @@ function openImageLightbox(images, startIdx) {
     titleEl.textContent = images[idx].title || '';
   };
   updateUI(false);
-  // 手势:横向 swipe 切换
+
   const viewport = lb.querySelector('.img-lb-viewport');
-  let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, locked = null;
+
+  // ===== 手势:swipe / pan / pinch / 双击 zoom =====
+  let mode = null; // 'swipe' | 'pan' | 'pinch' | null
+  let sx = 0, sy = 0, dx = 0, dy = 0, locked = null;
+  let stTx = 0, stTy = 0, stScale = 1;
+  let stDist = 0, stMidX = 0, stMidY = 0;
+  let baseCx = 0, baseCy = 0; // 图像 layout 中心(无 transform)— pinch 锚点
+  let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+  const dist2 = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const mid2 = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+  const computeBaseCenter = (img) => {
+    if (!img) return;
+    const r = img.getBoundingClientRect();
+    baseCx = (r.left + r.width / 2) - tx;
+    baseCy = (r.top + r.height / 2) - ty;
+  };
+
+  const doZoomToPoint = (clientX, clientY, newScale, animate) => {
+    const cur = getCurImg();
+    if (!cur) return;
+    computeBaseCenter(cur);
+    // 当前 scale 下, P_local = (client - baseC - tx) / scale
+    const pLx = (clientX - baseCx - tx) / scale;
+    const pLy = (clientY - baseCy - ty) / scale;
+    tx = clientX - baseCx - pLx * newScale;
+    ty = clientY - baseCy - pLy * newScale;
+    scale = newScale;
+    clampPan();
+    setImgTransition(cur, !!animate);
+    applyImgTransform(cur);
+  };
+
   const onStart = (e) => {
-    if (e.touches && e.touches.length !== 1) return;
-    const t = e.touches ? e.touches[0] : e;
-    startX = t.clientX; startY = t.clientY; dx = 0; dy = 0;
-    dragging = true; locked = null;
-    track.style.transition = 'none';
+    const ts = e.touches;
+    if (!ts) return;
+    if (ts.length === 1) {
+      const t = ts[0];
+      const now = Date.now();
+      const isDouble = (now - lastTapTime) < 280
+        && Math.abs(t.clientX - lastTapX) < 30
+        && Math.abs(t.clientY - lastTapY) < 30;
+      if (isDouble) {
+        if (scale > 1.05) {
+          resetZoom();
+          const cur = getCurImg();
+          setImgTransition(cur, true);
+          applyImgTransform(cur);
+        } else {
+          doZoomToPoint(t.clientX, t.clientY, ZOOM_TAP_SCALE, true);
+        }
+        lastTapTime = 0; mode = null;
+        if (e.cancelable) e.preventDefault();
+        return;
+      }
+      lastTapTime = now;
+      lastTapX = t.clientX; lastTapY = t.clientY;
+      sx = t.clientX; sy = t.clientY; dx = 0; dy = 0;
+      if (scale > 1.001) {
+        mode = 'pan';
+        stTx = tx; stTy = ty;
+        const cur = getCurImg();
+        setImgTransition(cur, false);
+      } else {
+        mode = 'swipe';
+        locked = null;
+        track.style.transition = 'none';
+      }
+    } else if (ts.length === 2) {
+      mode = 'pinch';
+      stDist = dist2(ts[0], ts[1]);
+      const m = mid2(ts[0], ts[1]);
+      stMidX = m.x; stMidY = m.y;
+      stScale = scale; stTx = tx; stTy = ty;
+      const cur = getCurImg();
+      computeBaseCenter(cur);
+      setImgTransition(cur, false);
+      lastTapTime = 0;
+    }
   };
+
   const onMove = (e) => {
-    if (!dragging) return;
-    const t = e.touches ? e.touches[0] : e;
-    dx = t.clientX - startX;
-    dy = t.clientY - startY;
-    if (locked == null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
-      locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-    }
-    if (locked === 'x') {
-      const w = viewport.clientWidth;
-      track.style.transform = `translateX(${-idx * w + dx}px)`;
+    if (!mode) return;
+    const ts = e.touches;
+    if (!ts) return;
+    if (mode === 'pinch') {
+      if (ts.length < 2) return;
+      const d = dist2(ts[0], ts[1]);
+      const m = mid2(ts[0], ts[1]);
+      let newScale = stScale * (d / (stDist || 1));
+      if (newScale < 0.5) newScale = 0.5;
+      if (newScale > MAX_SCALE + 0.5) newScale = MAX_SCALE + 0.5;
+      // P_local 用 pinch 起始锚点(stMidX/stMidY 在起始 transform 下的 image-local 坐标)
+      const pLx = (stMidX - baseCx - stTx) / stScale;
+      const pLy = (stMidY - baseCy - stTy) / stScale;
+      tx = m.x - baseCx - pLx * newScale;
+      ty = m.y - baseCy - pLy * newScale;
+      scale = newScale;
+      applyImgTransform(getCurImg());
       if (e.cancelable) e.preventDefault();
+    } else if (mode === 'pan') {
+      if (ts.length !== 1) return;
+      const t = ts[0];
+      tx = stTx + (t.clientX - sx);
+      ty = stTy + (t.clientY - sy);
+      applyImgTransform(getCurImg());
+      if (e.cancelable) e.preventDefault();
+    } else if (mode === 'swipe') {
+      if (ts.length !== 1) return;
+      const t = ts[0];
+      dx = t.clientX - sx;
+      dy = t.clientY - sy;
+      if (locked == null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+        locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      }
+      if (locked === 'x') {
+        const w = viewport.clientWidth;
+        track.style.transform = `translateX(${-idx * w + dx}px)`;
+        if (e.cancelable) e.preventDefault();
+      }
     }
   };
-  const onEnd = () => {
-    if (!dragging) return;
-    dragging = false;
-    if (locked === 'x') {
-      const w = viewport.clientWidth;
-      const threshold = w * 0.18;
-      if (dx < -threshold && idx < images.length - 1) idx++;
-      else if (dx > threshold && idx > 0) idx--;
-      updateUI(true);
-    } else if (locked == null && Math.abs(dx) < 6 && Math.abs(dy) < 6) {
-      // tap 空白(非图片自身)— 不动
+
+  const onEnd = (e) => {
+    if (!mode) return;
+    const ts = e.touches;
+    if (mode === 'pinch') {
+      let snap = false;
+      if (scale < MIN_SCALE) { resetZoom(); snap = true; }
+      else if (scale > MAX_SCALE) { scale = MAX_SCALE; snap = true; }
+      const cur = getCurImg();
+      clampPan();
+      setImgTransition(cur, true);
+      applyImgTransform(cur);
+      // pinch 结束如果还有一根手指,转为 pan(避免下次必须重新触摸)
+      if (ts && ts.length === 1 && scale > 1.001) {
+        const t = ts[0];
+        sx = t.clientX; sy = t.clientY;
+        stTx = tx; stTy = ty;
+        mode = 'pan';
+        setImgTransition(cur, false);
+      } else {
+        mode = null;
+      }
+    } else if (mode === 'pan') {
+      const cur = getCurImg();
+      const bx = tx, by = ty;
+      clampPan();
+      if (tx !== bx || ty !== by) {
+        setImgTransition(cur, true);
+        applyImgTransform(cur);
+      }
+      mode = null;
+    } else if (mode === 'swipe') {
+      if (locked === 'x') {
+        const w = viewport.clientWidth;
+        const threshold = w * 0.18;
+        if (dx < -threshold && idx < images.length - 1) idx++;
+        else if (dx > threshold && idx > 0) idx--;
+        resetZoom();
+        updateUI(true);
+      }
+      mode = null; locked = null;
     }
   };
-  viewport.ontouchstart = onStart;
-  viewport.ontouchmove = onMove;
-  viewport.ontouchend = onEnd;
-  viewport.ontouchcancel = onEnd;
+
+  viewport.addEventListener('touchstart', onStart, { passive: false });
+  viewport.addEventListener('touchmove', onMove, { passive: false });
+  viewport.addEventListener('touchend', onEnd, { passive: false });
+  viewport.addEventListener('touchcancel', onEnd, { passive: false });
   lb.classList.remove('hidden');
 }
 function closeImageLightbox() {
@@ -2869,6 +3030,33 @@ function openTaskDetail(id) {
   const schedules = (t.schedules && t.schedules.length)
     ? t.schedules
     : (t.start ? [{ id: 'legacy', start: t.start, end: t.end, allDay: t.allDay, repeat: 'none', kind: 'range' }] : []);
+  // 对齐列表 fmtTaskTime:重复任务的 pill 显示"下一次未完成 occurrence",而不是原始 start
+  const completedOcc = new Set(Array.isArray(t.completedOccurrences) ? t.completedOccurrences : []);
+  const _effectiveSchedule = (s) => {
+    if (!s || !s.start || !s.repeat || s.repeat === 'none') return s;
+    const dur = (s.end && s.start) ? (s.end - s.start) : 0;
+    let occ = new Date(s.start);
+    if (s.repeat === 'workday' && (occ.getDay() === 0 || occ.getDay() === 6)) {
+      do { occ.setDate(occ.getDate() + 1); } while (occ.getDay() === 0 || occ.getDay() === 6);
+    }
+    let safety = 5000;
+    while (safety-- > 0) {
+      const ts = occ.getTime();
+      if (!completedOcc.has(ts)) {
+        return { ...s, start: ts, end: dur > 0 ? ts + dur : null };
+      }
+      const next = new Date(occ);
+      if (s.repeat === 'daily') next.setDate(next.getDate() + 1);
+      else if (s.repeat === 'weekly') next.setDate(next.getDate() + 7);
+      else if (s.repeat === 'monthly') next.setMonth(next.getMonth() + 1);
+      else if (s.repeat === 'workday') {
+        do { next.setDate(next.getDate() + 1); } while (next.getDay() === 0 || next.getDay() === 6);
+      } else break;
+      occ = next;
+      if (occ.getTime() - Date.now() > 365 * 86400000 * 5) break;
+    }
+    return s;
+  };
   const _schedStateClass = (s) => {
     if (t.done) return '';
     if (!s || !s.start) return '';
@@ -2878,11 +3066,14 @@ function openTaskDetail(id) {
     if (s.start < today1) return 'today';
     return 'future';
   };
-  const schedHtml = schedules.map(s => `<span class="dp-sched-pill ${_schedStateClass(s)}">
-    <span class="ico-clock"></span>
-    <span class="dp-sched-text">${esc(fmtSchedule(s))}</span>
-    <button class="dp-sched-x" data-action="dp-remove-schedule" data-task-id="${t.id}" data-sched-id="${esc(s.id || 'legacy')}" title="删除此时间">×</button>
-  </span>`).join('');
+  const schedHtml = schedules.map(s => {
+    const eff = _effectiveSchedule(s);
+    return `<span class="dp-sched-pill ${_schedStateClass(eff)}">
+      <span class="ico-clock"></span>
+      <span class="dp-sched-text">${esc(fmtSchedule(eff))}</span>
+      <button class="dp-sched-x" data-action="dp-remove-schedule" data-task-id="${t.id}" data-sched-id="${esc(s.id || 'legacy')}" title="删除此时间">×</button>
+    </span>`;
+  }).join('');
 
   // 子任务 — union 桌面模型(parentTaskId)+ 老 mobile 模型(t.subtasks 数组)
   const childTasks = (state.tasks || [])

@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-0614';
+const _PSFOCUS_BUILD = '20260509-0915';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -532,6 +532,7 @@ function emptyState() {
   return {
     folders: [], projects: [], taskLists: [], tasks: [],
     events: [], sessions: [], tags: [], smartLists: [], templates: [],
+    summaries: [], summaryTags: [], summaryDayModules: {},
     settings: {}, currentSession: null,
   };
 }
@@ -627,11 +628,31 @@ function sanitizeState(s) {
   }
   if (dirty) _stateNeedsBackfillPush = true;
 
+  // 摘要笔记 + 标签库 + 按天的模块(对齐桌面 main.js 的 schema)
+  const summaries = arr(s.summaries);
+  for (const sum of summaries) {
+    if (!Array.isArray(sum.tags))    sum.tags    = [];
+    if (!Array.isArray(sum.images))  sum.images  = [];
+    if (typeof sum.note !== 'string') sum.note   = '';
+    if (!sum.createdAt) sum.createdAt = sum.updatedAt || Date.now();
+    if (!sum.updatedAt) sum.updatedAt = sum.createdAt;
+    if (sum.modules) delete sum.modules;
+  }
+  const summaryTags = arr(s.summaryTags);
+  const summaryDayModules = (s.summaryDayModules && typeof s.summaryDayModules === 'object' && !Array.isArray(s.summaryDayModules)) ? s.summaryDayModules : {};
+  for (const k of Object.keys(summaryDayModules)) {
+    if (!Array.isArray(summaryDayModules[k])) summaryDayModules[k] = [];
+    for (const m of summaryDayModules[k]) {
+      if (!Array.isArray(m.entries)) m.entries = [];
+    }
+  }
+
   return {
     ...e, ...s,
     folders: arr(s.folders), projects: arr(s.projects), taskLists: arr(s.taskLists),
     tasks, events, sessions: arr(s.sessions),
     tags: arr(s.tags), smartLists: arr(s.smartLists), templates: arr(s.templates),
+    summaries, summaryTags, summaryDayModules,
     settings,
   };
 }
@@ -741,6 +762,7 @@ function smartListTasks(sl) {
 const TAB_DEFS = {
   tasks:    { label: '任务', icon: 'ico-folder' },
   calendar: { label: '日历', icon: 'ico-calendar' },
+  summary:  { label: '摘要', icon: 'ico-pencil' },
   stats:    { label: '统计', icon: 'ico-history' },
   timer:    { label: '计时', icon: 'ico-clock' },
   settings: { label: '设置', icon: 'ico-settings' },
@@ -916,9 +938,25 @@ function renderTab(tab) {
   if (tab !== 'calendar' && ui.calSideOpen) closeCalSideDrawer();
   if (tab === 'tasks') return renderTasksTab(view);
   if (tab === 'calendar') return renderCalendarTab(view);
+  if (tab === 'summary') return renderSummaryTab(view);
   if (tab === 'stats') return renderStatsTab(view);
   if (tab === 'timer') return renderTimerTab(view);
   if (tab === 'settings') return renderSettingsTab(view);
+}
+
+// ============================================================
+// ===== 摘要 tab(类 flomo,见桌面 renderer/main.js 同款架构)=====
+// ============================================================
+// 阶段 4a 占位:tab 注册 + 空 view + 提示
+// 后续阶段 4b 会做完整 port(输入框、列表、模块系统、浮窗等)
+
+function renderSummaryTab(view) {
+  view.innerHTML = `
+    <div style="padding:32px 18px;text-align:center;color:var(--text-dim);">
+      <div style="font-size:18px;font-weight:600;color:var(--text-strong);margin-bottom:8px;">摘要</div>
+      <div style="font-size:13px;line-height:1.6;">类 flomo 的日常笔记 + 模块系统</div>
+      <div style="font-size:12px;line-height:1.6;margin-top:12px;">手机端 port 进行中 — 第二阶段会上完整功能。<br>当前在桌面端使用。</div>
+    </div>`;
 }
 
 function renderTimerTab(view) {

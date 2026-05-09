@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-1945';
+const _PSFOCUS_BUILD = '20260509-2030';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2187,7 +2187,10 @@ function openImageLightbox(images, startIdx) {
       </div>`;
     document.body.appendChild(lb);
     lb.querySelector('.img-lb-mask').addEventListener('click', closeImageLightbox);
-    lb.querySelector('.img-lb-close').addEventListener('click', closeImageLightbox);
+    const closeBtn = lb.querySelector('.img-lb-close');
+    closeBtn.addEventListener('click', closeImageLightbox);
+    // touch fallback — 防 iOS Safari 上 viewport touch-action:none 偶发把附近 tap 吞掉
+    closeBtn.addEventListener('touchend', (ev) => { ev.preventDefault(); ev.stopPropagation(); closeImageLightbox(); }, { passive: false });
   }
   const track = lb.querySelector('.img-lb-track');
   track.innerHTML = images.map(im => `

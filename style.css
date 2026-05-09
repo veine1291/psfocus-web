@@ -2597,18 +2597,21 @@ html, body { overscroll-behavior-y: contain; }
 }
 .img-lb-close {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  right: 12px;
-  width: 36px; height: 36px;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: 14px;
+  width: 44px; height: 44px;                /* 36→44,Apple 触控目标最小推荐 */
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.55);          /* 更不透明的暗底,在亮图上能看清 */
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
   color: #fff;
-  font-size: 22px; line-height: 1;
-  border: none;
-  z-index: 2;
+  font-size: 26px; line-height: 1;
+  z-index: 3;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
-.img-lb-close:active { background: rgba(255, 255, 255, 0.28); }
+.img-lb-close:active { background: rgba(0, 0, 0, 0.8); }
 .img-lb-viewport {
   flex: 1 1 auto;
   overflow: hidden;
@@ -3012,15 +3015,13 @@ html, body { overscroll-behavior-y: contain; }
   line-height: 1;
 }
 .sum-input-day-mods {
-  display: none;
+  display: flex; /* 始终显示;之前 :focus-within 触发的 hide-show 会让手机点 dot 时元素瞬间消失 → click 丢失 */
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px dashed var(--border-soft);
   flex-direction: column;
   gap: 6px;
 }
-.sum-input-card:focus-within .sum-input-day-mods,
-.sum-input-card.has-pending-modules .sum-input-day-mods { display: flex; }
 .sum-input-day-mods-label {
   font-size: 10px;
   color: var(--text-faint, var(--text-dim));
@@ -3030,33 +3031,36 @@ html, body { overscroll-behavior-y: contain; }
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 4px 8px;
+  gap: 10px;
+  padding: 6px 10px;
   background: var(--bg-panel);
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: 8px;
+  font-size: 13px;
 }
 .sum-mod-editor-title { font-weight: 500; color: var(--text-strong); min-width: 60px; }
-.sum-mod-editor-hint { font-size: 10px; color: var(--text-faint, var(--text-dim)); margin-left: auto; }
-.sum-mod-rating-dots { display: inline-flex; gap: 3px; }
+.sum-mod-editor-hint { font-size: 11px; color: var(--text-faint, var(--text-dim)); margin-left: auto; }
+.sum-mod-rating-dots { display: inline-flex; gap: 4px; }
 .sum-mod-dot {
-  width: 16px; height: 16px;
+  width: 28px; height: 28px;             /* 16→28,手机点得到 */
   border: 0; border-radius: 50%;
   background: transparent;
   color: var(--border);
-  font-size: 16px;
+  font-size: 22px;
   line-height: 1;
   padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;             /* 取消 iOS 300ms 延迟 */
+  cursor: pointer;
 }
 .sum-mod-dot.filled { color: var(--accent); }
 .sum-mod-dot.pending { outline: 1.5px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: 1px; }
 .sum-mod-duration-input {
-  width: 80px;
+  width: 130px;                            /* 80→130,容得下 "1h 30m" */
   border: 1px solid var(--border-soft);
   background: var(--bg-section);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
+  border-radius: 6px;
+  padding: 6px 10px;                       /* 大点击区 */
+  font-size: 14px;                         /* iOS Safari < 16px 会触发 zoom;直接给到 14 + 不缩放够用 */
   outline: none;
 }
 

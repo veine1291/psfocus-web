@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260509-2110';
+const _PSFOCUS_BUILD = '20260510-0830';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1216,7 +1216,7 @@ function _renderSummaryInputBox() {
       <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ul" title="无序"><span class="ico-list"></span></button>
       <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ol" title="有序">1.</button>
       <span class="sum-tb-sep"></span>
-      <button class="sum-tb-btn sum-tb-mod" data-action="summary-open-mod-sheet" title="管理模块"><span class="ico-target"></span></button>
+      <button class="sum-tb-btn sum-tb-mod" data-action="summary-open-mod-sheet" title="管理模块">+ 模块</button>
       <div class="sum-input-spacer"></div>
       <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
     </div>

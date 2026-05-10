@@ -3053,7 +3053,6 @@ html, body { overscroll-behavior-y: contain; }
   cursor: pointer;
 }
 .sum-mod-dot.filled { color: var(--accent); }
-.sum-mod-dot.pending { outline: 1.5px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: 1px; }
 .sum-mod-duration-input {
   width: 130px;                            /* 80→130,容得下 "1h 30m" */
   border: 1px solid var(--border-soft);
@@ -3085,7 +3084,15 @@ html, body { overscroll-behavior-y: contain; }
 .sum-tb-btn:active { background: var(--bg-active); color: var(--text); }
 .sum-tb-hash { font-size: 16px; font-weight: 600; }
 .sum-tb-img .ico-image { width: 16px; height: 16px; }
-.sum-tb-mod .ico-target { width: 17px; height: 17px; }
+.sum-tb-mod {
+  width: auto;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.sum-tb-mod:active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .sum-mod-picker-icon { width: 16px; height: 16px; margin-right: 6px; }
 
 /* 补充移动端缺失的 ico-* mask 定义(摘要 tab 用到) */

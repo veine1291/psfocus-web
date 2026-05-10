@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260510-0900';
+const _PSFOCUS_BUILD = '20260510-0945';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1226,6 +1226,7 @@ function _renderSummaryInputBox() {
 function _renderSummaryModuleEditor(m, dayKey) {
   const dataAttrs = `data-day-key="${esc(dayKey)}" data-mod-id="${esc(m.id)}"`;
   const titleHtml = `<span class="sum-mod-editor-title">${esc(m.title || '')}</span>`;
+  const delBtn = `<button class="sum-mod-editor-del" ${dataAttrs} data-action="summary-mod-del" title="删除此模块">×</button>`;
   if (m.kind === 'rating') {
     const max = Math.max(1, parseInt(m.max, 10) || 5);
     const pending = summaryState.pendingModuleValues[m.id];
@@ -1239,6 +1240,7 @@ function _renderSummaryModuleEditor(m, dayKey) {
       ${titleHtml}
       <div class="sum-mod-rating-dots">${dotsHtml}</div>
       <span class="sum-mod-editor-hint">${pendingNum != null ? `${pendingNum}/${max}` : '点 dot'}</span>
+      ${delBtn}
     </div>`;
   }
   if (m.kind === 'duration') {
@@ -1246,6 +1248,7 @@ function _renderSummaryModuleEditor(m, dayKey) {
       return `<div class="sum-mod-editor">
         ${titleHtml}
         <span class="sum-mod-editor-hint">自动 — 不需手填</span>
+        ${delBtn}
       </div>`;
     }
     const pending = summaryState.pendingModuleValues[m.id];
@@ -1256,6 +1259,7 @@ function _renderSummaryModuleEditor(m, dayKey) {
         data-action-input="summary-duration-pending"
         value="${pendingMs != null ? esc(_summaryFmtDurationMs(pendingMs)) : ''}"
         placeholder="如 1h 30m">
+      ${delBtn}
     </div>`;
   }
   return '';
@@ -1371,34 +1375,17 @@ function _renderSummaryDayHeaderModules(dayKey) {
 }
 
 // 打开模块管理 sheet(手机版用底部 sheet 替代桌面的 popover)
+// 小菜单 — 只 3 项 add;管理(改名/删除)用每个 editor 的 × 按钮
 function _openSummaryModSheet(dayKey) {
-  const dayMods = _summaryModulesForDay(dayKey);
-  const pickerOpen = summaryState.modulePickerOpenInPopover;
-  const picker = pickerOpen ? `<div class="sum-mod-picker">
-    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="rating" data-day-key="${esc(dayKey)}">
-      <span class="ico-target sum-mod-picker-icon"></span><span>打分模块</span>
-    </button>
-    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="duration" data-day-key="${esc(dayKey)}">
-      <span class="ico-clock sum-mod-picker-icon"></span><span>时长模块</span>
-    </button>
-    <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="checkin" data-day-key="${esc(dayKey)}">
-      <span class="ico-check sum-mod-picker-icon"></span><span>打卡模块</span>
-    </button>
-  </div>` : '';
-  const cardsHtml = dayMods.length
-    ? `<div class="sum-mod-popover-cards">${dayMods.map(m => _renderSummaryModuleCard(m, dayKey)).join('')}</div>`
-    : `<div class="sum-mod-popover-empty">该天还没有模块</div>`;
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content">
-      <div class="sum-mod-popover-head">
-        <span class="sum-mod-popover-title">${esc(_summaryDayLabel(_dayKeyToTs(dayKey)))} · 模块</span>
-        <div class="sum-mod-popover-add-wrap">
-          <button class="sum-mod-popover-add ${pickerOpen?'open':''}" data-action="summary-toggle-picker-in-popover" data-day-key="${esc(dayKey)}">+ 加模块</button>
-          ${picker}
-        </div>
+      <div class="section-title" style="padding:0 0 8px;">加模块</div>
+      <div class="sum-mod-picker sum-mod-picker-vertical">
+        <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="rating"   data-day-key="${esc(dayKey)}"><span class="ico-target sum-mod-picker-icon"></span><span>打分模块</span></button>
+        <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="duration" data-day-key="${esc(dayKey)}"><span class="ico-clock sum-mod-picker-icon"></span><span>时长模块</span></button>
+        <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="checkin"  data-day-key="${esc(dayKey)}"><span class="ico-check sum-mod-picker-icon"></span><span>打卡模块</span></button>
       </div>
-      ${cardsHtml}
     </div>
   `);
 }
@@ -1671,8 +1658,9 @@ const _summaryActions = {
     if (!m) return;
     _summaryModulesForDay(dayKey).push(m);
     summaryState.modulePickerOpenInPopover = false;
+    summaryState.modulePopoverForDay = null;
     pushState();
-    _openSummaryModSheet(dayKey);
+    closeSheet();    // 关掉小菜单 sheet
     renderAll();
   },
   'summary-mod-toggle-expand': (el) => {
@@ -1687,11 +1675,12 @@ const _summaryActions = {
     const dayKey = el.dataset.dayKey;
     const modId = el.dataset.modId;
     if (!dayKey || !modId) return;
-    if (!confirm('删除此模块?其当天填写的所有记录也会一起删除。')) return;
+    if (!confirm('删除此模块?当天的录入会一起删除,其它日期的历史保留。')) return;
     const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
     state.summaryDayModules[dayKey] = arr.filter(m => m.id !== modId);
+    // pendingModuleValues 也清掉这条
+    if (summaryState.pendingModuleValues) delete summaryState.pendingModuleValues[modId];
     pushState();
-    _openSummaryModSheet(dayKey);
     renderAll();
   },
   'summary-mod-edit-title': (el) => {

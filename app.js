@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260510-0830';
+const _PSFOCUS_BUILD = '20260510-0900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1648,10 +1648,15 @@ const _summaryActions = {
   },
   // 模块管理 sheet — 默认 today;day-header 已不再触发,这里就是 input 工具栏的 "管理模块" 按钮
   'summary-open-mod-sheet': (el) => {
-    const k = (el && el.dataset.dayKey) || _todayKey();
-    summaryState.modulePopoverForDay = k;
-    summaryState.modulePickerOpenInPopover = false;
-    _openSummaryModSheet(k);
+    try {
+      const k = (el && el.dataset.dayKey) || _todayKey();
+      summaryState.modulePopoverForDay = k;
+      summaryState.modulePickerOpenInPopover = false;
+      _openSummaryModSheet(k);
+    } catch (err) {
+      console.error('[summary-open-mod-sheet]', err);
+      showToast('打开模块管理失败:' + (err && err.message || err));
+    }
   },
   'summary-toggle-picker-in-popover': (el) => {
     summaryState.modulePickerOpenInPopover = !summaryState.modulePickerOpenInPopover;

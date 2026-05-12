@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260512-1900';
+const _PSFOCUS_BUILD = '20260512-2000';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1329,38 +1329,58 @@ function _renderSummaryList() {
     if (!byDay.has(k)) byDay.set(k, []);
     byDay.get(k).push(s);
   }
-  // 强制把"今天"加到 byDay 里(就算还没笔记)— 这样用户能在今天 +模块
-  const todayKey = _todayKey();
-  if (!byDay.has(todayKey) && filter === 'all' && !q) {
-    const sortedKeys = [todayKey, ...Array.from(byDay.keys()).sort().reverse()];
-    const newMap = new Map();
-    newMap.set(todayKey, []);
-    for (const k of sortedKeys) if (k !== todayKey && byDay.has(k)) newMap.set(k, byDay.get(k));
-    byDay.clear();
-    for (const [k, v] of newMap) byDay.set(k, v);
+  // 收集所有"有活动"的天:笔记 / session / 模块 / 今天
+  // 过滤模式(tag / search)下只看笔记 days,避免无关空 day 干扰筛选结果
+  const activeDays = new Set(byDay.keys());
+  if (filter === 'all' && !q) {
+    for (const s of (state.sessions || [])) {
+      if (s.startedAt) activeDays.add(_summaryDayKey(s.startedAt));
+    }
+    for (const k of Object.keys(state.summaryDayModules || {})) {
+      const arr = state.summaryDayModules[k];
+      if (Array.isArray(arr) && arr.length) activeDays.add(k);
+    }
+    activeDays.add(_todayKey());
   }
-  if (!byDay.size) {
+  if (!activeDays.size) {
     return `<div class="sum-empty">${q || filter !== 'all' ? '没有符合的笔记' : '还没有笔记 — 上面输入框写一条'}</div>`;
   }
+  // 按 dayKey 倒序(今天在最上)
+  const sortedKeys = Array.from(activeDays).sort().reverse();
   let html = '';
-  for (const [k, items] of byDay) {
+  for (const k of sortedKeys) {
+    const items = byDay.get(k) || [];
+    const hasNotes = items.length > 0;
     const collapsed = summaryState.collapsedDays.has(k);
-    const refTs = items.length ? items[0].createdAt : _dayKeyToTs(k);
+    const refTs = hasNotes ? items[0].createdAt : _dayKeyToTs(k);
     const dayLabel = _summaryDayLabel(refTs);
     const modSummary = _renderSummaryDayHeaderModules(k);
-    html += `<div class="sum-day ${collapsed?'collapsed':''}">
-      <div class="sum-day-header">
-        <button class="sum-day-toggle" data-action="summary-toggle-day" data-day-key="${esc(k)}">
-          <span class="sum-day-chev">${collapsed ? '▶' : '▼'}</span>
-          <span class="sum-day-label">${dayLabel}</span>
-          ${items.length ? `<span class="sum-day-count">${items.length} 条</span>` : ''}
-        </button>
-        ${modSummary ? `<div class="sum-day-mods">${modSummary}</div>` : ''}
-      </div>
-      ${collapsed || !items.length ? '' : `<div class="sum-day-body">
-        <div class="sum-day-items">${items.map(_renderSummaryItem).join('')}</div>
-      </div>`}
-    </div>`;
+    if (hasNotes) {
+      html += `<div class="sum-day ${collapsed?'collapsed':''}">
+        <div class="sum-day-header">
+          <button class="sum-day-toggle" data-action="summary-toggle-day" data-day-key="${esc(k)}">
+            <span class="sum-day-chev">${collapsed ? '▶' : '▼'}</span>
+            <span class="sum-day-label">${dayLabel}</span>
+            <span class="sum-day-count">${items.length} 条</span>
+          </button>
+          ${modSummary ? `<div class="sum-day-mods">${modSummary}</div>` : ''}
+        </div>
+        ${collapsed ? '' : `<div class="sum-day-body">
+          <div class="sum-day-items">${items.map(_renderSummaryItem).join('')}</div>
+        </div>`}
+      </div>`;
+    } else {
+      // 无笔记:只显示 header,不显示 chevron / count / body
+      html += `<div class="sum-day sum-day-empty">
+        <div class="sum-day-header">
+          <div class="sum-day-toggle sum-day-toggle-static">
+            <span class="sum-day-chev-spacer"></span>
+            <span class="sum-day-label">${dayLabel}</span>
+          </div>
+          ${modSummary ? `<div class="sum-day-mods">${modSummary}</div>` : ''}
+        </div>
+      </div>`;
+    }
   }
   return html;
 }
@@ -1392,7 +1412,8 @@ function _renderSummaryItem(s) {
 function _renderSummaryDayHeaderModules(dayKey) {
   const parts = [];
   const focusMs = _summaryFocusMsForDay(dayKey);
-  if (focusMs > 0) parts.push(`<span class="sum-day-mod sum-day-mod-focus">专注 ${_summaryFmtDurationMs(focusMs)}</span>`);
+  // 始终显示专注 chip — 0 显示 "—"(用户:"专注时长 0 也要记录")
+  parts.push(`<span class="sum-day-mod sum-day-mod-focus">专注 ${focusMs > 0 ? _summaryFmtDurationMs(focusMs) : '—'}</span>`);
   const mods = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
   for (const m of mods) {
     let txt = '';

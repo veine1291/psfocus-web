@@ -3348,6 +3348,9 @@ html, body { overscroll-behavior-y: contain; }
   flex: 0 0 auto;
 }
 .sum-day-chev { font-size: 9px; color: var(--text-dim); width: 12px; }
+.sum-day-chev-spacer { display: inline-block; width: 12px; }  /* 占位,跟有 chevron 的天对齐 */
+.sum-day-toggle-static { cursor: default; }                   /* 没笔记的天不能点 */
+.sum-day-empty .sum-day-label { font-weight: 500; color: var(--text-dim); }
 .sum-day-label { font-size: 13px; font-weight: 600; color: var(--text); }
 .sum-day-count { font-size: 11px; color: var(--text-dim); }
 .sum-day-mods {

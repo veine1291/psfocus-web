@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260510-1200';
+const _PSFOCUS_BUILD = '20260510-1230';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1234,12 +1234,15 @@ function _renderSummaryInputBox() {
 
 function _renderSummaryModuleEditor(m, dayKey) {
   const dataAttrs = `data-day-key="${esc(dayKey)}" data-mod-id="${esc(m.id)}"`;
-  // 标题改成可编辑 input — blur 时保存,看起来像 label 直到聚焦
+  // 标题改成可编辑 input — blur 时保存,看起来像 label 直到聚焦;聚焦自动撑开容纳输入
   const titleHtml = `<input class="sum-mod-editor-title-input" type="text" ${dataAttrs}
     value="${esc(m.title || '')}"
     data-action-blur="summary-mod-edit-title"
     placeholder="标题"
-    size="6">`;
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"
+    spellcheck="false">`;
   const delBtn = `<button class="sum-mod-editor-del" ${dataAttrs} data-action="summary-mod-del" title="删除此模块">×</button>`;
   if (m.kind === 'rating') {
     const max = Math.max(1, parseInt(m.max, 10) || 5);

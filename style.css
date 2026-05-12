@@ -3077,18 +3077,21 @@ html, body { overscroll-behavior-y: contain; }
   white-space: nowrap;
 }
 .sum-mod-editor-hint { display: none; }   /* 紧凑模式下隐藏提示文字 */
-/* 可编辑标题 — 看起来像 label,聚焦时才显示输入框样式 */
+/* 可编辑标题 — 看起来像 label;聚焦时撑开容纳 IME 拼音组词 */
 .sum-mod-editor-title-input {
   font-weight: 500;
   color: var(--text-strong);
-  font-size: 11px;
+  font-size: 12px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
   padding: 2px 4px;
   outline: none;
-  max-width: 80px;
+  width: 6em;                          /* ~6 个汉字宽 */
+  min-width: 4em;
   -webkit-tap-highlight-color: transparent;
+  font-family: inherit;
+  ime-mode: active;
 }
 .sum-mod-editor-title-input:hover {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
@@ -3096,6 +3099,8 @@ html, body { overscroll-behavior-y: contain; }
 .sum-mod-editor-title-input:focus {
   background: var(--bg-section);
   border-color: var(--accent);
+  width: 11em;                         /* 聚焦撑开,容纳拼音组词条 */
+  font-size: 14px;                     /* iOS Safari < 16 会触发 zoom,这里靠 viewport user-scalable=no 抑制 */
 }
 /* 满分输入 */
 .sum-mod-editor-slash { color: var(--text-faint, var(--text-dim)); font-size: 11px; }

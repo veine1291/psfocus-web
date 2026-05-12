@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260512-2000';
+const _PSFOCUS_BUILD = '20260512-2100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -963,6 +963,7 @@ let summaryState = {
   collapsedDays: new Set(),
   pendingImages: [],           // [{ id, cloudFileID, name }]
   pendingModuleValues: {},     // { [modId]: value/valueMs }
+  draftNote: '',               // 输入框未发布的笔记草稿 — 防 renderAll 时清空
   modulePopoverForDay: null,   // sheet 形式打开时的 dayKey
   modulePickerOpenInPopover: false,
   expandedModuleCards: new Set(),
@@ -1224,7 +1225,7 @@ function _renderSummaryInputBox() {
   const hasPending = Object.keys(summaryState.pendingModuleValues || {}).length > 0;
   return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
     <textarea class="sum-input" rows="2" placeholder="现在的想法是…  输入 #xxx 自动加标签;粘贴图片直接上传"
-      data-action-input="summary-input-autosize"></textarea>
+      data-action-input="summary-input-autosize">${esc(summaryState.draftNote || '')}</textarea>
     ${pendingImgs ? `<div class="sum-input-pending">${pendingImgs}</div>` : ''}
     ${todayModsHtml}
     <div class="sum-input-toolbar">
@@ -1249,9 +1250,10 @@ function _renderSummaryInputBox() {
 
 function _renderSummaryModuleEditor(m, dayKey) {
   const dataAttrs = `data-day-key="${esc(dayKey)}" data-mod-id="${esc(m.id)}"`;
-  // 标题改成可编辑 input — blur 时保存,看起来像 label 直到聚焦;聚焦自动撑开容纳输入
+  // 标题改成可编辑 input — input 事件实时保存(blur 不可靠,iOS 上有时不触发),blur 兜底
   const titleHtml = `<input class="sum-mod-editor-title-input" type="text" ${dataAttrs}
     value="${esc(m.title || '')}"
+    data-action-input="summary-mod-edit-title"
     data-action-blur="summary-mod-edit-title"
     placeholder="标题"
     autocomplete="off"
@@ -1426,9 +1428,12 @@ function _renderSummaryDayHeaderModules(dayKey) {
     } else if (m.kind === 'duration') {
       if (m.source === 'focus') continue;
       const entries = m.entries || [];
-      const first = entries[0];
-      const extra = Math.max(0, entries.length - 1);
-      txt = first ? `${m.title || '时长'} ${_summaryFmtDurationMs(first.valueMs)}${extra > 0 ? ` <span class="sum-day-mod-extra">+${extra}</span>` : ''}` : `${m.title || '时长'} —`;
+      // 时长是累加语义(比如多次睡眠),显示总和而不是"首条 + N"
+      const total = entries.reduce((sum, e) => sum + (e.valueMs || 0), 0);
+      const count = entries.length;
+      txt = count
+        ? `${m.title || '时长'} ${_summaryFmtDurationMs(total)}${count > 1 ? ` <span class="sum-day-mod-extra">×${count}</span>` : ''}`
+        : `${m.title || '时长'} —`;
     } else if (m.kind === 'checkin') {
       const done = _isCheckinDoneToday(m.taskId);
       txt = `${m.title || '打卡'} ${done?'✓':'○'}`;
@@ -1610,6 +1615,8 @@ const _summaryActions = {
     renderAll();
   },
   'summary-input-autosize': (el) => {
+    // 实时保存草稿 — 防 renderAll(点 dot / 模块按钮等)时 textarea 被替换丢失内容
+    summaryState.draftNote = el.value;
     // 把 reflow 推到下一帧,不阻塞当前 input event;前一帧没跑完的 cancel 掉,避免堆积
     if (el._autosizeRAF) cancelAnimationFrame(el._autosizeRAF);
     el._autosizeRAF = requestAnimationFrame(() => {
@@ -1756,6 +1763,7 @@ const _summaryActions = {
     }
     summaryState.pendingImages = [];
     summaryState.pendingModuleValues = {};
+    summaryState.draftNote = '';
     if (ta) ta.value = '';
     pushState();
     renderAll();

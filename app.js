@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260510-1100';
+const _PSFOCUS_BUILD = '20260510-1200';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1234,7 +1234,12 @@ function _renderSummaryInputBox() {
 
 function _renderSummaryModuleEditor(m, dayKey) {
   const dataAttrs = `data-day-key="${esc(dayKey)}" data-mod-id="${esc(m.id)}"`;
-  const titleHtml = `<span class="sum-mod-editor-title">${esc(m.title || '')}</span>`;
+  // 标题改成可编辑 input — blur 时保存,看起来像 label 直到聚焦
+  const titleHtml = `<input class="sum-mod-editor-title-input" type="text" ${dataAttrs}
+    value="${esc(m.title || '')}"
+    data-action-blur="summary-mod-edit-title"
+    placeholder="标题"
+    size="6">`;
   const delBtn = `<button class="sum-mod-editor-del" ${dataAttrs} data-action="summary-mod-del" title="删除此模块">×</button>`;
   if (m.kind === 'rating') {
     const max = Math.max(1, parseInt(m.max, 10) || 5);
@@ -1243,20 +1248,30 @@ function _renderSummaryModuleEditor(m, dayKey) {
     let dotsHtml = '';
     for (let i = 1; i <= max; i++) {
       const filled = pendingNum != null && i <= pendingNum;
-      dotsHtml += `<button class="sum-mod-dot ${filled?'filled':''} ${pendingNum != null ? 'pending' : ''}" ${dataAttrs} data-action="summary-rating-pending" data-i="${i}">●</button>`;
+      dotsHtml += `<button class="sum-mod-dot ${filled?'filled':''}" ${dataAttrs} data-action="summary-rating-pending" data-i="${i}">●</button>`;
     }
+    // 满分:/N 可编辑
+    const maxHtml = `<input class="sum-mod-editor-max-input" type="number" min="1" max="20" step="1" ${dataAttrs}
+      data-action-blur="summary-mod-edit-max"
+      value="${max}"
+      title="改满分">`;
     return `<div class="sum-mod-editor">
       ${titleHtml}
       <div class="sum-mod-rating-dots">${dotsHtml}</div>
-      <span class="sum-mod-editor-hint">${pendingNum != null ? `${pendingNum}/${max}` : '点 dot'}</span>
+      <span class="sum-mod-editor-slash">/</span>${maxHtml}
       ${delBtn}
     </div>`;
   }
   if (m.kind === 'duration') {
-    if (m.source === 'focus') {
+    const isAuto = m.source === 'focus';
+    // 来源切换 — 一个小 pill,点切换 manual ↔ focus
+    const sourceBtn = `<button class="sum-mod-editor-src-btn ${isAuto?'auto':''}" ${dataAttrs}
+      data-action="summary-mod-toggle-src"
+      title="${isAuto?'点切到手填':'点切到自动(读专注时长)'}">${isAuto?'自动':'手填'}</button>`;
+    if (isAuto) {
       return `<div class="sum-mod-editor">
         ${titleHtml}
-        <span class="sum-mod-editor-hint">自动 — 不需手填</span>
+        ${sourceBtn}
         ${delBtn}
       </div>`;
     }
@@ -1268,6 +1283,7 @@ function _renderSummaryModuleEditor(m, dayKey) {
         data-action-input="summary-duration-pending"
         value="${pendingMs != null ? esc(_summaryFmtDurationMs(pendingMs)) : ''}"
         placeholder="如 1h 30m">
+      ${sourceBtn}
       ${delBtn}
     </div>`;
   }
@@ -1719,7 +1735,18 @@ const _summaryActions = {
     if (v === mod.max) return;
     mod.max = v;
     pushState();
-    _openSummaryModSheet(dayKey);
+    renderAll();
+  },
+  // 一键切 duration source(manual ↔ focus)
+  'summary-mod-toggle-src': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'duration') return;
+    mod.source = (mod.source === 'focus') ? 'manual' : 'focus';
+    pushState();
+    renderAll();
   },
   'summary-mod-edit-source': (el) => {
     const dayKey = el.dataset.dayKey;

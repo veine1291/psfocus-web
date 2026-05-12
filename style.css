@@ -3077,6 +3077,66 @@ html, body { overscroll-behavior-y: contain; }
   white-space: nowrap;
 }
 .sum-mod-editor-hint { display: none; }   /* 紧凑模式下隐藏提示文字 */
+/* 可编辑标题 — 看起来像 label,聚焦时才显示输入框样式 */
+.sum-mod-editor-title-input {
+  font-weight: 500;
+  color: var(--text-strong);
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  outline: none;
+  max-width: 80px;
+  -webkit-tap-highlight-color: transparent;
+}
+.sum-mod-editor-title-input:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.sum-mod-editor-title-input:focus {
+  background: var(--bg-section);
+  border-color: var(--accent);
+}
+/* 满分输入 */
+.sum-mod-editor-slash { color: var(--text-faint, var(--text-dim)); font-size: 11px; }
+.sum-mod-editor-max-input {
+  width: 26px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 2px;
+  font-size: 11px;
+  color: var(--text);
+  outline: none;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.sum-mod-editor-max-input::-webkit-outer-spin-button,
+.sum-mod-editor-max-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.sum-mod-editor-max-input:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.sum-mod-editor-max-input:focus {
+  background: var(--bg-section);
+  border-color: var(--accent);
+}
+/* 来源切换 pill(duration) */
+.sum-mod-editor-src-btn {
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  color: var(--text-dim);
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.sum-mod-editor-src-btn.auto {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
 .sum-mod-rating-dots { display: inline-flex; gap: 2px; }
 .sum-mod-dot {
   width: 18px; height: 18px;

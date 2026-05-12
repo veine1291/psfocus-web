@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260512-1830';
+const _PSFOCUS_BUILD = '20260512-1900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1058,7 +1058,13 @@ function _summaryFocusMsForDay(dayKey) {
   for (const s of (state.sessions || [])) {
     if (!s.startedAt) continue;
     if (s.startedAt < dayStart || s.startedAt >= dayEnd) continue;
-    total += (s.duration || 0);
+    // 防御:单条 session > 16h 不合理(老 bug 留下的脏数据 — OS 休眠没被捕获),跳过不计
+    const dur = s.duration || 0;
+    if (dur > 16 * 3600_000) {
+      console.warn('[summary] skip outlier session', s.id, Math.round(dur/3600000), 'h');
+      continue;
+    }
+    total += dur;
   }
   return total;
 }

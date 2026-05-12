@@ -3367,6 +3367,55 @@ html, body { overscroll-behavior-y: contain; }
   padding: 2px 8px;
   border-radius: 10px;
   white-space: nowrap;
+  border: 0;
+}
+.sum-day-mod-clickable {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.sum-day-mod-clickable:active { background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel)); }
+/* 日期 header 的编辑按钮 */
+.sum-day-edit-btn {
+  width: 26px; height: 26px;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint, var(--text-dim));
+  border-radius: 50%;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  flex-shrink: 0;
+}
+.sum-day-edit-btn .ico-pencil { width: 13px; height: 13px; }
+.sum-day-edit-btn:active { background: color-mix(in srgb, currentColor 15%, transparent); color: var(--accent); }
+/* mod detail sheet 内的 entry 列表 */
+.sum-mod-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sum-mod-detail-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-section);
+  border-radius: 8px;
+}
+.sum-mod-detail-val { font-weight: 500; color: var(--text); font-size: 14px; }
+.sum-mod-detail-time { font-size: 11px; color: var(--text-dim); margin-left: auto; }
+.sum-mod-detail-del {
+  width: 24px; height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint, var(--text-dim));
+  border-radius: 50%;
+  font-size: 15px;
+  line-height: 1;
 }
 .sum-day-mod-focus {
   color: var(--accent);

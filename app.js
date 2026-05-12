@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260513-0900';
+const _PSFOCUS_BUILD = '20260513-1100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1361,6 +1361,7 @@ function _renderSummaryList() {
     const refTs = hasNotes ? items[0].createdAt : _dayKeyToTs(k);
     const dayLabel = _summaryDayLabel(refTs);
     const modSummary = _renderSummaryDayHeaderModules(k);
+    const editBtn = `<button class="sum-day-edit-btn" data-action="summary-day-edit" data-day-key="${esc(k)}" title="编辑此天的模块"><span class="ico-pencil"></span></button>`;
     if (hasNotes) {
       html += `<div class="sum-day ${collapsed?'collapsed':''}">
         <div class="sum-day-header">
@@ -1369,6 +1370,7 @@ function _renderSummaryList() {
             <span class="sum-day-label">${dayLabel}</span>
             <span class="sum-day-count">${items.length} 条</span>
           </button>
+          ${editBtn}
           ${modSummary ? `<div class="sum-day-mods">${modSummary}</div>` : ''}
         </div>
         ${collapsed ? '' : `<div class="sum-day-body">
@@ -1383,6 +1385,7 @@ function _renderSummaryList() {
             <span class="sum-day-chev-spacer"></span>
             <span class="sum-day-label">${dayLabel}</span>
           </div>
+          ${editBtn}
           ${modSummary ? `<div class="sum-day-mods">${modSummary}</div>` : ''}
         </div>
       </div>`;
@@ -1423,31 +1426,69 @@ function _renderSummaryDayHeaderModules(dayKey) {
   const mods = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
   for (const m of mods) {
     let txt = '';
+    const dataAttrs = `data-day-key="${esc(dayKey)}" data-mod-id="${esc(m.id)}"`;
     if (m.kind === 'rating') {
       const max = m.max || 5;
       const entries = m.entries || [];
-      const first = entries[0];
-      const extra = Math.max(0, entries.length - 1);
-      txt = first ? `${m.title || '打分'} ${first.value}/${max}${extra > 0 ? ` <span class="sum-day-mod-extra">+${extra}</span>` : ''}` : `${m.title || '打分'} —`;
+      const count = entries.length;
+      if (count) {
+        // 多条 → 平均值;单条 → 该值
+        const avg = entries.reduce((sum, e) => sum + (e.value || 0), 0) / count;
+        const avgStr = count > 1 ? avg.toFixed(1) : String(entries[0].value || 0);
+        txt = `${m.title || '打分'} ${avgStr}/${max}${count > 1 ? ` <span class="sum-day-mod-extra">平均 ×${count}</span>` : ''}`;
+      } else {
+        txt = `${m.title || '打分'} —`;
+      }
     } else if (m.kind === 'duration') {
       if (m.source === 'focus') continue;
       const entries = m.entries || [];
-      // 时长是累加语义(比如多次睡眠),显示总和而不是"首条 + N"
-      const total = entries.reduce((sum, e) => sum + (e.valueMs || 0), 0);
       const count = entries.length;
-      txt = count
-        ? `${m.title || '时长'} ${_summaryFmtDurationMs(total)}${count > 1 ? ` <span class="sum-day-mod-extra">×${count}</span>` : ''}`
-        : `${m.title || '时长'} —`;
+      if (count) {
+        // 多条 → 平均值;单条 → 该值
+        const total = entries.reduce((sum, e) => sum + (e.valueMs || 0), 0);
+        const avg = total / count;
+        const display = count > 1 ? _summaryFmtDurationMs(avg) : _summaryFmtDurationMs(total);
+        txt = `${m.title || '时长'} ${display}${count > 1 ? ` <span class="sum-day-mod-extra">平均 ×${count}</span>` : ''}`;
+      } else {
+        txt = `${m.title || '时长'} —`;
+      }
     } else if (m.kind === 'checkin') {
       const done = _isCheckinDoneToday(m.taskId);
       txt = `${m.title || '打卡'} ${done?'✓':'○'}`;
     }
-    if (txt) parts.push(`<span class="sum-day-mod">${txt}</span>`);
+    // 改成 button:点击弹详情 sheet,列出当天该模块的所有 entries
+    if (txt) parts.push(`<button class="sum-day-mod sum-day-mod-clickable" data-action="summary-mod-detail" ${dataAttrs} title="查看 / 编辑详情">${txt}</button>`);
   }
   return parts.join('');
 }
 
 // 打开模块管理 sheet(手机版用底部 sheet 替代桌面的 popover)
+// 编辑某天的全部模块 — 跟 _openSummaryModSheet 的 picker 不同,这里是完整管理面板
+function _openSummaryDayEditSheet(dayKey) {
+  const dayMods = _summaryModulesForDay(dayKey);
+  const cardsHtml = dayMods.length
+    ? dayMods.map(m => _renderSummaryModuleCard(m, dayKey)).join('')
+    : '<div style="color:var(--text-dim);font-size:13px;padding:14px 0;text-align:center;">该天还没有模块</div>';
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 4px;">${esc(_summaryDayLabel(_dayKeyToTs(dayKey)))} · 模块编辑</div>
+      <div style="color:var(--text-dim);font-size:11px;margin-bottom:10px;">改标题/满分/来源,展开看历史 entries,× 删模块</div>
+      <div class="sum-mod-popover-cards">${cardsHtml}</div>
+      <div style="display:flex;gap:6px;margin-top:14px;flex-wrap:wrap;">
+        <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="rating" data-day-key="${esc(dayKey)}" style="flex:1;min-width:0;border:1px dashed var(--border-soft);border-radius:8px;padding:8px;background:var(--bg-section);">
+          <span class="ico-target sum-mod-picker-icon"></span> 打分
+        </button>
+        <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="duration" data-day-key="${esc(dayKey)}" style="flex:1;min-width:0;border:1px dashed var(--border-soft);border-radius:8px;padding:8px;background:var(--bg-section);">
+          <span class="ico-clock sum-mod-picker-icon"></span> 时长
+        </button>
+        <button class="sum-mod-picker-item" data-action="summary-add-module" data-kind="checkin" data-day-key="${esc(dayKey)}" style="flex:1;min-width:0;border:1px dashed var(--border-soft);border-radius:8px;padding:8px;background:var(--bg-section);">
+          <span class="ico-check sum-mod-picker-icon"></span> 打卡
+        </button>
+      </div>
+    </div>
+  `);
+}
 // 小菜单 — 只 3 项 add;管理(改名/删除)用每个 editor 的 × 按钮
 function _openSummaryModSheet(dayKey) {
   showSheet(`
@@ -1539,6 +1580,49 @@ const _summaryActions = {
     // 在 drawer 里点的话也要关掉 drawer(全局 dispatcher 在这里跑;_renderSummaryDrawerNav 的 local listener 先关了 drawer 就不重复)
     if (document.getElementById('drawer-nav').classList.contains('open')) closeDrawerNav();
     renderAll();
+  },
+  // 单个 module chip 点击 → 弹详情 sheet,列出当天该模块所有 entries(可单条删)
+  'summary-mod-detail': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId  = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod) return;
+    const entries = mod.entries || [];
+    const kindLabel = mod.kind === 'rating' ? '打分' : mod.kind === 'duration' ? '时长' : '打卡';
+    const max = mod.max || 5;
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 4px;">${esc(mod.title || kindLabel)}</div>
+        <div style="color:var(--text-dim);font-size:11px;margin-bottom:10px;">${kindLabel} · ${esc(_summaryDayLabel(_dayKeyToTs(dayKey)))}</div>
+        ${entries.length ? `<div class="sum-mod-detail-list">
+          ${entries.map(e => `
+            <div class="sum-mod-detail-entry">
+              <span class="sum-mod-detail-val">${mod.kind === 'rating' ? `${e.value}/${max}` : _summaryFmtDurationMs(e.valueMs)}</span>
+              <span class="sum-mod-detail-time">${_summaryFmtTime(e.at)}</span>
+              <button class="sum-mod-detail-del" data-action="summary-mod-entry-del" data-day-key="${esc(dayKey)}" data-mod-id="${esc(modId)}" data-entry-id="${esc(e.id)}" title="删除此条">×</button>
+            </div>
+          `).join('')}
+        </div>` : '<div style="color:var(--text-dim);font-size:13px;padding:14px 0;text-align:center;">还没有记录</div>'}
+        <button class="modal-btn" data-action="summary-day-edit-from-detail" data-day-key="${esc(dayKey)}" style="margin-top:14px;width:100%;">编辑此天模块</button>
+      </div>
+    `);
+  },
+  // 从详情 sheet 跳到 day-edit
+  'summary-day-edit-from-detail': (el) => {
+    closeSheet();
+    setTimeout(() => {
+      _summaryActions['summary-day-edit']({ dataset: { dayKey: el.dataset.dayKey } });
+    }, 100);
+  },
+  // 编辑当天 — 弹 sheet,列出所有模块卡片(标题/满分/source 可编辑,entries 可删),+ 加模块按钮
+  'summary-day-edit': (el) => {
+    const dayKey = el.dataset.dayKey;
+    if (!dayKey) return;
+    summaryState.modulePopoverForDay = dayKey;
+    summaryState._dayEditOpen = dayKey;     // 标记当前在 day-edit 上下文
+    _openSummaryDayEditSheet(dayKey);
   },
   // tag 子层级折叠
   'summary-tag-toggle-collapse': (el, e) => {
@@ -1805,10 +1889,16 @@ const _summaryActions = {
     if (!m) return;
     _summaryModulesForDay(dayKey).push(m);
     summaryState.modulePickerOpenInPopover = false;
-    summaryState.modulePopoverForDay = null;
     pushState();
-    closeSheet();    // 关掉小菜单 sheet
-    renderAll();
+    // 在 day-edit sheet 里加的话,sheet 继续开着重渲;在小菜单里加的话,关掉 sheet
+    if (summaryState._dayEditOpen === dayKey) {
+      _openSummaryDayEditSheet(dayKey);
+      renderAll();
+    } else {
+      summaryState.modulePopoverForDay = null;
+      closeSheet();
+      renderAll();
+    }
   },
   'summary-mod-toggle-expand': (el) => {
     const id = el.dataset.modId;
@@ -1816,7 +1906,7 @@ const _summaryActions = {
     if (summaryState.expandedModuleCards.has(id)) summaryState.expandedModuleCards.delete(id);
     else summaryState.expandedModuleCards.add(id);
     const k = el.dataset.dayKey;
-    if (k) _openSummaryModSheet(k);
+    if (summaryState._dayEditOpen === k) _openSummaryDayEditSheet(k);
   },
   'summary-mod-del': (el) => {
     const dayKey = el.dataset.dayKey;
@@ -1825,9 +1915,9 @@ const _summaryActions = {
     if (!confirm('删除此模块?当天的录入会一起删除,其它日期的历史保留。')) return;
     const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
     state.summaryDayModules[dayKey] = arr.filter(m => m.id !== modId);
-    // pendingModuleValues 也清掉这条
     if (summaryState.pendingModuleValues) delete summaryState.pendingModuleValues[modId];
     pushState();
+    if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
     renderAll();
   },
   'summary-mod-edit-title': (el) => {
@@ -1840,6 +1930,7 @@ const _summaryActions = {
     if (v === mod.title) return;
     mod.title = v;
     pushState();
+    // 不 renderAll / 不 reopen sheet — 用户正在打字,失焦会中断输入
   },
   'summary-mod-edit-max': (el) => {
     const dayKey = el.dataset.dayKey;
@@ -1851,6 +1942,7 @@ const _summaryActions = {
     if (v === mod.max) return;
     mod.max = v;
     pushState();
+    if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
     renderAll();
   },
   // 一键切 duration source(manual ↔ focus)
@@ -1862,6 +1954,7 @@ const _summaryActions = {
     if (!mod || mod.kind !== 'duration') return;
     mod.source = (mod.source === 'focus') ? 'manual' : 'focus';
     pushState();
+    if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
     renderAll();
   },
   'summary-mod-edit-source': (el) => {
@@ -1872,7 +1965,8 @@ const _summaryActions = {
     if (!mod || mod.kind !== 'duration') return;
     mod.source = el.value === 'focus' ? 'focus' : 'manual';
     pushState();
-    _openSummaryModSheet(dayKey);
+    if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
+    renderAll();
   },
   'summary-mod-entry-del': (el) => {
     const dayKey = el.dataset.dayKey;
@@ -1883,7 +1977,12 @@ const _summaryActions = {
     const eid = el.dataset.entryId;
     mod.entries = (mod.entries || []).filter(e => e.id !== eid);
     pushState();
-    _openSummaryModSheet(dayKey);
+    // 详情 sheet 或 day-edit sheet 都需要重新打开刷新
+    if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
+    else if (summaryState.modulePopoverForDay === dayKey) {
+      // 详情 sheet 上下文 — 重新触发 detail 视图
+      _summaryActions['summary-mod-detail']({ dataset: { dayKey, modId } });
+    }
     renderAll();
   },
   'summary-mod-pick-task': (el) => {
@@ -3805,6 +3904,8 @@ function closeSheet() {
   body.style.transition = '';
   $('sheet').classList.add('hidden');
   body.innerHTML = '';
+  // 清掉 day-edit 上下文标记
+  if (typeof summaryState !== 'undefined') summaryState._dayEditOpen = null;
 }
 // 下拉关闭手势 — 接受 sheet 顶部 60px 区域内任何位置触摸,识别区扩大
 // 触摸点落在输入控件 / 按钮上时跳过(避免影响打字 / 点击)

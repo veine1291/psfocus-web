@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260510-1230';
+const _PSFOCUS_BUILD = '20260512-1700';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -901,6 +901,13 @@ function renderTopbar() {
   } else if (ui.tab === 'stats') {
     $('topbar-title').textContent = '统计'; $('topbar-subtitle').textContent = '';
     $('topbar-left-btn').classList.add('hidden'); $('topbar-right-btn').classList.add('hidden');
+  } else if (ui.tab === 'summary') {
+    $('topbar-title').textContent = '摘要';
+    $('topbar-subtitle').textContent = '';
+    leftBtn.innerHTML = `<span class="ico-list"></span>`;
+    leftBtn.setAttribute('aria-label', '标签');
+    leftBtn.classList.remove('hidden');
+    $('topbar-right-btn').classList.add('hidden');
   } else if (ui.tab === 'settings') {
     const subTitles = { appearance: '外观', system: '系统', templates: '模板', account: '账号', about: '关于' };
     if (ui.settingsPage && subTitles[ui.settingsPage]) {
@@ -961,6 +968,9 @@ let summaryState = {
   expandedModuleCards: new Set(),
   // 输入框下方"今日 · 待录入"面板的折叠状态 — 跨刷新保留
   inputModsCollapsed: (() => { try { return localStorage.getItem('psfocus_inputModsCollapsed') === '1'; } catch (_) { return false; } })(),
+  // tag 侧栏:父 tag 折叠子 tag 状态、大分类(置顶 / 全部)折叠状态
+  collapsedTags: new Set(),
+  collapsedSections: new Set(),
 };
 
 // === 辅助函数(对齐桌面 main.js)===
@@ -1149,8 +1159,7 @@ function renderSummaryTab(view) {
           <div class="sum-data-empty-title">数据</div>
           <div class="sum-data-empty-hint">敬请期待 — 这里会展示模块多日趋势</div>
         </div>`
-      : `<div class="sum-tag-bar">${_renderSummaryTagBar()}</div>
-         <div class="sum-main">
+      : `<div class="sum-main">
            ${_renderSummaryInputBox()}
            <div class="sum-list">${_renderSummaryList()}</div>
          </div>`
@@ -1491,7 +1500,60 @@ const _summaryActions = {
   },
   'summary-filter': (el) => {
     summaryState.filter = el.dataset.filter || 'all';
+    // 在 drawer 里点的话也要关掉 drawer(全局 dispatcher 在这里跑;_renderSummaryDrawerNav 的 local listener 先关了 drawer 就不重复)
+    if (document.getElementById('drawer-nav').classList.contains('open')) closeDrawerNav();
     renderAll();
+  },
+  // tag 子层级折叠
+  'summary-tag-toggle-collapse': (el, e) => {
+    if (e) e.stopPropagation();
+    const t = el.dataset.tag;
+    if (!t) return;
+    if (!summaryState.collapsedTags) summaryState.collapsedTags = new Set();
+    if (summaryState.collapsedTags.has(t)) summaryState.collapsedTags.delete(t);
+    else summaryState.collapsedTags.add(t);
+    _renderSummaryDrawerNav();
+  },
+  // 大分类(置顶/全部)折叠
+  'summary-section-toggle': (el) => {
+    const k = el.dataset.section;
+    if (!k) return;
+    if (!summaryState.collapsedSections) summaryState.collapsedSections = new Set();
+    if (summaryState.collapsedSections.has(k)) summaryState.collapsedSections.delete(k);
+    else summaryState.collapsedSections.add(k);
+    _renderSummaryDrawerNav();
+  },
+  // 单条 tag 的更多菜单(置顶 / 编辑 / 删除)
+  'summary-tag-menu': (el, e) => {
+    if (e) e.stopPropagation();
+    const tagName = el.dataset.tag;
+    if (!tagName) return;
+    const tg = (state.summaryTags || []).find(t => t.name === tagName);
+    if (!tg) return;
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 8px;">#${esc(tagName)}</div>
+        <button class="modal-list-row" data-tag-action="pin">${tg.pinned?'取消置顶':'置顶'}</button>
+        <button class="modal-list-row" data-tag-action="rename">重命名</button>
+        <button class="modal-list-row modal-list-row-danger" data-tag-action="delete">删除</button>
+      </div>
+    `, (body) => {
+      body.querySelector('[data-tag-action="pin"]').onclick = () => {
+        tg.pinned = !tg.pinned;
+        pushState();
+        closeSheet();
+        _renderSummaryDrawerNav();
+      };
+      body.querySelector('[data-tag-action="rename"]').onclick = () => {
+        closeSheet();
+        _openSummaryTagRenameSheet(tagName);
+      };
+      body.querySelector('[data-tag-action="delete"]').onclick = () => {
+        closeSheet();
+        _openSummaryTagDeleteSheet(tagName);
+      };
+    });
   },
   'summary-search-input': (el) => {
     summaryState.searchQuery = el.value || '';
@@ -4073,19 +4135,168 @@ function closeDrawerNav() {
   $('drawer-nav').classList.remove('open');
   setTimeout(() => $('drawer-nav').classList.add('hidden'), 280);
 }
+// 重命名标签 sheet
+function _openSummaryTagRenameSheet(oldName) {
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 8px;">重命名 #${esc(oldName)}</div>
+      <input type="text" id="sum-tag-rename-input" value="${esc(oldName)}" style="width:100%;padding:10px;border:1px solid var(--border-soft);border-radius:8px;font-size:14px;background:var(--bg-section);color:var(--text);outline:none;" autocomplete="off">
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="modal-btn" data-rename-action="cancel" style="flex:1;">取消</button>
+        <button class="modal-btn modal-btn-primary" data-rename-action="ok" style="flex:1;">保存</button>
+      </div>
+    </div>
+  `, (body) => {
+    const input = body.querySelector('#sum-tag-rename-input');
+    setTimeout(() => input.focus(), 50);
+    body.querySelector('[data-rename-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-rename-action="ok"]').onclick = () => {
+      const newName = (input.value || '').trim();
+      if (!newName || newName === oldName) { closeSheet(); return; }
+      // 改 summaryTags
+      const tg = (state.summaryTags || []).find(t => t.name === oldName);
+      if (tg) tg.name = newName;
+      // 改所有 summary 里的 tags 引用 + 笔记里 #oldName 文本
+      for (const s of (state.summaries || [])) {
+        if (Array.isArray(s.tags)) s.tags = s.tags.map(x => x === oldName ? newName : (x.startsWith(oldName + '/') ? newName + x.slice(oldName.length) : x));
+        if (s.note) {
+          const re = new RegExp('#' + oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g');
+          s.note = s.note.replace(re, '#' + newName);
+        }
+      }
+      pushState();
+      closeSheet();
+      renderAll();
+    };
+  });
+}
+// 删除标签 sheet
+function _openSummaryTagDeleteSheet(tagName) {
+  const noteCount = (state.summaries || []).filter(s =>
+    (s.tags || []).some(x => x === tagName || x.startsWith(tagName + '/'))).length;
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 8px;">删除 #${esc(tagName)}</div>
+      <div style="color:var(--text-dim);font-size:13px;line-height:1.5;margin-bottom:12px;">
+        ${noteCount > 0
+          ? `这个标签被 ${noteCount} 条笔记使用。删除后笔记保留,但标签会从这些笔记中移除。`
+          : '这个标签还没被任何笔记使用,可以放心删。'}
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="modal-btn" data-del-action="cancel" style="flex:1;">取消</button>
+        <button class="modal-btn modal-btn-danger" data-del-action="ok" style="flex:1;">删除</button>
+      </div>
+    </div>
+  `, (body) => {
+    body.querySelector('[data-del-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-del-action="ok"]').onclick = () => {
+      state.summaryTags = (state.summaryTags || []).filter(t => t.name !== tagName && !t.name.startsWith(tagName + '/'));
+      for (const s of (state.summaries || [])) {
+        if (Array.isArray(s.tags)) s.tags = s.tags.filter(x => x !== tagName && !x.startsWith(tagName + '/'));
+      }
+      if (summaryState.filter === 'tag:' + tagName) summaryState.filter = 'all';
+      pushState();
+      closeSheet();
+      renderAll();
+    };
+  });
+}
+
+// 摘要 tab 的左侧 drawer — 跟桌面 _renderSummarySidebar 一致(标签列表 + 折叠 + 编辑)
+function _renderSummaryDrawerNav() {
+  const body = $('drawer-nav-body');
+  const tags = (state.summaryTags || []).slice().sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN'));
+  const pinned = tags.filter(t => t.pinned);
+  const tagCount = (tagName) => (state.summaries || []).filter(s =>
+    (s.tags || []).some(x => x === tagName || x.startsWith(tagName + '/'))).length;
+  const hasChildren = (tagName) => tags.some(t => t.name.startsWith(tagName + '/'));
+  if (!summaryState.collapsedTags) summaryState.collapsedTags = new Set();
+  if (!summaryState.collapsedSections) summaryState.collapsedSections = new Set();
+  const collapsedTags = summaryState.collapsedTags;
+  const sec = summaryState.collapsedSections;
+  const _isVisibleTag = (name) => {
+    const parts = name.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      if (collapsedTags.has(parts.slice(0, i).join('/'))) return false;
+    }
+    return true;
+  };
+  const renderTagRow = (tg) => {
+    if (!_isVisibleTag(tg.name)) return '';
+    const parts = tg.name.split('/').filter(Boolean);
+    const indent = (parts.length - 1) * 12;
+    const label = parts[parts.length - 1];
+    const active = summaryState.filter === ('tag:' + tg.name);
+    const count = tagCount(tg.name);
+    const hasC = hasChildren(tg.name);
+    const isC = collapsedTags.has(tg.name);
+    const chev = hasC
+      ? `<button class="sum-nav-chev ${isC?'collapsed':''}" data-action="summary-tag-toggle-collapse" data-tag="${esc(tg.name)}" title="${isC?'展开':'折叠'}子标签">▾</button>`
+      : `<span class="sum-nav-chev sum-nav-chev-spacer"></span>`;
+    return `<div class="sum-nav-row ${active?'active':''}" style="padding-left:${4 + indent}px;">
+      ${chev}
+      <button class="sum-nav-row-main-btn" data-action="summary-filter" data-filter="tag:${esc(tg.name)}" data-tag-name="${esc(tg.name)}">
+        <span class="sum-tag-hash">#</span><span class="sum-tag-label">${esc(label)}</span>
+      </button>
+      <span class="sum-tag-count">${count}</span>
+      <button class="sum-tag-more" data-action="summary-tag-menu" data-tag="${esc(tg.name)}" title="更多"><span class="ico-more"></span></button>
+    </div>`;
+  };
+  const sectionHead = (key, label) => {
+    const isHidden = sec.has(key);
+    return `<button class="sum-nav-section-title ${isHidden?'collapsed':''}" data-action="summary-section-toggle" data-section="${key}">
+      <span class="sum-nav-section-chev">▾</span>
+      <span>${esc(label)}</span>
+    </button>`;
+  };
+  const pinnedHidden = sec.has('pinned');
+  const allHidden = sec.has('all');
+  body.innerHTML = `
+    <button class="sum-nav-row sum-nav-row-main ${summaryState.filter==='all'?'active':''}"
+      data-action="summary-filter" data-filter="all">
+      <span class="ico-list"></span><span>全部笔记</span>
+    </button>
+    ${pinned.length ? `${sectionHead('pinned', '置顶标签')}
+      ${pinnedHidden ? '' : pinned.map(renderTagRow).join('')}` : ''}
+    ${tags.length ? `${sectionHead('all', '全部标签')}
+      ${allHidden ? '' : tags.map(renderTagRow).join('')}` : '<div class="sum-nav-empty">还没有标签 — 写笔记时输入 #xxx 自动建立</div>'}
+  `;
+  // tag 点击 filter:本地 listener 关 drawer + 触发 filter(全局 dispatcher 也会接,但顺序保证 close drawer)
+  body.querySelectorAll('[data-action="summary-filter"]').forEach(b => {
+    b.addEventListener('click', () => {
+      summaryState.filter = b.dataset.filter || 'all';
+      closeDrawerNav();
+      renderAll();
+    });
+  });
+}
+
 function renderDrawerNav() {
   $('drawer-user-name').textContent = uid || '未登录';
-  // 在 drawer header 区放一个 + 按钮(创建清单/项目/文件夹)
+  // 在 drawer header 区放一个 + 按钮 — 任务 tab 用于"新建清单/项目/文件夹",摘要 tab 隐藏
   const drawerHead = document.querySelector('#drawer-nav .drawer-head');
-  if (drawerHead && !drawerHead.querySelector('[data-action="drawer-create"]')) {
-    const btn = document.createElement('button');
-    btn.className = 'drawer-create-btn';
-    btn.dataset.action = 'drawer-create';
-    btn.title = '新建清单 / 项目 / 文件夹';
-    btn.innerHTML = '<span class="ico-plus"></span>';
-    btn.onclick = (e) => { e.stopPropagation(); openCreateProjectSheet(); };
-    drawerHead.appendChild(btn);
+  if (drawerHead) {
+    let createBtn = drawerHead.querySelector('[data-action="drawer-create"]');
+    if (!createBtn) {
+      createBtn = document.createElement('button');
+      createBtn.className = 'drawer-create-btn';
+      createBtn.dataset.action = 'drawer-create';
+      createBtn.innerHTML = '<span class="ico-plus"></span>';
+      createBtn.onclick = (e) => { e.stopPropagation(); openCreateProjectSheet(); };
+      drawerHead.appendChild(createBtn);
+    }
+    if (ui.tab === 'summary') {
+      createBtn.style.display = 'none';
+    } else {
+      createBtn.style.display = '';
+      createBtn.title = '新建清单 / 项目 / 文件夹';
+    }
   }
+  // 根据当前 tab 决定渲染什么 — 摘要 tab 用 tag 侧栏,其它用任务清单导航
+  if (ui.tab === 'summary') { _renderSummaryDrawerNav(); return; }
   const body = $('drawer-nav-body');
   const smartLists = (state.smartLists || []);
   let html = '';

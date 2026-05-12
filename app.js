@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260512-2100';
+const _PSFOCUS_BUILD = '20260513-0900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -960,7 +960,11 @@ let summaryState = {
   tab: 'summary',              // 'summary' | 'data'
   filter: 'all',               // 'all' | 'tag:<name>'
   searchQuery: '',
-  collapsedDays: new Set(),
+  // 日期折叠状态 — 跨刷新保留(per-device UI 偏好,不走云端)
+  collapsedDays: (() => {
+    try { return new Set(JSON.parse(localStorage.getItem('psfocus_collapsedDays') || '[]')); }
+    catch (_) { return new Set(); }
+  })(),
   pendingImages: [],           // [{ id, cloudFileID, name }]
   pendingModuleValues: {},     // { [modId]: value/valueMs }
   draftNote: '',               // 输入框未发布的笔记草稿 — 防 renderAll 时清空
@@ -1606,6 +1610,7 @@ const _summaryActions = {
     if (!k) return;
     if (summaryState.collapsedDays.has(k)) summaryState.collapsedDays.delete(k);
     else summaryState.collapsedDays.add(k);
+    try { localStorage.setItem('psfocus_collapsedDays', JSON.stringify(Array.from(summaryState.collapsedDays))); } catch (_) {}
     renderAll();
   },
   // "今日 · 待录入" 折叠/展开 — 记到 localStorage

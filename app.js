@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260512-1700';
+const _PSFOCUS_BUILD = '20260512-1830';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1555,13 +1555,19 @@ const _summaryActions = {
       };
     });
   },
-  'summary-search-input': (el) => {
+  'summary-search-input': (el, e) => {
     summaryState.searchQuery = el.value || '';
-    const listEl = document.querySelector('.sum-list');
-    if (listEl) {
-      listEl.innerHTML = _renderSummaryList();
-      if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(listEl);
-    }
+    // IME 拼音组词期间 input 事件每段都会 fire,跳过不触发重渲(等 compositionend 后正常 input 才走)
+    if (e && e.isComposing) return;
+    // 250ms 防抖 — 停止打字后才重渲整个 list,避免每键一次几百条 DOM 重建
+    if (_summaryActions._searchDebounce) clearTimeout(_summaryActions._searchDebounce);
+    _summaryActions._searchDebounce = setTimeout(() => {
+      const listEl = document.querySelector('.sum-list');
+      if (listEl) {
+        listEl.innerHTML = _renderSummaryList();
+        if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(listEl);
+      }
+    }, 250);
   },
   'summary-toggle-day': (el) => {
     const k = el.dataset.dayKey;
@@ -1577,8 +1583,13 @@ const _summaryActions = {
     renderAll();
   },
   'summary-input-autosize': (el) => {
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+    // 把 reflow 推到下一帧,不阻塞当前 input event;前一帧没跑完的 cancel 掉,避免堆积
+    if (el._autosizeRAF) cancelAnimationFrame(el._autosizeRAF);
+    el._autosizeRAF = requestAnimationFrame(() => {
+      el._autosizeRAF = null;
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+    });
   },
   'summary-tb-tag': () => {
     const ta = document.querySelector('.sum-input');

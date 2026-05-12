@@ -3015,51 +3015,89 @@ html, body { overscroll-behavior-y: contain; }
   line-height: 1;
 }
 .sum-input-day-mods {
-  display: flex; /* 始终显示;之前 :focus-within 触发的 hide-show 会让手机点 dot 时元素瞬间消失 → click 丢失 */
+  display: flex;
+  flex-direction: column;
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px dashed var(--border-soft);
-  flex-direction: column;
   gap: 6px;
 }
-.sum-input-day-mods-label {
-  font-size: 10px;
-  color: var(--text-faint, var(--text-dim));
-  font-weight: 500;
-}
-.sum-mod-editor {
+/* 折叠面板的 head — 整行可点 */
+.sum-input-day-mods-head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 6px 10px;
-  background: var(--bg-panel);
-  border-radius: 8px;
-  font-size: 13px;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
-.sum-mod-editor-title { font-weight: 500; color: var(--text-strong); min-width: 60px; }
-.sum-mod-editor-hint { font-size: 11px; color: var(--text-faint, var(--text-dim)); margin-left: auto; }
-.sum-mod-rating-dots { display: inline-flex; gap: 4px; }
+.sum-input-day-mods-head:active { color: var(--text); }
+.sum-input-day-mods-chev {
+  display: inline-flex;
+  width: 10px;
+  font-size: 8px;
+  color: var(--text-faint, var(--text-dim));
+  transition: transform .15s;
+}
+.sum-input-day-mods-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.sum-input-day-mods-count {
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+  font-weight: 400;
+}
+.sum-input-day-mods.collapsed { gap: 0; padding-bottom: 0; }
+/* 紧凑卡片网格 — flex-wrap,卡片根据数量自适应高度 */
+.sum-input-day-mods-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sum-mod-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  background: var(--bg-panel);
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid var(--border-soft);
+}
+.sum-mod-editor-title {
+  font-weight: 500;
+  color: var(--text-strong);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.sum-mod-editor-hint { display: none; }   /* 紧凑模式下隐藏提示文字 */
+.sum-mod-rating-dots { display: inline-flex; gap: 2px; }
 .sum-mod-dot {
-  width: 28px; height: 28px;             /* 16→28,手机点得到 */
+  width: 18px; height: 18px;
   border: 0; border-radius: 50%;
   background: transparent;
   color: var(--border);
-  font-size: 22px;
+  font-size: 14px;
   line-height: 1;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;             /* 取消 iOS 300ms 延迟 */
+  touch-action: manipulation;
   cursor: pointer;
 }
 .sum-mod-dot.filled { color: var(--accent); }
 .sum-mod-duration-input {
-  width: 130px;                            /* 80→130,容得下 "1h 30m" */
+  width: 90px;
   border: 1px solid var(--border-soft);
   background: var(--bg-section);
-  border-radius: 6px;
-  padding: 6px 10px;                       /* 大点击区 */
-  font-size: 14px;                         /* iOS Safari < 16px 会触发 zoom;直接给到 14 + 不缩放够用 */
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 14px;
   outline: none;
 }
 
@@ -3335,16 +3373,16 @@ html, body { overscroll-behavior-y: contain; }
 .sum-mod-picker-vertical .sum-mod-picker-item:active {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-section));
 }
-/* 模块 editor 上的 × 删除按钮 */
+/* 模块 editor 上的 × 删除按钮 — 紧凑卡片里小一些 */
 .sum-mod-editor-del {
-  width: 24px; height: 24px;
+  width: 18px; height: 18px;
   border: 0;
   background: transparent;
   color: var(--text-faint, var(--text-dim));
-  font-size: 16px;
+  font-size: 13px;
   line-height: 1;
   border-radius: 50%;
-  margin-left: auto;
+  margin-left: 2px;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;

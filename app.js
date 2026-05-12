@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260510-0945';
+const _PSFOCUS_BUILD = '20260510-1100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -959,6 +959,8 @@ let summaryState = {
   modulePopoverForDay: null,   // sheet 形式打开时的 dayKey
   modulePickerOpenInPopover: false,
   expandedModuleCards: new Set(),
+  // 输入框下方"今日 · 待录入"面板的折叠状态 — 跨刷新保留
+  inputModsCollapsed: (() => { try { return localStorage.getItem('psfocus_inputModsCollapsed') === '1'; } catch (_) { return false; } })(),
 };
 
 // === 辅助函数(对齐桌面 main.js)===
@@ -1191,11 +1193,18 @@ function _renderSummaryInputBox() {
     <button class="sum-pending-img-x" data-action="summary-pending-img-del" data-img-id="${esc(im.id)}">×</button>
   </div>`).join('');
   // 输入框下方录入区(只 rating/duration,checkin 不录入)
+  // 折叠面板 — 折叠状态记 localStorage,跨刷新保留
   const todayKey = _todayKey();
   const todayMods = _summaryModulesForDay(todayKey).filter(m => m.kind === 'rating' || m.kind === 'duration');
-  const todayModsHtml = todayMods.length ? `<div class="sum-input-day-mods">
-    <div class="sum-input-day-mods-label">今日 · 待录入</div>
-    ${todayMods.map(m => _renderSummaryModuleEditor(m, todayKey)).join('')}
+  const inputModsCollapsed = !!summaryState.inputModsCollapsed;
+  const todayModsHtml = todayMods.length ? `<div class="sum-input-day-mods ${inputModsCollapsed ? 'collapsed' : ''}">
+    <button class="sum-input-day-mods-head" data-action="summary-toggle-input-mods" type="button">
+      <span class="sum-input-day-mods-chev">${inputModsCollapsed ? '▶' : '▼'}</span>
+      <span class="sum-input-day-mods-label">今日 · 待录入 <span class="sum-input-day-mods-count">(${todayMods.length})</span></span>
+    </button>
+    ${inputModsCollapsed ? '' : `<div class="sum-input-day-mods-body">
+      ${todayMods.map(m => _renderSummaryModuleEditor(m, todayKey)).join('')}
+    </div>`}
   </div>` : '';
   const hasPending = Object.keys(summaryState.pendingModuleValues || {}).length > 0;
   return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
@@ -1478,6 +1487,12 @@ const _summaryActions = {
     if (!k) return;
     if (summaryState.collapsedDays.has(k)) summaryState.collapsedDays.delete(k);
     else summaryState.collapsedDays.add(k);
+    renderAll();
+  },
+  // "今日 · 待录入" 折叠/展开 — 记到 localStorage
+  'summary-toggle-input-mods': () => {
+    summaryState.inputModsCollapsed = !summaryState.inputModsCollapsed;
+    try { localStorage.setItem('psfocus_inputModsCollapsed', summaryState.inputModsCollapsed ? '1' : '0'); } catch (_) {}
     renderAll();
   },
   'summary-input-autosize': (el) => {

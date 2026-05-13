@@ -1999,6 +1999,72 @@ html, body { overscroll-behavior-y: contain; }
   cursor: pointer;
 }
 
+/* 专注段详情 sheet */
+.sess-proj-name {
+  display: flex; align-items: center; gap: 8px;
+}
+.sess-color-dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+}
+.sess-seg-list {
+  display: flex; flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.sess-seg {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  padding: 10px 12px;
+  background: var(--bg-section);
+  border-radius: 10px;
+  position: relative;
+  font-size: 13px;
+}
+.sess-seg-meta {
+  grid-column: 1 / 2;
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+}
+.sess-seg-time {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.sess-seg-dur {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.sess-seg-task {
+  grid-column: 1 / 2;
+  color: var(--text);
+  font-size: 12px;
+}
+.sess-seg-id {
+  grid-column: 1 / 2;
+  color: var(--text-faint, var(--text-dim));
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sess-seg-del {
+  grid-row: 1 / span 3;
+  grid-column: 2;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint, var(--text-dim));
+  font-size: 16px;
+  align-self: center;
+}
+.sess-seg-del:active { background: var(--danger-bg, rgba(229,115,115,0.15)); color: var(--danger, #e57373); }
+
 .tag-list {
   display: flex; flex-direction: column;
   max-height: 50vh;

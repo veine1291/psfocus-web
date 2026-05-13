@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-0300';
+const _PSFOCUS_BUILD = '20260514-0500';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -5821,8 +5821,12 @@ function calBlockHtml(d, dayStartMs) {
     </div>`;
   }
 
-  // session
-  return `<div class="cal-block cal-block-session ${compact?'compact':''}" data-session-id="${esc(d.sessionId || '')}" style="${styleVars}">
+  // session — origStart/origEnd 给详情 sheet 用来在 state.sessions 里找回合并组里所有段
+  return `<div class="cal-block cal-block-session ${compact?'compact':''}"
+    data-session-id="${esc(d.sessionId || '')}"
+    data-orig-start="${d.origStart}"
+    data-orig-end="${d.origEnd}"
+    style="${styleVars}">
     <div class="cal-block-title">${esc(d.title)}</div>
     ${heightMin >= 30 ? `<div class="cal-block-time">${startStr}</div>` : ''}
   </div>`;
@@ -6090,9 +6094,86 @@ function _bindCalBlocks(view) {
     e.stopPropagation();
     showToast('事件编辑暂未实现,在桌面端查看');
   }));
-  // session 块点击暂不做(无对应详情页)
+  // session 块点击 → 弹详情 sheet,可看合并段 / 删除单段 / 删除整组
+  view.querySelectorAll('.cal-block-session[data-session-id]').forEach(el => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const sid = el.dataset.sessionId;
+    const origStart = parseInt(el.dataset.origStart, 10);
+    const origEnd   = parseInt(el.dataset.origEnd, 10);
+    openSessionDetailSheet(sid, origStart, origEnd);
+  }));
   // 长按编辑模式
   bindCalBlockEdit(view);
+}
+
+// 专注段详情 sheet — 点日历块触发,显示合并组所有段,可单删 / 全删
+function openSessionDetailSheet(seedId, origStart, origEnd) {
+  if (!seedId) return;
+  const seed = (state.sessions || []).find(x => x.id === seedId);
+  if (!seed) { showToast('session 已不存在'); return; }
+  const proj = state.projects.find(p => p.id === seed.projectId);
+  const task = seed.taskId ? state.tasks.find(t => t.id === seed.taskId) : null;
+  // 找回合并组里所有段:同 project + 时间落在 [origStart, origEnd] 内
+  const groupSessions = (state.sessions || [])
+    .filter(s => s.projectId === seed.projectId && s.startedAt >= origStart - 1 && s.startedAt <= origEnd + 1)
+    .sort((a, b) => a.startedAt - b.startedAt);
+  const totalMs = groupSessions.reduce((sum, s) => sum + (s.duration || 0), 0);
+  const startStr = new Date(origStart).toLocaleString('zh-CN');
+  const endStr = origEnd ? new Date(origEnd).toLocaleString('zh-CN') : '未结束';
+  const segsHtml = groupSessions.map(s => {
+    const t = s.taskId ? state.tasks.find(x => x.id === s.taskId) : null;
+    return `<div class="sess-seg">
+      <div class="sess-seg-meta">
+        <span class="sess-seg-time">${esc(new Date(s.startedAt).toLocaleString('zh-CN'))}</span>
+        <span class="sess-seg-dur">${esc(fmtHuman(s.duration || 0))}</span>
+      </div>
+      ${t ? `<div class="sess-seg-task">${esc(t.title || '(无标题)')}</div>` : ''}
+      <div class="sess-seg-id" title="${esc(s.id)}">${esc(s.id)}</div>
+      <button class="sess-seg-del" data-sess-id="${esc(s.id)}" title="删除此段">×</button>
+    </div>`;
+  }).join('');
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 12px;">专注详情</div>
+      ${proj ? `<div class="form-row"><label>项目</label><span class="sess-proj-name">${proj.color?`<span class="sess-color-dot" style="background:${esc(proj.color)};"></span>`:''}${esc(proj.name)}</span></div>` : '<div class="form-row"><label>项目</label><span style="color:var(--text-faint);">(无项目)</span></div>'}
+      ${task ? `<div class="form-row"><label>任务</label><span>${esc(task.title || '(无标题)')}</span></div>` : ''}
+      <div class="form-row"><label>开始</label><span>${esc(startStr)}</span></div>
+      <div class="form-row"><label>结束</label><span>${esc(endStr)}</span></div>
+      <div class="form-row"><label>总时长</label><span>${esc(fmtHuman(totalMs))}</span></div>
+      <div class="form-row"><label>段数</label><span>${groupSessions.length}</span></div>
+      <div class="section-title" style="padding:12px 0 6px;font-size:13px;">所有段</div>
+      <div class="sess-seg-list">${segsHtml}</div>
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">关闭</button>
+      <button class="danger" data-action="del-all">删除整组(${groupSessions.length} 段)</button>
+    </div>
+  `, (body) => {
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="del-all"]').onclick = () => {
+      if (!confirm(`删除这 ${groupSessions.length} 段专注(${fmtHuman(totalMs)})?`)) return;
+      const ids = new Set(groupSessions.map(s => s.id));
+      state.sessions = (state.sessions || []).filter(x => !ids.has(x.id));
+      pushState(); closeSheet(); renderAll();
+      showToast('已删除');
+    };
+    body.querySelectorAll('.sess-seg-del').forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.sessId;
+        const s = (state.sessions || []).find(x => x.id === id);
+        if (!s) return;
+        if (!confirm(`删除此段(${fmtHuman(s.duration||0)})?`)) return;
+        state.sessions = (state.sessions || []).filter(x => x.id !== id);
+        pushState();
+        // 重打开 sheet 刷新(若组里只剩 0 段就关掉)
+        const remaining = groupSessions.filter(x => x.id !== id);
+        if (!remaining.length) { closeSheet(); renderAll(); return; }
+        openSessionDetailSheet(remaining[0].id, origStart, origEnd);
+        renderAll();
+      };
+    });
+  });
 }
 
 // =========================================================

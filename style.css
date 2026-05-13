@@ -555,7 +555,17 @@ html, body { overscroll-behavior-y: contain; }
 .nav-folder-head .nav-folder-name { flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-folder-head .ico-chevron-down { width: 12px; height: 12px; margin-right: 6px; transition: transform .15s ease; }
 .nav-folder-head.collapsed .ico-chevron-down { transform: rotate(-90deg); }
-.nav-folder-children { padding-left: 8px; }
+/* 子级清单/项目缩进 — 跟 folder chevron 对齐(chev 24px + margin 6px + 边距 = 约 32px) */
+.nav-folder-children { padding-left: 28px; position: relative; }
+.nav-folder-children::before {
+  content: '';
+  position: absolute;
+  left: 18px; top: 4px; bottom: 4px;
+  width: 1px;
+  background: var(--border-soft);
+  opacity: 0.6;
+}
+.nav-folder-children .nav-row { padding-left: 8px; }
 .nav-folder-head.collapsed + .nav-folder-children { display: none; }
 
 /* =========================================================
@@ -1953,6 +1963,41 @@ html, body { overscroll-behavior-y: contain; }
 }
 .form-toggle input:checked + span { background: var(--accent); }
 .form-toggle input:checked + span::before { transform: translateX(18px); }
+
+/* 编辑项目/清单 — 颜色选择 */
+.ep-color-swatches {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  align-items: center;
+  flex: 1; min-width: 0;
+}
+.ep-color-swatch {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: transform .1s, box-shadow .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.ep-color-swatch:active { transform: scale(0.92); }
+.ep-color-swatch.active {
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--text);
+}
+.ep-color-native-wrap {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ep-color-native-wrap input[type="color"] {
+  width: 18px; height: 18px;
+  border: 0; padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
 
 .tag-list {
   display: flex; flex-direction: column;

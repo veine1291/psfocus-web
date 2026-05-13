@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-0100';
+const _PSFOCUS_BUILD = '20260514-0300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -4378,6 +4378,157 @@ function openCreateFromTemplatePicker(opts) {
   showPopover(items, opts);
 }
 
+// ----- 项目 / 清单 / 文件夹 / 标签 编辑 sheet -----
+function openEditProjectSheet(p) {
+  const isProj = (p.kind || 'project') === 'project';
+  const label = isProj ? '编辑项目' : '编辑清单';
+  const folders = (state.folders || []).slice().sort((a,b)=> (a.order||0)-(b.order||0));
+  const presetColors = ['#FF6B6B','#FFB86B','#FFD93D','#6BCB77','#4D96FF','#9B5DE5','#FF6FB5','','#888888'];
+  const currentColor = p.color || '';
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 12px;">${label}</div>
+      <div class="form-row"><label>名称</label>
+        <input type="text" id="ep-name" value="${esc(p.name||'')}" maxlength="40">
+      </div>
+      <div class="form-row" style="margin-top:8px;align-items:flex-start;">
+        <label>颜色</label>
+        <div class="ep-color-swatches">
+          ${presetColors.map(c => `<button class="ep-color-swatch ${c===currentColor?'active':''}" data-color="${esc(c)}" style="${c?`background:${esc(c)};`:'background:transparent;border:1px dashed var(--border-soft);'}" title="${c||'无色'}"></button>`).join('')}
+          <label class="ep-color-native-wrap" title="自定义"><input type="color" id="ep-color" value="${esc(currentColor || '#888888')}"><span class="ep-color-native-label">自定义</span></label>
+        </div>
+      </div>
+      ${isProj ? `<div class="form-row" style="margin-top:8px;">
+        <label>文件夹</label>
+        <select id="ep-folder">
+          <option value="">未分组</option>
+          ${folders.map(f => `<option value="${esc(f.id)}" ${(p.folderId===f.id)?'selected':''}>${esc(f.name||'未命名')}</option>`).join('')}
+        </select>
+      </div>` : ''}
+      <div class="form-row" style="margin-top:8px;">
+        <label>置顶</label>
+        <label class="form-toggle"><input type="checkbox" id="ep-pin" ${p.pinned?'checked':''}><span></span></label>
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <label>归档</label>
+        <label class="form-toggle"><input type="checkbox" id="ep-arch" ${p.archived?'checked':''}><span></span></label>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="danger" data-action="del">删除</button>
+      <button class="primary" data-action="save">保存</button>
+    </div>
+  `, (body) => {
+    let pickedColor = currentColor;
+    const colorInp = body.querySelector('#ep-color');
+    const refreshSwatches = () => {
+      body.querySelectorAll('.ep-color-swatch').forEach(el => {
+        el.classList.toggle('active', el.dataset.color === pickedColor);
+      });
+    };
+    body.querySelectorAll('.ep-color-swatch').forEach(el => {
+      el.onclick = () => {
+        pickedColor = el.dataset.color;
+        if (pickedColor) colorInp.value = pickedColor;
+        refreshSwatches();
+      };
+    });
+    colorInp.onchange = () => { pickedColor = colorInp.value; refreshSwatches(); };
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="del"]').onclick = () => {
+      if (!confirm(`删除${isProj?'项目':'清单'}「${p.name||'未命名'}」?该${isProj?'项目':'清单'}下的任务也会被删除。`)) return;
+      state.tasks = state.tasks.filter(t => t.projectId !== p.id);
+      state.projects = state.projects.filter(x => x.id !== p.id);
+      ui.selectedKind = 'smart'; ui.selectedId = 'all'; saveUI();
+      pushState(); closeSheet(); renderAll();
+    };
+    body.querySelector('[data-action="save"]').onclick = () => {
+      const name = body.querySelector('#ep-name').value.trim();
+      if (!name) { showToast('请输入名称'); return; }
+      p.name = name;
+      p.color = pickedColor;
+      if (isProj) p.folderId = body.querySelector('#ep-folder').value || null;
+      p.pinned = body.querySelector('#ep-pin').checked;
+      p.archived = body.querySelector('#ep-arch').checked;
+      p.updatedAt = Date.now();
+      pushState(); closeSheet(); renderAll();
+    };
+  });
+}
+
+function openEditFolderSheet(f) {
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 12px;">编辑文件夹</div>
+      <div class="form-row"><label>名称</label>
+        <input type="text" id="ef-name" value="${esc(f.name||'')}" maxlength="40">
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="danger" data-action="del">删除</button>
+      <button class="primary" data-action="save">保存</button>
+    </div>
+  `, (body) => {
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="del"]').onclick = () => {
+      if (!confirm(`删除文件夹「${f.name||'未命名'}」?里面的项目会变成"未分组"。`)) return;
+      state.projects.forEach(p => { if (p.folderId === f.id) p.folderId = null; });
+      state.folders = state.folders.filter(x => x.id !== f.id);
+      ui.selectedKind = 'smart'; ui.selectedId = 'all'; saveUI();
+      pushState(); closeSheet(); renderAll();
+    };
+    body.querySelector('[data-action="save"]').onclick = () => {
+      const name = body.querySelector('#ef-name').value.trim();
+      if (!name) { showToast('请输入名称'); return; }
+      f.name = name;
+      f.updatedAt = Date.now();
+      pushState(); closeSheet(); renderAll();
+    };
+  });
+}
+
+function openEditTagSheet(tagName) {
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 12px;">编辑标签</div>
+      <div class="form-row"><label>名称</label>
+        <input type="text" id="et-name" value="${esc(tagName)}" maxlength="40">
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="primary" data-action="save">保存</button>
+    </div>
+  `, (body) => {
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="save"]').onclick = () => {
+      const newName = body.querySelector('#et-name').value.trim();
+      if (!newName) { showToast('请输入名称'); return; }
+      if (newName === tagName) { closeSheet(); return; }
+      state.tasks.forEach(t => {
+        if (Array.isArray(t.tags)) t.tags = t.tags.map(x => x === tagName ? newName : x);
+      });
+      if (state.settings && Array.isArray(state.settings.tags)) {
+        state.settings.tags.forEach(x => { if (x && x.name === tagName) x.name = newName; });
+      }
+      if (Array.isArray(state.tags)) {
+        state.tags = state.tags.map(x =>
+          typeof x === 'string'
+            ? (x === tagName ? newName : x)
+            : (x && x.name === tagName ? { ...x, name: newName } : x)
+        );
+      }
+      if (ui.selectedKind === 'tag' && ui.selectedId === tagName) { ui.selectedId = newName; saveUI(); }
+      pushState(); closeSheet(); renderAll();
+    };
+  });
+}
+
 // ----- 列表更多菜单(右上 ⋯)-----
 function openListMoreMenu() {
   const cl = getCurrentList();
@@ -4385,7 +4536,7 @@ function openListMoreMenu() {
   if (cl.kind === 'project' && cl.project) {
     const p = cl.project;
     const isProj = (p.kind || 'project') === 'project';
-    items.push({ label: isProj ? '编辑项目' : '编辑清单', icon: 'ico-edit', action: () => { showToast('编辑:暂未实现'); closePopover(); } });
+    items.push({ label: isProj ? '编辑项目' : '编辑清单', icon: 'ico-edit', action: () => { closePopover(); openEditProjectSheet(p); } });
     // 专注详情只对真正的项目显示;任务清单不挂时间不计专注,没意义
     if (isProj) items.push({ label: '专注详情', icon: 'ico-clock', action: () => { closePopover(); openProjectFocusDetailSheet(p.id); } });
     items.push({ label: p.pinned ? '取消置顶' : '置顶', icon: 'ico-pin', action: () => { p.pinned = !p.pinned; pushState(); closePopover(); renderAll(); } });
@@ -4415,7 +4566,7 @@ function openListMoreMenu() {
     }});
   } else if (cl.kind === 'folder' && cl.folder) {
     const f = cl.folder;
-    items.push({ label: '编辑文件夹', icon: 'ico-edit', action: () => { showToast('编辑:暂未实现'); closePopover(); } });
+    items.push({ label: '编辑文件夹', icon: 'ico-edit', action: () => { closePopover(); openEditFolderSheet(f); } });
     items.push({ divider: true });
     items.push({ label: '删除文件夹', icon: 'ico-trash', danger: true, action: () => {
       if (!confirm('删除文件夹「' + (f.name||'未命名') + '」?里面的项目会变成"未分组"。')) return;
@@ -4425,7 +4576,7 @@ function openListMoreMenu() {
       pushState(); closePopover(); renderAll();
     }});
   } else if (cl.kind === 'tag') {
-    items.push({ label: '编辑标签', icon: 'ico-edit', action: () => { showToast('编辑:暂未实现'); closePopover(); } });
+    items.push({ label: '编辑标签', icon: 'ico-edit', action: () => { closePopover(); openEditTagSheet(cl.tag); } });
     items.push({ label: '删除标签', icon: 'ico-trash', danger: true, action: () => {
       if (!confirm('删除标签「' + cl.tag + '」?引用此标签的任务会移除该标签。')) return;
       state.tasks.forEach(t => { if (Array.isArray(t.tags)) t.tags = t.tags.filter(x => x !== cl.tag); });
@@ -4685,7 +4836,13 @@ function renderDrawerNav() {
       createBtn.className = 'drawer-create-btn';
       createBtn.dataset.action = 'drawer-create';
       createBtn.innerHTML = '<span class="ico-plus"></span>';
-      createBtn.onclick = (e) => { e.stopPropagation(); openCreateProjectSheet(); };
+      createBtn.onclick = (e) => {
+        e.stopPropagation();
+        // 先关抽屉再开 sheet — 否则在窄屏 / 抽屉边缘附近,sheet 会被左侧抽屉遮一部分,视觉看起来「跑下面去了」
+        closeDrawerNav();
+        // 等抽屉动画收完再开 sheet,避免 transition 期间 layout 抖动
+        setTimeout(() => openCreateProjectSheet(), 220);
+      };
       drawerHead.appendChild(createBtn);
     }
     if (ui.tab === 'summary') {
@@ -4722,47 +4879,55 @@ function renderDrawerNav() {
       }).join('');
     }
   }
-  // 任务清单 — 单独 section,不跟项目混(对齐 Kayu 反馈:tasklist ≠ project)
-  const tasklists = state.projects.filter(p => !p.archived && p.kind === 'tasklist').slice().sort((a, b) => (a.order || 0) - (b.order || 0));
-  if (tasklists.length) {
+  // 项目 + 清单合一渲染 — 都尊重 folderId(原来清单被强行另外起 section,无法入文件夹)
+  const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
+  // 任务清单(没文件夹的)→ 单独 section,跟项目分开看
+  const folderIds = new Set(state.folders.map(f => f.id));
+  const folderlessTasklists = state.projects
+    .filter(p => !p.archived && p.kind === 'tasklist' && (!p.folderId || !folderIds.has(p.folderId)))
+    .slice().sort(byOrder);
+  if (folderlessTasklists.length) {
     html += navSectionTitle('__tasklists__', '任务清单');
     if (!ui.collapsedSections.has('__tasklists__')) {
-      html += tasklists.map(p => projectRowHtml(p)).join('');
+      html += folderlessTasklists.map(p => projectRowHtml(p)).join('');
     }
   }
 
   html += navSectionTitle('__tasks__', '项目');
   if (!ui.collapsedSections.has('__tasks__')) {
-    const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
-    // 项目组只含 kind='project'
-    const activeProjects = state.projects.filter(p => !p.archived && (p.kind || 'project') === 'project').slice().sort(byOrder);
-    const folderIds = new Set(state.folders.map(f => f.id));
-    const pinned = activeProjects.filter(p => p.pinned);
-    const inFolder = (fid) => activeProjects.filter(p => !p.pinned && p.folderId === fid);
-    const ungrouped = activeProjects.filter(p => !p.pinned && (!p.folderId || !folderIds.has(p.folderId)));
+    // 项目 + 任务清单都可入文件夹 — folder children 是 union(尊重 order 排序)
+    const allInFolder = state.projects
+      .filter(p => !p.archived && (p.kind === 'project' || p.kind === 'tasklist'))
+      .slice().sort(byOrder);
+    const pinned = allInFolder.filter(p => p.pinned && (p.kind || 'project') === 'project');
+    const inFolder = (fid) => allInFolder.filter(p => !p.pinned && p.folderId === fid);
+    // 「未分组」只显示 project(清单走单独 section 的 folderlessTasklists)
+    const ungroupedProjects = allInFolder.filter(p =>
+      !p.pinned && (p.kind || 'project') === 'project' && (!p.folderId || !folderIds.has(p.folderId))
+    );
     if (pinned.length) {
       html += `<div class="nav-section-title">已置顶</div>`;
       html += pinned.map(p => projectRowHtml(p)).join('');
     }
     state.folders.slice().sort(byOrder).forEach(f => {
       const collapsed = ui.collapsedFolders.has(f.id);
-      const projs = inFolder(f.id);
+      const children = inFolder(f.id);
       const folderCustomIco = renderCustomIconHtml(f.icon, 'nav-folder-ico', '') || '';
       const active = ui.selectedKind === 'folder' && ui.selectedId === f.id;
-      const undoneCnt = state.tasks.filter(t => projs.some(p => p.id === t.projectId) && !t.done).length;
+      const undoneCnt = state.tasks.filter(t => children.some(p => p.id === t.projectId) && !t.done).length;
       html += `<div class="nav-folder-head ${collapsed?'collapsed':''} ${active?'active':''}" data-select-kind="folder" data-select-id="${esc(f.id)}">
         <button class="nav-folder-chev" data-folder-toggle="${esc(f.id)}" aria-label="${collapsed?'展开':'折叠'}"><span class="ico-chevron-down"></span></button>
         ${folderCustomIco || `<span class="nav-icon ico-folder"></span>`}
         <span class="nav-folder-name">${esc(f.name || '未命名')}</span>
-        <span class="nav-count">${undoneCnt || projs.length}</span>
+        <span class="nav-count">${undoneCnt || children.length}</span>
       </div>`;
       html += `<div class="nav-folder-children">`;
-      html += projs.map(p => projectRowHtml(p)).join('');
+      html += children.map(p => projectRowHtml(p)).join('');
       html += `</div>`;
     });
-    if (ungrouped.length) {
+    if (ungroupedProjects.length) {
       html += `<div class="nav-section-title" style="text-transform:none;font-weight:500;">未分组</div>`;
-      html += ungrouped.map(p => projectRowHtml(p)).join('');
+      html += ungroupedProjects.map(p => projectRowHtml(p)).join('');
     }
     const archived = state.projects.filter(p => p.archived && (p.kind || 'project') === 'project');
     if (archived.length) {
@@ -6812,7 +6977,8 @@ function openCreateProjectSheet() {
     const nameEl = body.querySelector('#cp-name');
     const kindEl = body.querySelector('#cp-kind');
     const folderRow = body.querySelector('#cp-folder-row');
-    setTimeout(() => nameEl.focus(), 80);
+    // 不自动 focus — 立刻调起键盘会把还在 transition 里的 sheet 推到视觉下方
+    // 用户主动点 input 时键盘才弹起,这时候 sheet 已经在 bindSheetKeyboardLift 监控中
     kindEl.onchange = () => {
       // 文件夹自身不挂文件夹
       folderRow.style.display = (kindEl.value === 'folder' || !folders.length) ? 'none' : '';
@@ -6989,6 +7155,9 @@ function openCreateTaskSheet(opts) {
         <span class="dp-check" style="visibility:hidden"></span>
         <input type="text" class="dp-title-input" id="qe-title" placeholder="任务标题">
       </div>
+      <div class="dp-section dp-merged-section">
+        <textarea class="dp-note-input" id="qe-note" rows="3" placeholder="备注、笔记…  输入 #xxx 自动加标签"></textarea>
+      </div>
     </div>
     <div class="dp-footer">
       <button class="dp-project-pill" id="qe-proj-pill" data-action="qe-pick-project">${projPillHtml()}</button>
@@ -6997,6 +7166,7 @@ function openCreateTaskSheet(opts) {
     </div>
   `, (body) => {
     const titleEl = body.querySelector('#qe-title');
+    const noteEl  = body.querySelector('#qe-note');
     setTimeout(() => titleEl.focus(), 80);
 
     function refreshSchedRow() {
@@ -7052,6 +7222,15 @@ function openCreateTaskSheet(opts) {
     const save = () => {
       const title = titleEl.value.trim();
       if (!title) { closeSheet(); return; }
+      const note = noteEl ? noteEl.value : '';
+      // 从 note 解析 #tag(对齐摘要/详情的 tag 行为)
+      const tags = [];
+      const tagRe = /#([^\s#,。、,]+)/g;
+      let mm;
+      while ((mm = tagRe.exec(note)) !== null) {
+        const tg = mm[1].trim();
+        if (tg && !tags.includes(tg)) tags.push(tg);
+      }
       const startMs = sched && sched.start || null;
       const endMs   = sched && sched.end   || null;
       // 字段对齐桌面 sanitize 期望(同 applyTaskTemplate 那条 path),
@@ -7059,6 +7238,7 @@ function openCreateTaskSheet(opts) {
       const newTask = {
         id: genId('t'),
         title,
+        note,
         done: false,
         doneAt: null,
         createdAt: Date.now(),
@@ -7071,7 +7251,7 @@ function openCreateTaskSheet(opts) {
         end:    endMs && endMs > startMs ? endMs : null,
         allDay: sched ? !!sched.allDay : false,
         color: '',
-        tags: [],
+        tags,
         subtasks: [],
         schedules: sched ? [sched] : [],
         images: [],

@@ -3433,6 +3433,69 @@ html, body { overscroll-behavior-y: contain; }
   font-size: 15px;
   line-height: 1;
 }
+/* 模块展开 details 内的「补加一条」行 */
+.sum-mod-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-soft);
+  flex-wrap: wrap;
+}
+.sum-mod-add-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.sum-mod-add-dots {
+  display: inline-flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.sum-mod-add-dot {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  color: var(--text-dim);
+  border-radius: 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.sum-mod-add-dot:active {
+  background: var(--accent);
+  color: var(--accent-on, white);
+  border-color: var(--accent);
+}
+.sum-mod-add-h, .sum-mod-add-m {
+  width: 52px;
+  padding: 5px 7px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input, var(--bg-section));
+  color: var(--text);
+  border-radius: 7px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+.sum-mod-add-h:focus, .sum-mod-add-m:focus { border-color: var(--accent); }
+.sum-mod-add-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-on, white);
+  border-radius: 7px;
+  font-size: 12px;
+  -webkit-tap-highlight-color: transparent;
+}
+.sum-mod-add-btn:active { filter: brightness(0.9); }
 .sum-day-mod-focus {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);

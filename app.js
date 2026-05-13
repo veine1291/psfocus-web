@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260513-1300';
+const _PSFOCUS_BUILD = '20260513-1500';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1525,6 +1525,15 @@ function _renderSummaryModuleCard(m, dayKey) {
     if (m.kind === 'rating') {
       const max = Math.max(1, parseInt(m.max, 10) || 5);
       const entries = m.entries || [];
+      // 补加一条:点 dot 即立即写入
+      let addDots = '';
+      for (let i = 1; i <= max; i++) {
+        addDots += `<button class="sum-mod-add-dot" ${dataAttrs} data-action="summary-mod-add-entry-rating" data-value="${i}">${i}</button>`;
+      }
+      const addRow = `<div class="sum-mod-add-row">
+        <span class="sum-mod-add-label">+ 加一条</span>
+        <div class="sum-mod-add-dots">${addDots}</div>
+      </div>`;
       detailsHtml = `<div class="sum-mod-card-details">
         <label class="sum-mod-meta-label">满分
           <input class="sum-mod-rating-max" type="number" min="1" max="20" step="1" ${dataAttrs}
@@ -1535,10 +1544,17 @@ function _renderSummaryModuleCard(m, dayKey) {
             <span class="sum-mod-entry-time">${_summaryFmtTime(e.at)}</span>
             <button class="sum-mod-entry-del" ${dataAttrs} data-action="summary-mod-entry-del" data-entry-id="${esc(e.id)}">×</button>
           </span>`).join('')}</div>` : '<div class="sum-mod-empty">还没有记录</div>'}
+        ${addRow}
       </div>`;
     } else if (m.kind === 'duration') {
       const isAuto = m.source === 'focus';
       const entries = isAuto ? null : (m.entries || []);
+      const addRow = isAuto ? '' : `<div class="sum-mod-add-row">
+        <span class="sum-mod-add-label">+ 加一条</span>
+        <input class="sum-mod-add-h" type="number" min="0" max="24" step="1" ${dataAttrs} placeholder="时" inputmode="numeric">
+        <input class="sum-mod-add-m" type="number" min="0" max="59" step="1" ${dataAttrs} placeholder="分" inputmode="numeric">
+        <button class="sum-mod-add-btn" ${dataAttrs} data-action="summary-mod-add-entry-duration">添加</button>
+      </div>`;
       detailsHtml = `<div class="sum-mod-card-details">
         <label class="sum-mod-meta-label">来源
           <select class="sum-mod-duration-source" ${dataAttrs} data-action-change="summary-mod-edit-source">
@@ -1553,6 +1569,7 @@ function _renderSummaryModuleCard(m, dayKey) {
                 <span class="sum-mod-entry-time">${_summaryFmtTime(e.at)}</span>
                 <button class="sum-mod-entry-del" ${dataAttrs} data-action="summary-mod-entry-del" data-entry-id="${esc(e.id)}">×</button>
               </span>`).join('')}</div>` : '<div class="sum-mod-empty">还没有记录</div>')}
+        ${addRow}
       </div>`;
     } else if (m.kind === 'checkin') {
       const t = m.taskId ? (state.tasks || []).find(x => x.id === m.taskId) : null;
@@ -2004,6 +2021,48 @@ const _summaryActions = {
       // 详情 sheet 上下文 — 重新触发 detail 视图
       _summaryActions['summary-mod-detail']({ dataset: { dayKey, modId } });
     }
+    renderAll();
+  },
+  // 补加一条 rating entry — 立即写入,at = 当天中午(非今天)或当前(今天)
+  'summary-mod-add-entry-rating': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId  = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'rating') return;
+    const v = parseInt(el.dataset.value, 10);
+    if (!Number.isFinite(v) || v < 1) return;
+    const max = Math.max(1, parseInt(mod.max, 10) || 5);
+    const value = Math.min(max, v);
+    const todayKey = _todayKey ? _todayKey() : _summaryDayKey(Date.now());
+    const at = (dayKey === todayKey) ? Date.now() : (_dayKeyToTs(dayKey) + 12 * 3600 * 1000);
+    if (!Array.isArray(mod.entries)) mod.entries = [];
+    mod.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value, at });
+    pushState();
+    if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
+    renderAll();
+  },
+  // 补加一条 duration entry — 读同卡内 h / m 输入框
+  'summary-mod-add-entry-duration': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId  = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'duration' || mod.source === 'focus') return;
+    const row = el.closest('.sum-mod-add-row');
+    if (!row) return;
+    const hInp = row.querySelector('.sum-mod-add-h');
+    const mInp = row.querySelector('.sum-mod-add-m');
+    const h = Math.max(0, Math.min(24, parseInt((hInp && hInp.value) || '0', 10) || 0));
+    const mm = Math.max(0, Math.min(59, parseInt((mInp && mInp.value) || '0', 10) || 0));
+    const valueMs = (h * 3600 + mm * 60) * 1000;
+    if (valueMs <= 0) { showToast && showToast('请填写有效的时长'); return; }
+    const todayKey = _todayKey ? _todayKey() : _summaryDayKey(Date.now());
+    const at = (dayKey === todayKey) ? Date.now() : (_dayKeyToTs(dayKey) + 12 * 3600 * 1000);
+    if (!Array.isArray(mod.entries)) mod.entries = [];
+    mod.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), valueMs, at });
+    pushState();
+    if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
     renderAll();
   },
   'summary-mod-pick-task': (el) => {

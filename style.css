@@ -2521,6 +2521,22 @@ html, body { overscroll-behavior-y: contain; }
   box-shadow: var(--shadow-sm);
   position: relative;
 }
+/* 时间轴底部「+ 加节点」按钮 */
+.proj-tl-add-btn {
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px;
+  width: calc(100% - 24px);
+  margin: 8px 12px 12px;
+  padding: 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  -webkit-tap-highlight-color: transparent;
+}
+.proj-tl-add-btn:active { background: var(--bg-section); color: var(--accent); border-color: var(--accent); }
+.proj-tl-add-btn .ico-plus { width: 14px; height: 14px; }
 .proj-tl-node {
   position: relative;
   padding: 8px 0 8px 28px;

@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-0500';
+const _PSFOCUS_BUILD = '20260514-0700';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2528,6 +2528,10 @@ function renderProjectView(view, cl) {
       if (projId && nodeId) openTimelineNodeEditSheet(projId, nodeId);
     });
   });
+  // 时间轴「+ 加节点」按钮
+  view.querySelectorAll('[data-tl-add-proj]').forEach(el => {
+    el.addEventListener('click', () => openTimelineNodeAddSheet(el.dataset.tlAddProj));
+  });
 }
 function collapseSectionHtml(key, title, sub, open, body) {
   return `<section class="proj-section ${open?'is-open':''}">
@@ -3286,8 +3290,73 @@ function projectTimelineBodyHtml(pid) {
       </div>
     </div>`;
   };
-  if (!nodes.length) return '<div class="empty" style="padding:14px;">还没有节点</div>';
-  return `<div class="proj-tl-line">${nodes.map(renderNode).join('')}</div>`;
+  const addBtn = `<button class="proj-tl-add-btn" data-tl-add-proj="${esc(p.id)}">
+    <span class="ico-plus"></span><span>加节点</span>
+  </button>`;
+  if (!nodes.length) {
+    return `<div class="empty" style="padding:14px;">还没有节点</div>${addBtn}`;
+  }
+  return `<div class="proj-tl-line">${nodes.map(renderNode).join('')}</div>${addBtn}`;
+}
+
+// 时间轴新建 manual 节点 sheet — 跟 edit 共用一套表单
+function openTimelineNodeAddSheet(projId) {
+  const p = state.projects.find(x => x.id === projId);
+  if (!p) return;
+  const now = new Date();
+  const pd = (n) => String(n).padStart(2, '0');
+  const dateStr = `${now.getFullYear()}-${pd(now.getMonth()+1)}-${pd(now.getDate())}`;
+  const timeStr = `${pd(now.getHours())}:${pd(now.getMinutes())}`;
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="dp-detail">
+      <div class="dp-head">
+        <span class="dp-head-kind">加时间轴节点</span>
+        <button class="dp-head-close" data-action="cancel" title="关闭">×</button>
+      </div>
+      <div class="dp-section">
+        <input type="text" class="dp-title-input" id="tl-new-title" placeholder="节点标题">
+      </div>
+      <div class="dp-section">
+        <textarea class="dp-note-input" id="tl-new-note" rows="3" placeholder="备注"></textarea>
+      </div>
+      <div class="dp-section">
+        <div class="dp-section-title">时间</div>
+        <div style="display:flex;gap:8px;">
+          <input type="date" id="tl-new-date" value="${dateStr}" style="flex:1;padding:8px;border:1px solid var(--border-soft);background:var(--bg-input);color:var(--text);border-radius:8px;font-size:13px;">
+          <input type="time" id="tl-new-time" value="${timeStr}" style="flex:1;padding:8px;border:1px solid var(--border-soft);background:var(--bg-input);color:var(--text);border-radius:8px;font-size:13px;">
+        </div>
+      </div>
+    </div>
+    <div class="dp-footer">
+      <button class="dp-more-btn" data-action="cancel">取消</button>
+      <button class="dp-more-btn" data-action="save" style="background:var(--accent);color:#fff;">添加</button>
+    </div>
+  `, (body) => {
+    const titleEl = body.querySelector('#tl-new-title');
+    setTimeout(() => titleEl.focus(), 80);
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="save"]').onclick = () => {
+      const newTitle = (titleEl.value || '').trim();
+      if (!newTitle) { showToast('标题不能为空'); return; }
+      const newNote = (body.querySelector('#tl-new-note').value || '').trim();
+      const dateStr2 = body.querySelector('#tl-new-date').value;
+      const timeStr2 = body.querySelector('#tl-new-time').value;
+      const ts = combineDateAndTime(dateStr2, timeStr2);
+      const node = {
+        id: 'tl-' + genId('x').slice(2, 10),
+        type: 'manual',
+        ts: Number.isFinite(ts) ? ts : Date.now(),
+        title: newTitle,
+      };
+      if (newNote) node.note = newNote;
+      ensureProjectTimeline(p).push(node);
+      pushState();
+      closeSheet();
+      renderAll();
+      showToast('节点已添加');
+    };
+  });
 }
 
 // 时间轴节点编辑 sheet — 点击节点触发(只 manual 类型可编辑)

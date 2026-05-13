@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260513-1700';
+const _PSFOCUS_BUILD = '20260513-1900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1551,8 +1551,11 @@ function _renderSummaryModuleCard(m, dayKey) {
           <input class="sum-mod-rating-max" type="number" min="1" max="20" step="1" ${dataAttrs}
             data-action-blur="summary-mod-edit-max" value="${max}"></label>
         ${entries.length ? `<div class="sum-mod-entries">${entries.map(e => `
-          <span class="sum-mod-entry">
-            <span class="sum-mod-entry-val">${e.value}/${max}</span>
+          <span class="sum-mod-entry sum-mod-entry-editable">
+            <input class="sum-mod-entry-val-input" type="number" min="1" max="${max}" step="1" inputmode="numeric"
+              value="${e.value}" ${dataAttrs} data-entry-id="${esc(e.id)}"
+              data-action-blur="summary-mod-entry-edit-rating">
+            <span class="sum-mod-entry-slash">/${max}</span>
             <span class="sum-mod-entry-time">${_summaryFmtTime(e.at)}</span>
             <button class="sum-mod-entry-del" ${dataAttrs} data-action="summary-mod-entry-del" data-entry-id="${esc(e.id)}">×</button>
           </span>`).join('')}</div>` : '<div class="sum-mod-empty">还没有记录</div>'}
@@ -1575,12 +1578,23 @@ function _renderSummaryModuleCard(m, dayKey) {
           </select></label>
         ${isAuto
           ? '<div class="sum-mod-empty">自动来源 — 实时算,不存历史</div>'
-          : (entries.length ? `<div class="sum-mod-entries">${entries.map(e => `
-              <span class="sum-mod-entry">
-                <span class="sum-mod-entry-val">${_summaryFmtDurationMs(e.valueMs)}</span>
+          : (entries.length ? `<div class="sum-mod-entries">${entries.map(e => {
+              const totalMin = Math.round((e.valueMs || 0) / 60000);
+              const eh = Math.floor(totalMin / 60);
+              const em = totalMin % 60;
+              return `<span class="sum-mod-entry sum-mod-entry-editable">
+                <input class="sum-mod-entry-h-input" type="number" min="0" max="24" step="1" inputmode="numeric"
+                  value="${eh}" ${dataAttrs} data-entry-id="${esc(e.id)}"
+                  data-action-blur="summary-mod-entry-edit-duration">
+                <span class="sum-mod-entry-unit">h</span>
+                <input class="sum-mod-entry-m-input" type="number" min="0" max="59" step="1" inputmode="numeric"
+                  value="${em}" ${dataAttrs} data-entry-id="${esc(e.id)}"
+                  data-action-blur="summary-mod-entry-edit-duration">
+                <span class="sum-mod-entry-unit">m</span>
                 <span class="sum-mod-entry-time">${_summaryFmtTime(e.at)}</span>
                 <button class="sum-mod-entry-del" ${dataAttrs} data-action="summary-mod-entry-del" data-entry-id="${esc(e.id)}">×</button>
-              </span>`).join('')}</div>` : '<div class="sum-mod-empty">还没有记录</div>')}
+              </span>`;
+            }).join('')}</div>` : '<div class="sum-mod-empty">还没有记录</div>')}
         ${addRow}
       </div>`;
     } else if (m.kind === 'checkin') {
@@ -2034,6 +2048,45 @@ const _summaryActions = {
       _summaryActions['summary-mod-detail']({ dataset: { dayKey, modId } });
     }
     renderAll();
+  },
+  // 改某条 rating entry 的值
+  'summary-mod-entry-edit-rating': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId  = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'rating') return;
+    const eid = el.dataset.entryId;
+    const entry = (mod.entries || []).find(x => x.id === eid);
+    if (!entry) return;
+    const max = Math.max(1, parseInt(mod.max, 10) || 5);
+    const v = Math.max(1, Math.min(max, parseInt(el.value, 10) || entry.value));
+    if (v === entry.value) return;
+    entry.value = v;
+    el.value = String(v);
+    pushState();
+    // 不 renderAll,避免抢 focus
+  },
+  // 改某条 duration entry — h / m 任一框 blur 都触发,读 row 里两个 input 重算 valueMs
+  'summary-mod-entry-edit-duration': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId  = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const mod = arr.find(m => m.id === modId);
+    if (!mod || mod.kind !== 'duration' || mod.source === 'focus') return;
+    const eid = el.dataset.entryId;
+    const entry = (mod.entries || []).find(x => x.id === eid);
+    if (!entry) return;
+    const row = el.closest('.sum-mod-entry');
+    if (!row) return;
+    const hInp = row.querySelector('.sum-mod-entry-h-input');
+    const mInp = row.querySelector('.sum-mod-entry-m-input');
+    const h = Math.max(0, Math.min(24, parseInt((hInp && hInp.value) || '0', 10) || 0));
+    const mm = Math.max(0, Math.min(59, parseInt((mInp && mInp.value) || '0', 10) || 0));
+    const valueMs = (h * 3600 + mm * 60) * 1000;
+    if (valueMs === entry.valueMs) return;
+    entry.valueMs = valueMs;
+    pushState();
   },
   // 补加一条 rating entry — 立即写入,at = 当天中午(非今天)或当前(今天)
   'summary-mod-add-entry-rating': (el) => {

@@ -3769,6 +3769,39 @@ html, body { overscroll-behavior-y: contain; }
   font-size: 10px;
   padding: 0;
 }
+/* 已录入数据 → 内联可编辑 */
+.sum-mod-entry-editable { padding: 2px 5px; gap: 2px; }
+.sum-mod-entry-val-input,
+.sum-mod-entry-h-input,
+.sum-mod-entry-m-input {
+  width: 34px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-weight: 500;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+  outline: none;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.sum-mod-entry-val-input::-webkit-outer-spin-button,
+.sum-mod-entry-val-input::-webkit-inner-spin-button,
+.sum-mod-entry-h-input::-webkit-outer-spin-button,
+.sum-mod-entry-h-input::-webkit-inner-spin-button,
+.sum-mod-entry-m-input::-webkit-outer-spin-button,
+.sum-mod-entry-m-input::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.sum-mod-entry-val-input:focus,
+.sum-mod-entry-h-input:focus,
+.sum-mod-entry-m-input:focus { border-color: var(--accent); background: var(--bg-panel, #fff); }
+.sum-mod-entry-slash, .sum-mod-entry-unit {
+  color: var(--text-dim);
+  font-size: 10px;
+}
 .sum-mod-empty {
   font-size: 11px;
   color: var(--text-faint, var(--text-dim));

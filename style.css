@@ -3802,6 +3802,76 @@ html, body { overscroll-behavior-y: contain; }
   color: var(--text-dim);
   font-size: 10px;
 }
+
+/* 通用 modal-btn(手机端之前没显式样式,补上) */
+.modal-btn {
+  padding: 11px 14px;
+  border-radius: 10px;
+  background: var(--bg-section);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.modal-btn:active { filter: brightness(0.95); }
+.modal-btn.modal-btn-primary { background: var(--accent); color: var(--text-on-accent, white); }
+.modal-btn.modal-btn-danger { background: var(--danger, #e57373); color: white; }
+
+/* 笔记 ⋯ 弹的小 sheet:编辑 / 删除 */
+.sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 12px;
+  border-radius: 10px;
+  font-size: 15px;
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet-item:active { background: var(--bg-section); }
+.sheet-item-icon { width: 18px; height: 18px; background: currentColor; flex-shrink: 0; }
+.sheet-item-danger { color: var(--danger, #e57373); }
+
+/* 编辑笔记 sheet:日期 + textarea */
+.sum-edit-date-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+.sum-edit-date-label {
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.sum-edit-date-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input, var(--bg-section));
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.sum-edit-note-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input, var(--bg-section));
+  color: var(--text);
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+}
+.sum-edit-note-textarea:focus { border-color: var(--accent); }
 .sum-mod-empty {
   font-size: 11px;
   color: var(--text-faint, var(--text-dim));

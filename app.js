@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260513-2100';
+const _PSFOCUS_BUILD = '20260513-2300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1935,11 +1935,99 @@ const _summaryActions = {
     pushState();
     renderAll();
   },
+  // 笔记右上 ⋯ → 弹一个小 sheet:编辑 / 删除
   'summary-item-more': (el) => {
     const id = el.dataset.id;
+    const s = (state.summaries || []).find(x => x.id === id);
+    if (!s) return;
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <button class="sheet-item" data-action="summary-item-edit" data-id="${esc(id)}">
+          <span class="ico-pencil sheet-item-icon"></span><span>编辑</span>
+        </button>
+        <button class="sheet-item sheet-item-danger" data-action="summary-item-delete" data-id="${esc(id)}">
+          <span class="ico-trash sheet-item-icon"></span><span>删除</span>
+        </button>
+      </div>
+    `);
+  },
+  'summary-item-delete': (el) => {
+    const id = el.dataset.id;
+    closeSheet();
     if (!confirm('删除这条摘要笔记?')) return;
     state.summaries = (state.summaries || []).filter(s => s.id !== id);
     pushState();
+    renderAll();
+  },
+  // 打开编辑笔记 sheet — datetime-local 改日期 + textarea 改内容
+  'summary-item-edit': (el) => {
+    const id = el.dataset.id;
+    const s = (state.summaries || []).find(x => x.id === id);
+    if (!s) return;
+    const pad = n => String(n).padStart(2, '0');
+    const dt = new Date(s.createdAt || Date.now());
+    const dtLocal = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 8px;">编辑笔记</div>
+        <label class="sum-edit-date-row">
+          <span class="sum-edit-date-label">日期 / 时间</span>
+          <input id="sum-edit-note-date" class="sum-edit-date-input" type="datetime-local" value="${dtLocal}">
+        </label>
+        <textarea id="sum-edit-note-text" class="sum-edit-note-textarea"
+          data-action-input="summary-input-autosize"
+          placeholder="备注、笔记…  输入 #xxx 自动加标签" rows="6">${esc(s.note || '')}</textarea>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button class="modal-btn" data-action="close-sheet" style="flex:1;">取消</button>
+          <button class="modal-btn modal-btn-primary" data-action="summary-edit-note-save" data-id="${esc(id)}" style="flex:1;">保存</button>
+        </div>
+      </div>
+    `, (body) => {
+      // 聚焦 textarea 末尾 + autosize 初始化
+      const ta = body.querySelector('#sum-edit-note-text');
+      if (ta) {
+        ta.focus();
+        try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 360) + 'px';
+      }
+    });
+  },
+  // 保存编辑后的笔记 — note + createdAt + 重新解析 tags
+  'summary-edit-note-save': (el) => {
+    const id = el.dataset.id;
+    const s = (state.summaries || []).find(x => x.id === id);
+    if (!s) { closeSheet(); return; }
+    const ta = document.getElementById('sum-edit-note-text');
+    const dateInp = document.getElementById('sum-edit-note-date');
+    const nextNote = ta ? ta.value : (s.note || '');
+    let nextCreatedAt = s.createdAt;
+    if (dateInp && dateInp.value) {
+      const parsed = new Date(dateInp.value).getTime();
+      if (Number.isFinite(parsed)) nextCreatedAt = parsed;
+    }
+    const dateChanged = nextCreatedAt && nextCreatedAt !== s.createdAt;
+    const noteChanged = nextNote !== (s.note || '');
+    if (!dateChanged && !noteChanged) { closeSheet(); return; }
+    if (noteChanged) {
+      s.note = nextNote;
+      // 重新解析 tags
+      const newTags = [];
+      const tagRe = /#([^\s#,。、,]+)/g;
+      let mm;
+      while ((mm = tagRe.exec(nextNote)) !== null) {
+        const tg = mm[1].trim();
+        if (tg && !newTags.includes(tg)) newTags.push(tg);
+      }
+      s.tags = newTags;
+      for (const tg of newTags) _summaryEnsureTag(tg);
+    }
+    if (dateChanged) s.createdAt = nextCreatedAt;
+    s.updatedAt = Date.now();
+    pushState();
+    closeSheet();
     renderAll();
   },
   // 模块管理 sheet — 默认 today;day-header 已不再触发,这里就是 input 工具栏的 "管理模块" 按钮

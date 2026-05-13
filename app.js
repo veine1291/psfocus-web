@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260513-1900';
+const _PSFOCUS_BUILD = '20260513-2100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1364,12 +1364,27 @@ function _renderSummaryList() {
   if (!activeDays.size) {
     return `<div class="sum-empty">${q || filter !== 'all' ? '没有符合的笔记' : '还没有笔记 — 上面输入框写一条'}</div>`;
   }
-  // 按 dayKey 倒序(今天在最上)
-  const sortedAllKeys = Array.from(activeDays).sort().reverse();
-  // 分页:默认只渲染最近 N 天 — DOM 大量减少,reflow 飞快
   const maxDays = Math.max(1, summaryState.visibleDaysCount || 20);
-  const sortedKeys = sortedAllKeys.slice(0, maxDays);
-  const moreDays = sortedAllKeys.length - sortedKeys.length;
+  let sortedKeys, moreDays;
+  if (filter === 'all' && !q) {
+    // 主视图:从今天往回连续 N 天(空天也显示 — 可点铅笔补录)+ 更早的活跃天
+    const now = new Date();
+    const contiguous = [];
+    for (let i = 0; i < maxDays; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      contiguous.push(_summaryDayKey(d.getTime()));
+    }
+    const cutoffKey = contiguous[contiguous.length - 1];
+    const olderActiveSorted = Array.from(activeDays).filter(k => k < cutoffKey).sort().reverse();
+    const olderShown = olderActiveSorted.slice(0, maxDays);
+    moreDays = olderActiveSorted.length - olderShown.length;
+    sortedKeys = contiguous.concat(olderShown);
+  } else {
+    // 搜索 / 筛选:只显示有结果的天,不补空
+    const sortedAllKeys = Array.from(activeDays).sort().reverse();
+    sortedKeys = sortedAllKeys.slice(0, maxDays);
+    moreDays = sortedAllKeys.length - sortedKeys.length;
+  }
   let html = '';
   for (const k of sortedKeys) {
     const items = byDay.get(k) || [];

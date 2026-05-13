@@ -3328,6 +3328,22 @@ html, body { overscroll-behavior-y: contain; }
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   overflow: hidden;
+  contain: layout;      /* 隔离 layout — 改一处 day 不会触发整个列表 reflow,大 list 下输入框 autosize 飞快 */
+}
+.sum-day-load-more {
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border-soft);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.sum-day-load-more:active {
+  background: var(--bg-section);
+  color: var(--text);
 }
 .sum-day-header {
   display: flex;

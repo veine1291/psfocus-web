@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260513-1100';
+const _PSFOCUS_BUILD = '20260513-1300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -965,6 +965,7 @@ let summaryState = {
     try { return new Set(JSON.parse(localStorage.getItem('psfocus_collapsedDays') || '[]')); }
     catch (_) { return new Set(); }
   })(),
+  visibleDaysCount: 20,        // 默认只渲染最近 20 天,余下点"加载更早"
   pendingImages: [],           // [{ id, cloudFileID, name }]
   pendingModuleValues: {},     // { [modId]: value/valueMs }
   draftNote: '',               // 输入框未发布的笔记草稿 — 防 renderAll 时清空
@@ -1352,7 +1353,11 @@ function _renderSummaryList() {
     return `<div class="sum-empty">${q || filter !== 'all' ? '没有符合的笔记' : '还没有笔记 — 上面输入框写一条'}</div>`;
   }
   // 按 dayKey 倒序(今天在最上)
-  const sortedKeys = Array.from(activeDays).sort().reverse();
+  const sortedAllKeys = Array.from(activeDays).sort().reverse();
+  // 分页:默认只渲染最近 N 天 — DOM 大量减少,reflow 飞快
+  const maxDays = Math.max(1, summaryState.visibleDaysCount || 20);
+  const sortedKeys = sortedAllKeys.slice(0, maxDays);
+  const moreDays = sortedAllKeys.length - sortedKeys.length;
   let html = '';
   for (const k of sortedKeys) {
     const items = byDay.get(k) || [];
@@ -1390,6 +1395,9 @@ function _renderSummaryList() {
         </div>
       </div>`;
     }
+  }
+  if (moreDays > 0) {
+    html += `<button class="sum-day-load-more" data-action="summary-load-more">查看更早(还有 ${moreDays} 天)</button>`;
   }
   return html;
 }
@@ -1697,15 +1705,27 @@ const _summaryActions = {
     try { localStorage.setItem('psfocus_collapsedDays', JSON.stringify(Array.from(summaryState.collapsedDays))); } catch (_) {}
     renderAll();
   },
+  // 分页:加载更多天
+  'summary-load-more': () => {
+    summaryState.visibleDaysCount = (summaryState.visibleDaysCount || 20) + 20;
+    // 只重渲列表,不全 renderAll
+    const listEl = document.querySelector('.sum-list');
+    if (listEl) {
+      listEl.innerHTML = _renderSummaryList();
+      if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(listEl);
+    }
+  },
   // "今日 · 待录入" 折叠/展开 — 记到 localStorage
   'summary-toggle-input-mods': () => {
     summaryState.inputModsCollapsed = !summaryState.inputModsCollapsed;
     try { localStorage.setItem('psfocus_inputModsCollapsed', summaryState.inputModsCollapsed ? '1' : '0'); } catch (_) {}
     renderAll();
   },
-  'summary-input-autosize': (el) => {
+  'summary-input-autosize': (el, e) => {
     // 实时保存草稿 — 防 renderAll(点 dot / 模块按钮等)时 textarea 被替换丢失内容
     summaryState.draftNote = el.value;
+    // IME 组词期间不 reflow(每段拼音都重排很卡),等 compositionend 触发的最终 input 再 resize
+    if (e && e.isComposing) return;
     // 把 reflow 推到下一帧,不阻塞当前 input event;前一帧没跑完的 cancel 掉,避免堆积
     if (el._autosizeRAF) cancelAnimationFrame(el._autosizeRAF);
     el._autosizeRAF = requestAnimationFrame(() => {
@@ -1920,7 +1940,9 @@ const _summaryActions = {
     if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
     renderAll();
   },
-  'summary-mod-edit-title': (el) => {
+  'summary-mod-edit-title': (el, e) => {
+    // IME 组词中跳过,避免每段拼音都触发 pushState debounce 起来仍累
+    if (e && e.isComposing) return;
     const dayKey = el.dataset.dayKey;
     const modId = el.dataset.modId;
     const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
@@ -1930,7 +1952,6 @@ const _summaryActions = {
     if (v === mod.title) return;
     mod.title = v;
     pushState();
-    // 不 renderAll / 不 reopen sheet — 用户正在打字,失焦会中断输入
   },
   'summary-mod-edit-max': (el) => {
     const dayKey = el.dataset.dayKey;

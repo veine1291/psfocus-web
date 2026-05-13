@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260513-1500';
+const _PSFOCUS_BUILD = '20260513-1700';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -395,6 +395,15 @@ function startWatch() {
         if (Date.now() - lastPushAt < 2000) return;
         const data = docs[0];
         if (!data || !data.state) return;
+        // 时间戳防御:云端比本地旧 → 跳过(本地有未同步的改动,如刚改完模块标题但 push 还在防抖窗口里)
+        // 否则旧 snapshot 会覆盖本地的最新改动
+        const remoteTs = (data.state && data.state._cloudUpdatedAt) || 0;
+        const localTs  = (state && state._cloudUpdatedAt) || 0;
+        if (remoteTs < localTs) {
+          console.warn('[watch] skip older snapshot:', remoteTs, '<', localTs, '— 本地更新,主动推一次');
+          try { pushState(); } catch (_) {}
+          return;
+        }
         applyingRemote = true;
         state = sanitizeState(data.state);
         applyingRemote = false;
@@ -444,11 +453,14 @@ function pushState() {
       return;
     }
   }
+  // 关键:_cloudUpdatedAt 同步 bump,不要等防抖 — 否则在防抖窗口(0~1s)内 watcher
+  // 收到旧云端 snapshot 时,localTs 还是旧值,会被误判为"远端较新"而覆盖本地刚改的字段
+  // (如:模块标题改了但还没 push,watcher 把还没同步的旧云端推回来,标题被复原)
+  state._cloudUpdatedAt = Date.now();
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(async () => {
     try {
       setSync('syncing', '同步中…');
-      state._cloudUpdatedAt = Date.now();
       lastPushAt = Date.now();
       const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'push', docId: uid, state } });
       const r = res && res.result;

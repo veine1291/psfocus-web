@@ -1517,6 +1517,25 @@ html, body { overscroll-behavior-y: contain; }
   opacity: 0.5;
   text-decoration: line-through;
 }
+/* 多天跨越条:中间天 = 实色横条无文字;首末天 = 半圆收口,首天显示文字 */
+.cal-cell-pill.span {
+  background: var(--pill-color);
+  color: var(--text-on-accent, white);
+  border-left: none;
+  border-radius: 0;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.cal-cell-pill.span.span-first { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+.cal-cell-pill.span.span-last  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+.cal-cell-pill.span:not(.span-first):not(.span-last) { padding-left: 0; padding-right: 0; min-height: 14px; }
+.cal-cell-focus {
+  font-size: 9px;
+  color: var(--text-faint, var(--text-dim));
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
 .cal-cell-more {
   font-size: 9px;
   color: var(--text-faint);

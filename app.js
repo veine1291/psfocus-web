@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260513-2300';
+const _PSFOCUS_BUILD = '20260514-0100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -4867,19 +4867,112 @@ function renderMonthView(view) {
   const lastWeek = startOfWeek(endMonth);
   const totalWeeks = Math.round((lastWeek - firstWeek) / (7*86400000));
 
-  // 任务索引(尊重 calShowDone / calShowAllRepeat)
-  const showDone = state.settings.calShowDone !== false;
-  const showRepeat = state.settings.calShowAllRepeat !== false;
-  const taskByDay = new Map();
-  for (const t of state.tasks) {
-    if (!showDone && t.done) continue;
-    const dt = t.start || t.dueAt;
-    if (!dt) continue;
-    const k = startOfDay(new Date(dt)).getTime();
-    if (!showRepeat && t.repeat && k > today0) continue;
-    if (!taskByDay.has(k)) taskByDay.set(k, []);
-    taskByDay.get(k).push(t);
+  // 索引构建(尊重 calShowDone / calShowAllRepeat)
+  // 对齐桌面:任务/事件都要按 schedule 展开重复 occurrence,覆盖每个 occurrence 覆盖的天
+  const showDone   = !state.settings || state.settings.calShowDone   !== false;
+  const showRepeat = !state.settings || state.settings.calShowAllRepeat !== false;
+  const showFocus  = !state.settings || state.settings.calShowFocus  !== false;
+
+  // dayMs → 该天的 pill 列表(任务 + 事件,按时间排序)
+  // pill: { id, kind: 'task'|'event', title, color, done, allDay, occStart, occEnd, isFirstDay, isLastDay }
+  const pillsByDay = new Map();
+  const addPill = (dayMs, pill) => {
+    if (!pillsByDay.has(dayMs)) pillsByDay.set(dayMs, []);
+    pillsByDay.get(dayMs).push(pill);
+  };
+  // 对每个 task/event 在视图范围内逐天 expand;多天事件每天都加 chip(第一天和最后一天加 round corner)
+  const rangeStart = firstWeek.getTime();
+  const rangeEnd   = addDays(firstWeek, totalWeeks * 7).getTime();
+  function _expandAndBucket(item, kind) {
+    if (kind === 'task' && item.archived) return;
+    // 逐天问 occurrence — 简单但够用(视图范围 ~91 天 × ~item 数,够快)
+    for (let dms = rangeStart; dms < rangeEnd; dms += 86400000) {
+      const dayEnd = dms + 86400000;
+      const occs = expandItemOccurrencesInDay(item, dms, dayEnd);
+      for (const occ of occs) {
+        if (kind === 'task') {
+          const occDone = (typeof isOccDone === 'function')
+            ? isOccDone(item, occ.schedule, occ.start)
+            : !!item.done;
+          if (!showDone && occDone) continue;
+          const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
+          if (!showRepeat && isRepeat && occ.start > today0 + 86400000 - 1) continue;
+          const occStartDay = startOfDay(new Date(occ.start)).getTime();
+          const occEndDay = startOfDay(new Date(occ.end - 1)).getTime();
+          addPill(dms, {
+            id: item.id, kind: 'task',
+            title: item.title || '(无标题)',
+            color: colorOfCalItem(item) || 'var(--accent)',
+            done: occDone, allDay: !!occ.allDay,
+            occStart: occ.start, occEnd: occ.end,
+            isFirstDay: dms === occStartDay,
+            isLastDay:  dms === occEndDay,
+          });
+        } else {
+          const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
+          if (!showRepeat && isRepeat && occ.start > today0 + 86400000 - 1) continue;
+          const occStartDay = startOfDay(new Date(occ.start)).getTime();
+          const occEndDay = startOfDay(new Date(occ.end - 1)).getTime();
+          addPill(dms, {
+            id: item.id, kind: 'event',
+            title: item.title || '(无标题)',
+            color: colorOfCalItem(item) || 'var(--accent)',
+            done: false, allDay: !!occ.allDay,
+            occStart: occ.start, occEnd: occ.end,
+            isFirstDay: dms === occStartDay,
+            isLastDay:  dms === occEndDay,
+          });
+        }
+      }
+    }
   }
+  for (const t of (state.tasks || [])) {
+    _expandAndBucket(t, 'task');
+    // dueAt-only 任务(没 schedule 也没 start)— expand 返回空,补一个 dueAt 那天的 pill
+    const hasSchedule = (Array.isArray(t.schedules) && t.schedules[0]) || t.start;
+    if (!hasSchedule && t.dueAt && !t.archived) {
+      if (!showDone && t.done) continue;
+      const k = startOfDay(new Date(t.dueAt)).getTime();
+      if (k < rangeStart || k >= rangeEnd) continue;
+      addPill(k, {
+        id: t.id, kind: 'task',
+        title: t.title || '(无标题)',
+        color: colorOfCalItem(t) || 'var(--accent)',
+        done: !!t.done, allDay: false,
+        occStart: t.dueAt, occEnd: t.dueAt,
+        isFirstDay: true, isLastDay: true,
+      });
+    }
+  }
+  for (const ev of (state.events || [])) _expandAndBucket(ev, 'event');
+  // 按起止排:多天的(allDay 或 isFirstDay 不是 isLastDay)排前面 — 让横跨条优先占顶部 lane
+  for (const arr of pillsByDay.values()) {
+    arr.sort((a, b) => {
+      const aSpan = (!a.isFirstDay || !a.isLastDay) ? 0 : 1;
+      const bSpan = (!b.isFirstDay || !b.isLastDay) ? 0 : 1;
+      if (aSpan !== bSpan) return aSpan - bSpan;
+      return (a.occStart || 0) - (b.occStart || 0);
+    });
+  }
+
+  // sessByDay → 当日合计专注时长(ms)
+  const sessByDay = new Map();
+  if (showFocus) {
+    for (const s of (state.sessions || [])) {
+      if (!s.startedAt || !s.duration) continue;
+      // 防御:单条 > 16h 视为 OS 休眠老脏数据,跳过
+      if (s.duration > 16 * 3600000) continue;
+      const k = startOfDay(new Date(s.startedAt)).getTime();
+      sessByDay.set(k, (sessByDay.get(k) || 0) + s.duration);
+    }
+  }
+  const _fmtMs = (ms) => {
+    const min = Math.round(ms / 60000);
+    const h = Math.floor(min / 60), m = min % 60;
+    if (h && m) return `${h}h ${m}m`;
+    if (h) return `${h}h`;
+    return `${m}m`;
+  };
 
   let weeksHtml = '';
   for (let w = 0; w < totalWeeks; w++) {
@@ -4892,20 +4985,29 @@ function renderMonthView(view) {
       const isToday = dms === today0;
       const isSel = dms === sel0;
       const cellMonth = d.getFullYear() * 100 + d.getMonth();
-      const tks = taskByDay.get(dms) || [];
-      const MAX_PILLS = 2;
-      const pillsHtml = tks.slice(0, MAX_PILLS).map(t => {
-        const col = colorOfCalItem(t) || 'var(--accent)';
-        return `<div class="cal-cell-pill ${t.done?'done':''}" style="--pill-color:${esc(col)}" title="${esc(t.title || '')}">${esc(t.title || '')}</div>`;
+      const pills = pillsByDay.get(dms) || [];
+      const MAX_PILLS = 4;
+      const pillsHtml = pills.slice(0, MAX_PILLS).map(p => {
+        // 多天项目:中间天不显示文字(只显示连续条);第一天显示标题;最后一天显示标题
+        const isSpan = !p.isFirstDay || !p.isLastDay;
+        const showText = !isSpan || p.isFirstDay;
+        const spanCls = isSpan ? ' span' + (p.isFirstDay ? ' span-first' : '') + (p.isLastDay ? ' span-last' : '') : '';
+        const text = showText ? esc(p.title) : '';
+        return `<div class="cal-cell-pill${spanCls} ${p.done?'done':''}" style="--pill-color:${esc(p.color)}" title="${esc(p.title)}">${text}</div>`;
       }).join('');
-      const moreHtml = tks.length > MAX_PILLS
-        ? `<div class="cal-cell-more">+${tks.length - MAX_PILLS}</div>`
+      const moreHtml = pills.length > MAX_PILLS
+        ? `<div class="cal-cell-more">+${pills.length - MAX_PILLS}</div>`
         : '';
       const monthLabel = isFirst ? `<span class="cal-month-label">${d.getMonth()+1}月</span>` : '';
+      const focusMs = sessByDay.get(dms) || 0;
+      const focusHtml = focusMs > 0
+        ? `<span class="cal-cell-focus">${_fmtMs(focusMs)}</span>`
+        : '';
       cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'sel':''}" data-cal-day="${dms}" data-cell-month="${cellMonth}" data-cal-anchor-month="${isFirst ? cellMonth : ''}">
         <div class="cal-cell-num-wrap">
           ${monthLabel}
           <div class="cal-cell-num">${d.getDate()}</div>
+          ${focusHtml}
         </div>
         <div class="cal-cell-pills">${pillsHtml}${moreHtml}</div>
       </div>`;

@@ -3465,6 +3465,30 @@ html, body { overscroll-behavior-y: contain; }
   font-size: 14px;
   outline: none;
 }
+/* 时长 h + m 双字段 — 单字段「7h30m」解析会被 render 重渲染裁断 */
+.sum-mod-duration-h,
+.sum-mod-duration-m {
+  width: 44px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 14px;
+  outline: none;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.sum-mod-duration-h::-webkit-outer-spin-button,
+.sum-mod-duration-h::-webkit-inner-spin-button,
+.sum-mod-duration-m::-webkit-outer-spin-button,
+.sum-mod-duration-m::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.sum-mod-duration-h:focus,
+.sum-mod-duration-m:focus { border-color: var(--accent); }
+.sum-mod-editor-unit {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin: 0 2px 0 -2px;
+}
 
 .sum-input-toolbar {
   display: flex;

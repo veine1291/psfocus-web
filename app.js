@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-2900';
+const _PSFOCUS_BUILD = '20260515-0100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1334,12 +1334,19 @@ function _renderSummaryModuleEditor(m, dayKey) {
     }
     const pending = summaryState.pendingModuleValues[m.id];
     const pendingMs = (pending != null) ? (parseInt(pending, 10) || 0) : null;
+    // 分两栏 h + m,跟编辑详情同款 — 单字段「7h30m」解析在 render 重渲染时会把输入裁断,改成 number 双框稳
+    const pendingH = pendingMs != null ? Math.floor(pendingMs / 3600000) : '';
+    const pendingM = pendingMs != null ? Math.floor((pendingMs % 3600000) / 60000) : '';
     return `<div class="sum-mod-editor">
       ${titleHtml}
-      <input class="sum-mod-duration-input" type="text" ${dataAttrs}
-        data-action-input="summary-duration-pending"
-        value="${pendingMs != null ? esc(_summaryFmtDurationMs(pendingMs)) : ''}"
-        placeholder="如 1h 30m">
+      <input class="sum-mod-duration-h" type="number" min="0" max="24" step="1" inputmode="numeric" ${dataAttrs}
+        data-action-input="summary-duration-pending-hm"
+        value="${pendingH === '' ? '' : pendingH}" placeholder="时">
+      <span class="sum-mod-editor-unit">h</span>
+      <input class="sum-mod-duration-m" type="number" min="0" max="59" step="1" inputmode="numeric" ${dataAttrs}
+        data-action-input="summary-duration-pending-hm"
+        value="${pendingM === '' ? '' : pendingM}" placeholder="分">
+      <span class="sum-mod-editor-unit">m</span>
       ${sourceBtn}
       ${delBtn}
     </div>`;
@@ -1913,6 +1920,19 @@ const _summaryActions = {
     const ms = _summaryParseDuration(v);
     if (!ms) return;
     summaryState.pendingModuleValues[modId] = ms;
+  },
+  // 时长 h + m 双字段 — 读同行的 .sum-mod-duration-h / -m,实时算 pending ms
+  'summary-duration-pending-hm': (el) => {
+    const modId = el.dataset.modId;
+    const row = el.closest('.sum-mod-editor');
+    if (!row) return;
+    const hInp = row.querySelector('.sum-mod-duration-h');
+    const mInp = row.querySelector('.sum-mod-duration-m');
+    const h = Math.max(0, Math.min(24, parseInt((hInp && hInp.value) || '0', 10) || 0));
+    const m = Math.max(0, Math.min(59, parseInt((mInp && mInp.value) || '0', 10) || 0));
+    const ms = (h * 3600 + m * 60) * 1000;
+    if (ms > 0) summaryState.pendingModuleValues[modId] = ms;
+    else delete summaryState.pendingModuleValues[modId];
   },
   'summary-submit': () => {
     const ta = document.querySelector('.sum-input');

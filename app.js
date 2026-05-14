@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-0700';
+const _PSFOCUS_BUILD = '20260514-0900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -3307,6 +3307,7 @@ function openTimelineNodeAddSheet(projId) {
   const pd = (n) => String(n).padStart(2, '0');
   const dateStr = `${now.getFullYear()}-${pd(now.getMonth()+1)}-${pd(now.getDate())}`;
   const timeStr = `${pd(now.getHours())}:${pd(now.getMinutes())}`;
+  let pendingImg = null;   // { name, cloudFileID } or null
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="dp-detail">
@@ -3327,6 +3328,14 @@ function openTimelineNodeAddSheet(projId) {
           <input type="time" id="tl-new-time" value="${timeStr}" style="flex:1;padding:8px;border:1px solid var(--border-soft);background:var(--bg-input);color:var(--text);border-radius:8px;font-size:13px;">
         </div>
       </div>
+      <div class="dp-section">
+        <div class="dp-section-title">图片</div>
+        <div id="tl-new-img-wrap" class="tl-img-wrap"></div>
+        <label class="tl-img-add-btn">
+          <input type="file" accept="image/*" id="tl-new-img-input" hidden>
+          <span class="ico-plus"></span><span>选图片</span>
+        </label>
+      </div>
     </div>
     <div class="dp-footer">
       <button class="dp-more-btn" data-action="cancel">取消</button>
@@ -3334,8 +3343,31 @@ function openTimelineNodeAddSheet(projId) {
     </div>
   `, (body) => {
     const titleEl = body.querySelector('#tl-new-title');
+    const imgWrap = body.querySelector('#tl-new-img-wrap');
     setTimeout(() => titleEl.focus(), 80);
     body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    const refreshImg = () => {
+      if (!pendingImg) { imgWrap.innerHTML = ''; return; }
+      imgWrap.innerHTML = `<div class="tl-img-preview">
+        <span>📎 ${esc(pendingImg.name)}</span>
+        <button class="tl-img-x" title="移除">×</button>
+      </div>`;
+      imgWrap.querySelector('.tl-img-x').onclick = () => { pendingImg = null; refreshImg(); };
+    };
+    body.querySelector('#tl-new-img-input').addEventListener('change', async (e) => {
+      const f = (e.target.files || [])[0];
+      if (!f) return;
+      if (!tcbApp || !uid) { showToast('未登录,不能上传'); return; }
+      showToast('上传中…');
+      try {
+        const cloudPath = `psfocus-timeline/${p.id}/${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        const res = await tcbApp.uploadFile({ cloudPath, filePath: f });
+        const fid = res && res.fileID;
+        if (fid) { pendingImg = { name: f.name, cloudFileID: fid }; refreshImg(); showToast('已上传'); }
+        else showToast('上传失败');
+      } catch (err) { console.warn('[tl-upload]', err); showToast('上传失败'); }
+      e.target.value = '';
+    });
     body.querySelector('[data-action="save"]').onclick = () => {
       const newTitle = (titleEl.value || '').trim();
       if (!newTitle) { showToast('标题不能为空'); return; }
@@ -3350,6 +3382,7 @@ function openTimelineNodeAddSheet(projId) {
         title: newTitle,
       };
       if (newNote) node.note = newNote;
+      if (pendingImg) { node.image = pendingImg.name; node.cloudFileID = pendingImg.cloudFileID; }
       ensureProjectTimeline(p).push(node);
       pushState();
       closeSheet();
@@ -3394,6 +3427,14 @@ function openTimelineNodeEditSheet(projId, nodeId) {
           <input type="time" id="tl-edit-time" value="${t0.time}" style="flex:1;padding:8px;border:1px solid var(--border-soft);background:var(--bg-input);color:var(--text);border-radius:8px;font-size:13px;">
         </div>
       </div>
+      <div class="dp-section">
+        <div class="dp-section-title">图片</div>
+        <div id="tl-edit-img-wrap" class="tl-img-wrap"></div>
+        <label class="tl-img-add-btn">
+          <input type="file" accept="image/*" id="tl-edit-img-input" hidden>
+          <span class="ico-plus"></span><span>${n.cloudFileID ? '换图' : '加图'}</span>
+        </label>
+      </div>
     </div>
     <div class="dp-footer">
       <button class="dp-project-pill" data-action="del" style="color:var(--danger);"><span class="ico-trash"></span><span>删除</span></button>
@@ -3401,6 +3442,34 @@ function openTimelineNodeEditSheet(projId, nodeId) {
       <button class="dp-more-btn" data-action="save" style="background:var(--accent);color:#fff;">保存</button>
     </div>
   `, (body) => {
+    // 编辑模式:本地暂存「待应用」的图片状态(避免改了 cancel 还是改了)
+    let imgState = n.cloudFileID
+      ? { name: n.image || '已附图', cloudFileID: n.cloudFileID, _orig: true }
+      : null;
+    const imgWrap = body.querySelector('#tl-edit-img-wrap');
+    const refreshImg = () => {
+      if (!imgState) { imgWrap.innerHTML = ''; return; }
+      imgWrap.innerHTML = `<div class="tl-img-preview">
+        <span>📎 ${esc(imgState.name)}</span>
+        <button class="tl-img-x" title="移除">×</button>
+      </div>`;
+      imgWrap.querySelector('.tl-img-x').onclick = () => { imgState = null; refreshImg(); };
+    };
+    refreshImg();
+    body.querySelector('#tl-edit-img-input').addEventListener('change', async (e) => {
+      const f = (e.target.files || [])[0];
+      if (!f) return;
+      if (!tcbApp || !uid) { showToast('未登录,不能上传'); return; }
+      showToast('上传中…');
+      try {
+        const cloudPath = `psfocus-timeline/${p.id}/${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        const res = await tcbApp.uploadFile({ cloudPath, filePath: f });
+        const fid = res && res.fileID;
+        if (fid) { imgState = { name: f.name, cloudFileID: fid }; refreshImg(); showToast('已上传'); }
+        else showToast('上传失败');
+      } catch (err) { console.warn('[tl-upload]', err); showToast('上传失败'); }
+      e.target.value = '';
+    });
     body.querySelector('[data-action="cancel"]').onclick = closeSheet;
     body.querySelector('[data-action="save"]').onclick = () => {
       const newTitle = (body.querySelector('#tl-edit-title').value || '').trim();
@@ -3412,6 +3481,14 @@ function openTimelineNodeEditSheet(projId, nodeId) {
       if (newNote) n.note = newNote; else delete n.note;
       const newTs = combineDateAndTime(dateStr, timeStr);
       if (Number.isFinite(newTs)) n.ts = newTs;
+      // 图片同步
+      if (imgState) {
+        n.image = imgState.name;
+        n.cloudFileID = imgState.cloudFileID;
+      } else {
+        delete n.image;
+        delete n.cloudFileID;
+      }
       pushState();
       closeSheet();
       renderAll();
@@ -4468,13 +4545,13 @@ function openEditProjectSheet(p) {
           <label class="ep-color-native-wrap" title="自定义"><input type="color" id="ep-color" value="${esc(currentColor || '#888888')}"><span class="ep-color-native-label">自定义</span></label>
         </div>
       </div>
-      ${isProj ? `<div class="form-row" style="margin-top:8px;">
+      <div class="form-row" style="margin-top:8px;">
         <label>文件夹</label>
         <select id="ep-folder">
           <option value="">未分组</option>
           ${folders.map(f => `<option value="${esc(f.id)}" ${(p.folderId===f.id)?'selected':''}>${esc(f.name||'未命名')}</option>`).join('')}
         </select>
-      </div>` : ''}
+      </div>
       <div class="form-row" style="margin-top:8px;">
         <label>置顶</label>
         <label class="form-toggle"><input type="checkbox" id="ep-pin" ${p.pinned?'checked':''}><span></span></label>
@@ -4518,7 +4595,7 @@ function openEditProjectSheet(p) {
       if (!name) { showToast('请输入名称'); return; }
       p.name = name;
       p.color = pickedColor;
-      if (isProj) p.folderId = body.querySelector('#ep-folder').value || null;
+      p.folderId = body.querySelector('#ep-folder').value || null;
       p.pinned = body.querySelector('#ep-pin').checked;
       p.archived = body.querySelector('#ep-arch').checked;
       p.updatedAt = Date.now();
@@ -5767,6 +5844,8 @@ function dayTimedBlockDescs(dayStartMs) {
         title: tk ? (tk.title || '专注') : (proj ? proj.name : '专注'),
         sub:   merged2 ? `${m._mergedCount} 段` : (tk && proj ? proj.name : ''),
         sessionId: m.id, taskId: m.taskId,
+        focusMs: m.duration || 0,   // 真正专注时长(合并多段已累加),不含暂停 — 显示用
+        mergedCount: m._mergedCount || 1,
       });
     }
   }
@@ -5891,13 +5970,19 @@ function calBlockHtml(d, dayStartMs) {
   }
 
   // session — origStart/origEnd 给详情 sheet 用来在 state.sessions 里找回合并组里所有段
+  // 块上直接写「真专注时长」(对齐桌面),如 "8m" / "1h 30m";合并段加 ×N
+  const focusMs = d.focusMs || 0;
+  const totalMin = Math.round(focusMs / 60000);
+  const h = Math.floor(totalMin / 60), mn = totalMin % 60;
+  const durStr = h ? (mn ? `${h}h ${mn}m` : `${h}h`) : `${mn}m`;
+  const countStr = (d.mergedCount > 1) ? ` ×${d.mergedCount}` : '';
   return `<div class="cal-block cal-block-session ${compact?'compact':''}"
     data-session-id="${esc(d.sessionId || '')}"
     data-orig-start="${d.origStart}"
     data-orig-end="${d.origEnd}"
     style="${styleVars}">
-    <div class="cal-block-title">${esc(d.title)}</div>
-    ${heightMin >= 30 ? `<div class="cal-block-time">${startStr}</div>` : ''}
+    <div class="cal-block-title">${esc(d.title)}${countStr}</div>
+    <div class="cal-block-dur">${esc(durStr)}${heightMin >= 30 ? ' · ' + esc(startStr) : ''}</div>
   </div>`;
 }
 
@@ -7307,6 +7392,13 @@ function openCreateTaskSheet(opts) {
       </div>
       <div class="dp-section dp-merged-section">
         <textarea class="dp-note-input" id="qe-note" rows="3" placeholder="备注、笔记…  输入 #xxx 自动加标签"></textarea>
+        <div class="dp-merged-row" style="margin-top:8px;">
+          <div id="qe-img-list" class="dp-image-grid" style="min-height:0;"></div>
+          <label class="dp-merged-add-img" title="上传图片">
+            <input type="file" accept="image/*" multiple id="qe-img-input" hidden>
+            <span class="ico-plus"></span>
+          </label>
+        </div>
       </div>
     </div>
     <div class="dp-footer">
@@ -7317,6 +7409,41 @@ function openCreateTaskSheet(opts) {
   `, (body) => {
     const titleEl = body.querySelector('#qe-title');
     const noteEl  = body.querySelector('#qe-note');
+    const imgList = body.querySelector('#qe-img-list');
+    // 暂存待上传成功的图(创建时再写到 task.images)
+    const pendingImages = [];
+    const refreshImgs = () => {
+      imgList.innerHTML = pendingImages.map(im => `
+        <div class="dp-image-cell" data-img-id="${esc(im.id)}">
+          <img class="dp-image" data-cloud-file-id="${esc(im.cloudFileID)}" alt="${esc(im.name||'')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+          <button class="dp-image-del" data-img-id="${esc(im.id)}" title="删除">×</button>
+        </div>
+      `).join('');
+      // 异步换 src
+      bindCloudTimelineImages(imgList);
+      // 删除按钮
+      imgList.querySelectorAll('.dp-image-del').forEach(b => b.onclick = (ev) => {
+        ev.stopPropagation();
+        const i = pendingImages.findIndex(x => x.id === b.dataset.imgId);
+        if (i >= 0) { pendingImages.splice(i, 1); refreshImgs(); }
+      });
+    };
+    body.querySelector('#qe-img-input').addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      if (!tcbApp || !uid) { showToast('未登录,不能上传'); return; }
+      showToast(`上传 ${files.length} 张图…`);
+      for (const f of files) {
+        try {
+          const cloudPath = `psfocus-task-images/${uid}/_pending/${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const res = await tcbApp.uploadFile({ cloudPath, filePath: f });
+          const fid = res && res.fileID;
+          if (fid) pendingImages.push({ id: 'img-' + Math.random().toString(36).slice(2, 10), cloudFileID: fid, name: f.name, uploadedAt: Date.now() });
+        } catch (err) { console.warn('[qe-upload]', err); }
+      }
+      e.target.value = '';
+      refreshImgs();
+    });
     setTimeout(() => titleEl.focus(), 80);
 
     function refreshSchedRow() {
@@ -7409,6 +7536,7 @@ function openCreateTaskSheet(opts) {
         kanbanColumn: null,
         order: 100,
       };
+      newTask.images = pendingImages.slice();
       state.tasks.push(newTask);
       pushState(); closeSheet(); renderAll();
     };

@@ -1727,6 +1727,7 @@ html, body { overscroll-behavior-y: contain; }
   text-overflow: ellipsis;
 }
 .cal-block-time { font-size: 9px; opacity: 0.7; margin-top: 1px; }
+.cal-block-dur { font-size: 10px; opacity: 0.85; margin-top: 1px; font-variant-numeric: tabular-nums; }
 /* 任务:浅染色 + 项目色完整边框(对齐桌面 cal-task-block) */
 .cal-block-task {
   background: color-mix(in srgb, var(--block-color) 10%, transparent);
@@ -2537,6 +2538,37 @@ html, body { overscroll-behavior-y: contain; }
 }
 .proj-tl-add-btn:active { background: var(--bg-section); color: var(--accent); border-color: var(--accent); }
 .proj-tl-add-btn .ico-plus { width: 14px; height: 14px; }
+
+/* 时间轴节点 sheet 内的图片上传区 */
+.tl-img-wrap { margin-bottom: 8px; }
+.tl-img-preview {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-section);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.tl-img-preview > span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-img-x {
+  width: 26px; height: 26px;
+  border: 0; background: transparent;
+  color: var(--text-faint);
+  font-size: 16px;
+  border-radius: 50%;
+}
+.tl-img-x:active { background: var(--danger-bg, rgba(229,115,115,0.15)); color: var(--danger, #e57373); }
+.tl-img-add-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  -webkit-tap-highlight-color: transparent;
+}
+.tl-img-add-btn:active { background: var(--bg-section); color: var(--accent); }
+.tl-img-add-btn .ico-plus { width: 13px; height: 13px; }
 .proj-tl-node {
   position: relative;
   padding: 8px 0 8px 28px;

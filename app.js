@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-2100';
+const _PSFOCUS_BUILD = '20260514-2300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -673,10 +673,15 @@ function sanitizeState(s) {
       if (!Array.isArray(m.entries)) m.entries = [];
     }
   }
+  // 文件夹补 kind 字段 — 老数据没设的视为 'project' 文件夹
+  const _folders = arr(s.folders);
+  for (const f of _folders) {
+    if (!f.kind) f.kind = 'project';
+  }
 
   return {
     ...e, ...s,
-    folders: arr(s.folders), projects: arr(s.projects), taskLists: arr(s.taskLists),
+    folders: _folders, projects: arr(s.projects), taskLists: arr(s.taskLists),
     tasks, events, sessions: arr(s.sessions),
     tags: arr(s.tags), smartLists: arr(s.smartLists), templates: arr(s.templates),
     summaries, summaryTags, summaryDayModules,
@@ -4543,7 +4548,11 @@ function openCreateFromTemplatePicker(opts) {
 function openEditProjectSheet(p) {
   const isProj = (p.kind || 'project') === 'project';
   const label = isProj ? '编辑项目' : '编辑清单';
-  const folders = (state.folders || []).slice().sort((a,b)=> (a.order||0)-(b.order||0));
+  const wantedFolderKind = isProj ? 'project' : 'tasklist';
+  // 文件夹下拉只显示同 kind 的文件夹(项目挂项目文件夹,清单挂清单文件夹)
+  const folders = (state.folders || [])
+    .filter(f => (f.kind || 'project') === wantedFolderKind)
+    .slice().sort((a,b)=> (a.order||0)-(b.order||0));
   const presetColors = ['#FF6B6B','#FFB86B','#FFD93D','#6BCB77','#4D96FF','#9B5DE5','#FF6FB5','','#888888'];
   const currentColor = p.color || '';
   showSheet(`
@@ -5040,39 +5049,63 @@ function renderDrawerNav() {
       }).join('');
     }
   }
-  // 项目 + 清单合一渲染 — 都尊重 folderId(原来清单被强行另外起 section,无法入文件夹)
+  // 项目 / 清单按 folder.kind 各自归类 — 文件夹是「项目文件夹」就出现在「项目」section,
+  // 是「清单文件夹」就出现在「任务清单」section
   const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
-  // 任务清单(没文件夹的)→ 单独 section,跟项目分开看
-  const folderIds = new Set(state.folders.map(f => f.id));
-  const folderlessTasklists = state.projects
-    .filter(p => !p.archived && p.kind === 'tasklist' && (!p.folderId || !folderIds.has(p.folderId)))
-    .slice().sort(byOrder);
-  if (folderlessTasklists.length) {
+  const folderKindOf = (f) => f.kind || 'project';   // 老数据兼容
+  const folderById = new Map((state.folders || []).map(f => [f.id, f]));
+  const projectFolders  = state.folders.filter(f => folderKindOf(f) === 'project').slice().sort(byOrder);
+  const tasklistFolders = state.folders.filter(f => folderKindOf(f) === 'tasklist').slice().sort(byOrder);
+
+  const projectFolderIds  = new Set(projectFolders.map(f => f.id));
+  const tasklistFolderIds = new Set(tasklistFolders.map(f => f.id));
+
+  // ===== 任务清单 section =====
+  const allTasklists = state.projects.filter(p => !p.archived && p.kind === 'tasklist').slice().sort(byOrder);
+  const folderlessTasklists = allTasklists.filter(p => !p.folderId || !tasklistFolderIds.has(p.folderId));
+  const tasklistsInFolder = (fid) => allTasklists.filter(p => p.folderId === fid);
+  if (allTasklists.length || tasklistFolders.length) {
     html += navSectionTitle('__tasklists__', '任务清单');
     if (!ui.collapsedSections.has('__tasklists__')) {
-      html += folderlessTasklists.map(p => projectRowHtml(p)).join('');
+      tasklistFolders.forEach(f => {
+        const collapsed = ui.collapsedFolders.has(f.id);
+        const children = tasklistsInFolder(f.id);
+        const folderCustomIco = renderCustomIconHtml(f.icon, 'nav-folder-ico', '') || '';
+        const active = ui.selectedKind === 'folder' && ui.selectedId === f.id;
+        const undoneCnt = state.tasks.filter(t => children.some(p => p.id === t.projectId) && !t.done).length;
+        html += `<div class="nav-folder-head ${collapsed?'collapsed':''} ${active?'active':''}" data-select-kind="folder" data-select-id="${esc(f.id)}">
+          <button class="nav-folder-chev" data-folder-toggle="${esc(f.id)}" aria-label="${collapsed?'展开':'折叠'}"><span class="ico-chevron-down"></span></button>
+          ${folderCustomIco || `<span class="nav-icon ico-folder"></span>`}
+          <span class="nav-folder-name">${esc(f.name || '未命名')}</span>
+          <span class="nav-count">${undoneCnt || children.length}</span>
+        </div>`;
+        html += `<div class="nav-folder-children">`;
+        html += children.map(p => projectRowHtml(p)).join('');
+        html += `</div>`;
+      });
+      if (folderlessTasklists.length) {
+        if (tasklistFolders.length) html += `<div class="nav-section-title" style="text-transform:none;font-weight:500;">未分组</div>`;
+        html += folderlessTasklists.map(p => projectRowHtml(p)).join('');
+      }
     }
   }
 
+  // ===== 项目 section =====
   html += navSectionTitle('__tasks__', '项目');
   if (!ui.collapsedSections.has('__tasks__')) {
-    // 项目 + 任务清单都可入文件夹 — folder children 是 union(尊重 order 排序)
-    const allInFolder = state.projects
-      .filter(p => !p.archived && (p.kind === 'project' || p.kind === 'tasklist'))
+    const allProjects = state.projects
+      .filter(p => !p.archived && (p.kind || 'project') === 'project')
       .slice().sort(byOrder);
-    const pinned = allInFolder.filter(p => p.pinned && (p.kind || 'project') === 'project');
-    const inFolder = (fid) => allInFolder.filter(p => !p.pinned && p.folderId === fid);
-    // 「未分组」只显示 project(清单走单独 section 的 folderlessTasklists)
-    const ungroupedProjects = allInFolder.filter(p =>
-      !p.pinned && (p.kind || 'project') === 'project' && (!p.folderId || !folderIds.has(p.folderId))
-    );
+    const pinned = allProjects.filter(p => p.pinned);
+    const projectsInFolder = (fid) => allProjects.filter(p => !p.pinned && p.folderId === fid);
+    const ungroupedProjects = allProjects.filter(p => !p.pinned && (!p.folderId || !projectFolderIds.has(p.folderId)));
     if (pinned.length) {
       html += `<div class="nav-section-title">已置顶</div>`;
       html += pinned.map(p => projectRowHtml(p)).join('');
     }
-    state.folders.slice().sort(byOrder).forEach(f => {
+    projectFolders.forEach(f => {
       const collapsed = ui.collapsedFolders.has(f.id);
-      const children = inFolder(f.id);
+      const children = projectsInFolder(f.id);
       const folderCustomIco = renderCustomIconHtml(f.icon, 'nav-folder-ico', '') || '';
       const active = ui.selectedKind === 'folder' && ui.selectedId === f.id;
       const undoneCnt = state.tasks.filter(t => children.some(p => p.id === t.projectId) && !t.done).length;
@@ -7274,6 +7307,11 @@ function renderSettingsAbout(view) {
 // 新建项目 / 任务清单 / 文件夹
 function openCreateProjectSheet() {
   const folders = (state.folders || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+  // 帮 select 选项做 kind 标签 — 没设 kind 的老 folder 默认当 'project'
+  const folderKindOf = (f) => f.kind || 'project';
+  const projectFolders  = folders.filter(f => folderKindOf(f) === 'project');
+  const tasklistFolders = folders.filter(f => folderKindOf(f) === 'tasklist');
+  const folderOpts = (list) => `<option value="">未分组</option>` + list.map(f => `<option value="${esc(f.id)}">${esc(f.name || '未命名')}</option>`).join('');
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content">
@@ -7288,11 +7326,16 @@ function openCreateProjectSheet() {
       <div class="form-row" style="margin-top:8px;"><label>名称</label>
         <input type="text" id="cp-name" placeholder="名称" maxlength="40">
       </div>
-      <div class="form-row" id="cp-folder-row" style="margin-top:8px;${folders.length ? '' : 'display:none'}">
+      <div class="form-row" id="cp-folder-row" style="margin-top:8px;">
         <label>所属文件夹</label>
-        <select id="cp-folder">
-          <option value="">未分组</option>
-          ${folders.map(f => `<option value="${esc(f.id)}">${esc(f.name || '未命名')}</option>`).join('')}
+        <select id="cp-folder"></select>
+      </div>
+      <!-- 仅在 kind=folder 时显示:文件夹自己的分类 -->
+      <div class="form-row" id="cp-folder-kind-row" style="margin-top:8px;display:none;">
+        <label>文件夹类型</label>
+        <select id="cp-folder-kind">
+          <option value="project" selected>项目文件夹</option>
+          <option value="tasklist">任务清单文件夹</option>
         </select>
       </div>
     </div>
@@ -7304,23 +7347,37 @@ function openCreateProjectSheet() {
     const nameEl = body.querySelector('#cp-name');
     const kindEl = body.querySelector('#cp-kind');
     const folderRow = body.querySelector('#cp-folder-row');
-    // 不自动 focus — 立刻调起键盘会把还在 transition 里的 sheet 推到视觉下方
-    // 用户主动点 input 时键盘才弹起,这时候 sheet 已经在 bindSheetKeyboardLift 监控中
-    kindEl.onchange = () => {
-      // 文件夹自身不挂文件夹
-      folderRow.style.display = (kindEl.value === 'folder' || !folders.length) ? 'none' : '';
+    const folderKindRow = body.querySelector('#cp-folder-kind-row');
+    const folderSelect = body.querySelector('#cp-folder');
+    // 根据当前 kind 切 folder 下拉里的选项 + 显隐
+    const refreshFolderSelect = () => {
+      const k = kindEl.value;
+      if (k === 'folder') {
+        folderRow.style.display = 'none';
+        folderKindRow.style.display = '';
+      } else {
+        folderKindRow.style.display = 'none';
+        // project 类型只显示项目文件夹,tasklist 类型只显示清单文件夹
+        const list = (k === 'tasklist') ? tasklistFolders : projectFolders;
+        folderSelect.innerHTML = folderOpts(list);
+        folderRow.style.display = list.length ? '' : 'none';
+      }
     };
+    refreshFolderSelect();
+    kindEl.onchange = refreshFolderSelect;
     body.querySelector('[data-action="cancel"]').onclick = closeSheet;
     body.querySelector('[data-action="save"]').onclick = () => {
       const name = nameEl.value.trim();
       if (!name) { showToast('请输入名称'); return; }
       const kind = kindEl.value;
-      const folderId = (kind === 'folder') ? null : (body.querySelector('#cp-folder').value || null);
+      const folderId = (kind === 'folder') ? null : (folderSelect.value || null);
       if (kind === 'folder') {
+        const folderKind = body.querySelector('#cp-folder-kind').value || 'project';
         const maxOrder = (state.folders || []).reduce((m, x) => Math.max(m, x.order || 0), 0);
         state.folders.push({
           id: 'f-' + Math.random().toString(36).slice(2, 10),
           name, color: '', icon: '', order: maxOrder + 100,
+          kind: folderKind,   // 'project' | 'tasklist' — 决定它出现在哪个 section + 哪些 item 能挂进来
           createdAt: Date.now(), updatedAt: Date.now(),
         });
       } else {

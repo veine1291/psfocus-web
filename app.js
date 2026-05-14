@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-1700';
+const _PSFOCUS_BUILD = '20260514-1900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -5199,54 +5199,57 @@ function renderMonthView(view) {
   const showRepeat = !state.settings || state.settings.calShowAllRepeat !== false;
   const showFocus  = !state.settings || state.settings.calShowFocus  !== false;
 
-  // dayMs → 该天的 pill 列表(任务 + 事件,按时间排序)
-  // pill: { id, kind: 'task'|'event', title, color, done, allDay, occStart, occEnd, isFirstDay, isLastDay }
+  // dayMs → 该天的 pill 列表(只放真正的单日条目;多天 span 单独走 row-level ribbon overlay)
+  // pill: { id, kind, title, color, done }
   const pillsByDay = new Map();
   const addPill = (dayMs, pill) => {
     if (!pillsByDay.has(dayMs)) pillsByDay.set(dayMs, []);
     pillsByDay.get(dayMs).push(pill);
   };
-  // 对每个 task/event 在视图范围内逐天 expand;多天事件每天都加 chip(第一天和最后一天加 round corner)
+  // 多天 ribbon 收集(项目 / 跨日 task / 跨日 event)— 渲染时按周切片 + lane 分配,贴在 row 顶部
+  // span: { id, kind, title, color, done, start: dayMs, end: dayMs(含末天) }
+  const allSpans = [];
+  const addSpan = (span) => { allSpans.push(span); };
+
   const rangeStart = firstWeek.getTime();
   const rangeEnd   = addDays(firstWeek, totalWeeks * 7).getTime();
+  // 对每个 task/event 在视图范围内逐天 expand;单日塞 pillsByDay,跨日塞 allSpans(去重)
   function _expandAndBucket(item, kind) {
     if (kind === 'task' && item.archived) return;
-    // 逐天问 occurrence — 简单但够用(视图范围 ~91 天 × ~item 数,够快)
+    const seen = new Set();   // 同一个 occurrence 在每天的 expand 都会返回,要去重
     for (let dms = rangeStart; dms < rangeEnd; dms += 86400000) {
       const dayEnd = dms + 86400000;
       const occs = expandItemOccurrencesInDay(item, dms, dayEnd);
       for (const occ of occs) {
+        let occDone = false;
         if (kind === 'task') {
-          const occDone = (typeof isOccDone === 'function')
-            ? isOccDone(item, occ.schedule, occ.start)
-            : !!item.done;
+          occDone = (typeof isOccDone === 'function') ? isOccDone(item, occ.schedule, occ.start) : !!item.done;
           if (!showDone && occDone) continue;
-          const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
-          if (!showRepeat && isRepeat && occ.start > today0 + 86400000 - 1) continue;
-          const occStartDay = startOfDay(new Date(occ.start)).getTime();
-          const occEndDay = startOfDay(new Date(occ.end - 1)).getTime();
+        }
+        const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
+        if (!showRepeat && isRepeat && occ.start > today0 + 86400000 - 1) continue;
+        const occStartDay = startOfDay(new Date(occ.start)).getTime();
+        const occEndDay = startOfDay(new Date(occ.end - 1)).getTime();
+        if (occStartDay === occEndDay) {
+          // 单日 → cell-level pill
           addPill(dms, {
-            id: item.id, kind: 'task',
+            id: item.id, kind,
             title: item.title || '(无标题)',
             color: colorOfCalItem(item) || 'var(--accent)',
-            done: occDone, allDay: !!occ.allDay,
-            occStart: occ.start, occEnd: occ.end,
-            isFirstDay: dms === occStartDay,
-            isLastDay:  dms === occEndDay,
+            done: occDone,
           });
         } else {
-          const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
-          if (!showRepeat && isRepeat && occ.start > today0 + 86400000 - 1) continue;
-          const occStartDay = startOfDay(new Date(occ.start)).getTime();
-          const occEndDay = startOfDay(new Date(occ.end - 1)).getTime();
-          addPill(dms, {
-            id: item.id, kind: 'event',
+          // 跨日 → row-level ribbon(去重:同 occStart 只加一次)
+          const key = `${kind}:${item.id}:${occ.start}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          addSpan({
+            id: item.id, kind,
             title: item.title || '(无标题)',
             color: colorOfCalItem(item) || 'var(--accent)',
-            done: false, allDay: !!occ.allDay,
-            occStart: occ.start, occEnd: occ.end,
-            isFirstDay: dms === occStartDay,
-            isLastDay:  dms === occEndDay,
+            done: occDone,
+            start: occStartDay,
+            end: occEndDay,
           });
         }
       }
@@ -5254,7 +5257,7 @@ function renderMonthView(view) {
   }
   for (const t of (state.tasks || [])) {
     _expandAndBucket(t, 'task');
-    // dueAt-only 任务(没 schedule 也没 start)— expand 返回空,补一个 dueAt 那天的 pill
+    // dueAt-only 任务 → 单日 pill
     const hasSchedule = (Array.isArray(t.schedules) && t.schedules[0]) || t.start;
     if (!hasSchedule && t.dueAt && !t.archived) {
       if (!showDone && t.done) continue;
@@ -5264,44 +5267,73 @@ function renderMonthView(view) {
         id: t.id, kind: 'task',
         title: t.title || '(无标题)',
         color: colorOfCalItem(t) || 'var(--accent)',
-        done: !!t.done, allDay: false,
-        occStart: t.dueAt, occEnd: t.dueAt,
-        isFirstDay: true, isLastDay: true,
+        done: !!t.done,
       });
     }
   }
   for (const ev of (state.events || [])) _expandAndBucket(ev, 'event');
-  // 项目 (dueStart/dueEnd 范围) → 多天横条 — 对齐桌面端的项目 bar
+  // 项目 dueStart/dueEnd → ribbon
   for (const proj of (state.projects || [])) {
     if (proj.archived) continue;
-    if ((proj.kind || 'project') !== 'project') continue;   // 任务清单没 due,跳过
+    if ((proj.kind || 'project') !== 'project') continue;
     if (!proj.dueStart && !proj.dueEnd) continue;
     const ps = startOfDay(new Date(proj.dueStart || proj.dueEnd)).getTime();
     const pe = startOfDay(new Date(proj.dueEnd   || proj.dueStart)).getTime();
-    // 跟视图范围相交
-    const visStart = Math.max(ps, rangeStart);
-    const visEnd   = Math.min(pe, rangeEnd - 86400000);
-    if (visStart > visEnd) continue;
-    for (let dms = visStart; dms <= visEnd; dms += 86400000) {
-      addPill(dms, {
+    if (pe < rangeStart || ps >= rangeEnd) continue;
+    if (ps === pe) {
+      addPill(ps, {
         id: proj.id, kind: 'project',
         title: proj.name || '(无名项目)',
         color: proj.color || 'var(--accent)',
-        done: false, allDay: true,
-        occStart: ps, occEnd: pe + 86400000,
-        isFirstDay: dms === ps,
-        isLastDay:  dms === pe,
+        done: false,
+      });
+    } else {
+      addSpan({
+        id: proj.id, kind: 'project',
+        title: proj.name || '(无名项目)',
+        color: proj.color || 'var(--accent)',
+        done: false,
+        start: ps, end: pe,
       });
     }
   }
-  // 按起止排:多天的(allDay 或 isFirstDay 不是 isLastDay)排前面 — 让横跨条优先占顶部 lane
+  // 单日 pills 按 occStart / 类型排序(项目优先?— 先按 kind,再按色稳定)
   for (const arr of pillsByDay.values()) {
-    arr.sort((a, b) => {
-      const aSpan = (!a.isFirstDay || !a.isLastDay) ? 0 : 1;
-      const bSpan = (!b.isFirstDay || !b.isLastDay) ? 0 : 1;
-      if (aSpan !== bSpan) return aSpan - bSpan;
-      return (a.occStart || 0) - (b.occStart || 0);
-    });
+    arr.sort((a, b) => (a.kind || '').localeCompare(b.kind || '') || (a.title || '').localeCompare(b.title || ''));
+  }
+  // 按 start 升序排 allSpans,让 lane 分配稳定(同 lane 上的 ribbon 不会回头堆)
+  allSpans.sort((a, b) => a.start - b.start || (b.end - a.start) - (a.end - a.start));
+
+  // 计算某周里的 ribbon 切片 + lane 分配
+  // 返回 { ribbons: [{ ..., startIdx 0-6, endIdx 0-6, isFirstWeek, isLastWeek, lane }], laneCount }
+  function _ribbonsForWeek(weekStartMs) {
+    const weekEndMs = weekStartMs + 7 * 86400000;
+    const list = [];
+    for (const s of allSpans) {
+      const sEndExcl = s.end + 86400000;
+      if (sEndExcl <= weekStartMs) continue;
+      if (s.start >= weekEndMs) continue;
+      const a = Math.max(s.start, weekStartMs);
+      const b = Math.min(s.end, weekEndMs - 86400000);
+      const startIdx = Math.round((a - weekStartMs) / 86400000);
+      const endIdx   = Math.round((b - weekStartMs) / 86400000);
+      list.push({
+        ...s,
+        startIdx, endIdx,
+        isFirstWeek: s.start === a,
+        isLastWeek:  s.end === b,
+      });
+    }
+    list.sort((a, b) => a.startIdx - b.startIdx || (b.endIdx - b.startIdx) - (a.endIdx - a.startIdx));
+    // Greedy lane:第一个空闲 lane(其上一条 ribbon 已经在 startIdx 前结束)
+    const lanesEnd = []; // lanesEnd[i] = 该 lane 上一条 ribbon 的 endIdx
+    for (const r of list) {
+      let lane = 0;
+      while (lane < lanesEnd.length && lanesEnd[lane] >= r.startIdx) lane++;
+      r.lane = lane;
+      lanesEnd[lane] = r.endIdx;
+    }
+    return { ribbons: list, laneCount: lanesEnd.length };
   }
 
   // sessByDay → 当日合计专注时长(ms)
@@ -5324,8 +5356,28 @@ function renderMonthView(view) {
   };
 
   let weeksHtml = '';
+  const RIBBON_H = 8;          // 单条 ribbon 高度(px)
+  const RIBBON_GAP = 2;        // ribbon 之间的间距(px)
   for (let w = 0; w < totalWeeks; w++) {
     const ws = addDays(firstWeek, w * 7);
+    const weekStartMs = startOfDay(ws).getTime();
+    const { ribbons, laneCount } = _ribbonsForWeek(weekStartMs);
+    // ribbon 占用顶部高度,cells 用 padding-top 让出空间
+    const ribbonStripH = laneCount > 0 ? (laneCount * (RIBBON_H + RIBBON_GAP) + 2) : 0;
+    // 渲染 ribbon overlay(绝对定位)
+    const ribbonsHtml = ribbons.map(r => {
+      const leftPct = (r.startIdx / 7) * 100;
+      const widthPct = ((r.endIdx - r.startIdx + 1) / 7) * 100;
+      const topPx = 2 + r.lane * (RIBBON_H + RIBBON_GAP);
+      const rTL = r.isFirstWeek ? '4px' : '0';
+      const rTR = r.isLastWeek  ? '4px' : '0';
+      // 文字只在 ribbon 起始周显示(避免每周重复)
+      const labelHtml = r.isFirstWeek ? `<span class="cal-ribbon-label">${esc(r.title)}</span>` : '';
+      return `<div class="cal-ribbon ${r.done?'done':''}"
+        style="left:${leftPct}%;width:${widthPct}%;top:${topPx}px;height:${RIBBON_H}px;background:${esc(r.color)};border-top-left-radius:${rTL};border-bottom-left-radius:${rTL};border-top-right-radius:${rTR};border-bottom-right-radius:${rTR};"
+        title="${esc(r.title)}">${labelHtml}</div>`;
+    }).join('');
+
     let cells = '';
     for (let c = 0; c < 7; c++) {
       const d = addDays(ws, c);
@@ -5335,14 +5387,9 @@ function renderMonthView(view) {
       const isSel = dms === sel0;
       const cellMonth = d.getFullYear() * 100 + d.getMonth();
       const pills = pillsByDay.get(dms) || [];
-      const MAX_PILLS = 4;
+      const MAX_PILLS = 3;
       const pillsHtml = pills.slice(0, MAX_PILLS).map(p => {
-        // 多天项目:中间天不显示文字(只显示连续条);第一天显示标题;最后一天显示标题
-        const isSpan = !p.isFirstDay || !p.isLastDay;
-        const showText = !isSpan || p.isFirstDay;
-        const spanCls = isSpan ? ' span' + (p.isFirstDay ? ' span-first' : '') + (p.isLastDay ? ' span-last' : '') : '';
-        const text = showText ? esc(p.title) : '';
-        return `<div class="cal-cell-pill${spanCls} ${p.done?'done':''}" style="--pill-color:${esc(p.color)}" title="${esc(p.title)}">${text}</div>`;
+        return `<div class="cal-cell-pill ${p.done?'done':''}" style="--pill-color:${esc(p.color)}" title="${esc(p.title)}">${esc(p.title)}</div>`;
       }).join('');
       const moreHtml = pills.length > MAX_PILLS
         ? `<div class="cal-cell-more">+${pills.length - MAX_PILLS}</div>`
@@ -5361,7 +5408,10 @@ function renderMonthView(view) {
         <div class="cal-cell-pills">${pillsHtml}${moreHtml}</div>
       </div>`;
     }
-    weeksHtml += `<div class="cal-week-row">${cells}</div>`;
+    weeksHtml += `<div class="cal-week-row" style="padding-top:${ribbonStripH}px;">
+      ${ribbonsHtml ? `<div class="cal-week-ribbons" style="top:0;height:${ribbonStripH}px;">${ribbonsHtml}</div>` : ''}
+      ${cells}
+    </div>`;
   }
 
   view.innerHTML = `

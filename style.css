@@ -1450,8 +1450,34 @@ html, body { overscroll-behavior-y: contain; }
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 0;
-  /* 防止 1fr 在 iOS Safari 上某些版本产生 subpixel 间隙 — 让 ribbon 连续 */
+  position: relative;   /* 容纳绝对定位的 ribbon overlay */
 }
+/* row 顶部的 ribbon overlay 条带 — 绝对定位,横跨多格无缝 */
+.cal-week-ribbons {
+  position: absolute;
+  left: 0; right: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.cal-ribbon {
+  position: absolute;
+  pointer-events: auto;
+  color: var(--text-on-accent, white);
+  font-size: 10px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.cal-ribbon-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.cal-ribbon.done { opacity: 0.5; }
 .cal-cell {
   background: transparent;
   min-height: 70px;
@@ -1537,27 +1563,8 @@ html, body { overscroll-behavior-y: contain; }
   opacity: 0.5;
   text-decoration: line-through;
 }
-/* 单日 chip 留点内边距,跟相邻 chip 视觉分开;span ribbon 不留 → 自动贴齐相邻格 */
-.cal-cell-pill:not(.span) { margin: 0 3px; }
-/* 多天跨越条:首末天 = 半圆收口,首天显示文字 */
-.cal-cell-pill.span {
-  background: var(--pill-color);
-  color: var(--text-on-accent, white);
-  border-left: none;
-  border-radius: 0;
-  padding-left: 6px;
-  padding-right: 6px;
-}
-.cal-cell-pill.span.span-first { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
-.cal-cell-pill.span.span-last  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
-.cal-cell-pill.span:not(.span-first):not(.span-last) { padding-left: 0; padding-right: 0; min-height: 14px; }
-/* span pill 不要任何 margin;并把中间天宽度撑成 calc(100%+1px) 强行盖住 subpixel 缝 */
-.cal-cell-pill.span { margin-left: 0; margin-right: 0; }
-.cal-cell-pill.span:not(.span-last) {
-  width: calc(100% + 1px);   /* 多 1px 盖住相邻格交界处的 subpixel gap */
-  position: relative;
-  z-index: 1;
-}
+/* 单日 chip 留点内边距;多天 ribbon 不走这条路径,而是 row-level .cal-ribbon overlay */
+.cal-cell-pill { margin: 0 3px; }
 .cal-cell-focus {
   font-size: 9px;
   color: var(--text-faint, var(--text-dim));

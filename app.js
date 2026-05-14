@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-2300';
+const _PSFOCUS_BUILD = '20260514-2500';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2915,6 +2915,19 @@ function openImageLightbox(images, startIdx) {
         const w = viewport.clientWidth;
         track.style.transform = `translateX(${-idx * w + dx}px)`;
         if (e.cancelable) e.preventDefault();
+      } else if (locked === 'y') {
+        // 上 / 下滑动 — lightbox 跟手指走 + 渐变透明,松手时按 |dy| 判退出
+        const stage = lb.querySelector('.img-lb-stage');
+        const mask  = lb.querySelector('.img-lb-mask');
+        if (stage) {
+          stage.style.transition = 'none';
+          stage.style.transform = `translateY(${dy}px)`;
+        }
+        if (mask) {
+          mask.style.transition = 'none';
+          mask.style.opacity = String(Math.max(0.3, 1 - Math.abs(dy) / 400));
+        }
+        if (e.cancelable) e.preventDefault();
       }
     }
   };
@@ -2957,6 +2970,25 @@ function openImageLightbox(images, startIdx) {
         else if (dx > threshold && idx > 0) idx--;
         resetZoom();
         updateUI(true);
+      } else if (locked === 'y') {
+        // 上下划:超过 80px 关闭 lightbox;否则平滑还原
+        const stage = lb.querySelector('.img-lb-stage');
+        const mask  = lb.querySelector('.img-lb-mask');
+        if (Math.abs(dy) > 80) {
+          closeImageLightbox();
+          // 关闭后清掉残留 transform / opacity,免得下次开 lightbox 还带着
+          if (stage) { stage.style.transition = ''; stage.style.transform = ''; }
+          if (mask)  { mask.style.transition  = ''; mask.style.opacity   = ''; }
+        } else {
+          if (stage) {
+            stage.style.transition = 'transform .22s cubic-bezier(.2,.7,.3,1)';
+            stage.style.transform = '';
+          }
+          if (mask) {
+            mask.style.transition = 'opacity .22s';
+            mask.style.opacity = '';
+          }
+        }
       }
       mode = null; locked = null;
     }

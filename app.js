@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-2500';
+const _PSFOCUS_BUILD = '20260514-2700';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -5974,18 +5974,19 @@ function dayTimedBlockDescs(dayStartMs) {
 
   // sessions(已完成的专注)— 同项目相邻段按用户设的合并间隔合并
   if (showFocus) {
+    // 对齐桌面 renderDayGrid:**按 startedAt 的日**归属,不用 [startedAt, endedAt] range overlap
+    // 否则 endedAt 错乱(session 没正常 finalize,被推到几小时/几天后)的脏数据会污染好几天
     const daySessions = (state.sessions || []).filter(s => {
       if (!s.startedAt || !s.duration || !s.projectId) return false;
-      const a = s.startedAt;
-      const b = (s.endedAt || (s.startedAt + s.duration));
-      return b > dayStartMs && a < dayEnd;
+      return s.startedAt >= dayStartMs && s.startedAt < dayEnd;
     });
     const gapMin = (state.settings && typeof state.settings.calMergeGapMin === 'number')
       ? state.settings.calMergeGapMin : 15;
     const merged = mergeAdjacentSessions(daySessions, gapMin * 60 * 1000);
     for (const m of merged) {
       const a = m.startedAt;
-      const b = m.endedAt || (m.startedAt + (m.duration || 0));
+      // 块宽度用「真专注时长」(startedAt + duration),**不用 endedAt** — endedAt 含暂停 / 异常拉伸,会让一个 1 分钟 session 视觉上拉到 6 小时
+      const b = m.startedAt + (m.duration || 0);
       if (b <= dayStartMs || a >= dayEnd) continue;
       const proj = state.projects.find(p => p.id === m.projectId);
       const tk   = m.taskId ? state.tasks.find(t => t.id === m.taskId) : null;
@@ -5999,7 +6000,7 @@ function dayTimedBlockDescs(dayStartMs) {
         title: tk ? (tk.title || '专注') : (proj ? proj.name : '专注'),
         sub:   merged2 ? `${m._mergedCount} 段` : (tk && proj ? proj.name : ''),
         sessionId: m.id, taskId: m.taskId,
-        focusMs: m.duration || 0,   // 真正专注时长(合并多段已累加),不含暂停 — 显示用
+        focusMs: m.duration || 0,
         mergedCount: m._mergedCount || 1,
       });
     }

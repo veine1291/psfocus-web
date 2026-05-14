@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-1900';
+const _PSFOCUS_BUILD = '20260514-2100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -5356,22 +5356,22 @@ function renderMonthView(view) {
   };
 
   let weeksHtml = '';
-  const RIBBON_H = 8;          // 单条 ribbon 高度(px)
+  const RIBBON_H = 14;         // 单条 ribbon 高度(px)— 跟单日 chip 视觉接近
   const RIBBON_GAP = 2;        // ribbon 之间的间距(px)
+  const NUM_AREA_H = 38;       // 日期区域(label + num + focus)预留高度,ribbon 起始 top
   for (let w = 0; w < totalWeeks; w++) {
     const ws = addDays(firstWeek, w * 7);
     const weekStartMs = startOfDay(ws).getTime();
     const { ribbons, laneCount } = _ribbonsForWeek(weekStartMs);
-    // ribbon 占用顶部高度,cells 用 padding-top 让出空间
+    // ribbon 占用条带高度;cell-pills 用 margin-top 让出对应空间,这样 ribbon 落在「日期 → 单日 chip」之间
     const ribbonStripH = laneCount > 0 ? (laneCount * (RIBBON_H + RIBBON_GAP) + 2) : 0;
-    // 渲染 ribbon overlay(绝对定位)
+    // 渲染 ribbon overlay(绝对定位)— top = 日期区高度,落在日期下方
     const ribbonsHtml = ribbons.map(r => {
       const leftPct = (r.startIdx / 7) * 100;
       const widthPct = ((r.endIdx - r.startIdx + 1) / 7) * 100;
-      const topPx = 2 + r.lane * (RIBBON_H + RIBBON_GAP);
+      const topPx = r.lane * (RIBBON_H + RIBBON_GAP);
       const rTL = r.isFirstWeek ? '4px' : '0';
       const rTR = r.isLastWeek  ? '4px' : '0';
-      // 文字只在 ribbon 起始周显示(避免每周重复)
       const labelHtml = r.isFirstWeek ? `<span class="cal-ribbon-label">${esc(r.title)}</span>` : '';
       return `<div class="cal-ribbon ${r.done?'done':''}"
         style="left:${leftPct}%;width:${widthPct}%;top:${topPx}px;height:${RIBBON_H}px;background:${esc(r.color)};border-top-left-radius:${rTL};border-bottom-left-radius:${rTL};border-top-right-radius:${rTR};border-bottom-right-radius:${rTR};"
@@ -5408,9 +5408,11 @@ function renderMonthView(view) {
         <div class="cal-cell-pills">${pillsHtml}${moreHtml}</div>
       </div>`;
     }
-    weeksHtml += `<div class="cal-week-row" style="padding-top:${ribbonStripH}px;">
-      ${ribbonsHtml ? `<div class="cal-week-ribbons" style="top:0;height:${ribbonStripH}px;">${ribbonsHtml}</div>` : ''}
+    // row 不再 padding-top;改用 CSS var 让每个 cell-pills 自己 margin-top 让位
+    // ribbon overlay 用绝对定位锚在 NUM_AREA_H 下方
+    weeksHtml += `<div class="cal-week-row" style="--ribbon-strip-h:${ribbonStripH}px;">
       ${cells}
+      ${ribbonsHtml ? `<div class="cal-week-ribbons" style="top:${NUM_AREA_H}px;height:${ribbonStripH}px;">${ribbonsHtml}</div>` : ''}
     </div>`;
   }
 

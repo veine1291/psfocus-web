@@ -1463,7 +1463,7 @@ html, body { overscroll-behavior-y: contain; }
   position: absolute;
   pointer-events: auto;
   color: var(--text-on-accent, white);
-  font-size: 10px;
+  font-size: 10.5px;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -1493,6 +1493,7 @@ html, body { overscroll-behavior-y: contain; }
   display: inline-flex; flex-direction: column;
   align-items: center;
   line-height: 1;
+  min-height: 38px;   /* 跟 ribbon overlay 的 top 对齐 — 这样 ribbon 永远在日期下方 */
 }
 .cal-month-label {
   font-size: 10px;
@@ -1536,12 +1537,12 @@ html, body { overscroll-behavior-y: contain; }
 .cal-dot.done { opacity: 0.45; }
 .cal-cell-pills {
   width: 100%;
-  margin-top: 3px;
+  /* 顶部预留 ribbon 条带高度(行级 CSS var 注入,无 ribbon 时为 0)*/
+  margin-top: calc(3px + var(--ribbon-strip-h, 0px));
   display: flex;
   flex-direction: column;
   gap: 2px;
   align-items: stretch;
-  /* 无横向 padding,overflow visible — 让 span pill 能伸到相邻格,ribbon 不再被切成段 */
   padding: 0;
   overflow: visible;
   min-height: 0;

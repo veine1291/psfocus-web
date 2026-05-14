@@ -316,7 +316,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-0900';
+const _PSFOCUS_BUILD = '20260514-1100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -5256,6 +5256,29 @@ function renderMonthView(view) {
     }
   }
   for (const ev of (state.events || [])) _expandAndBucket(ev, 'event');
+  // 项目 (dueStart/dueEnd 范围) → 多天横条 — 对齐桌面端的项目 bar
+  for (const proj of (state.projects || [])) {
+    if (proj.archived) continue;
+    if ((proj.kind || 'project') !== 'project') continue;   // 任务清单没 due,跳过
+    if (!proj.dueStart && !proj.dueEnd) continue;
+    const ps = startOfDay(new Date(proj.dueStart || proj.dueEnd)).getTime();
+    const pe = startOfDay(new Date(proj.dueEnd   || proj.dueStart)).getTime();
+    // 跟视图范围相交
+    const visStart = Math.max(ps, rangeStart);
+    const visEnd   = Math.min(pe, rangeEnd - 86400000);
+    if (visStart > visEnd) continue;
+    for (let dms = visStart; dms <= visEnd; dms += 86400000) {
+      addPill(dms, {
+        id: proj.id, kind: 'project',
+        title: proj.name || '(无名项目)',
+        color: proj.color || 'var(--accent)',
+        done: false, allDay: true,
+        occStart: ps, occEnd: pe + 86400000,
+        isFirstDay: dms === ps,
+        isLastDay:  dms === pe,
+      });
+    }
+  }
   // 按起止排:多天的(allDay 或 isFirstDay 不是 isLastDay)排前面 — 让横跨条优先占顶部 lane
   for (const arr of pillsByDay.values()) {
     arr.sort((a, b) => {

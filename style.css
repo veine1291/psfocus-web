@@ -1506,8 +1506,9 @@ html, body { overscroll-behavior-y: contain; }
   flex-direction: column;
   gap: 2px;
   align-items: stretch;
-  padding: 0 2px;
-  overflow: hidden;
+  /* 无横向 padding,overflow visible — 让 span pill 能伸到相邻格,ribbon 不再被切成段 */
+  padding: 0;
+  overflow: visible;
   min-height: 0;
 }
 .cal-cell-pill {
@@ -1527,7 +1528,9 @@ html, body { overscroll-behavior-y: contain; }
   opacity: 0.5;
   text-decoration: line-through;
 }
-/* 多天跨越条:中间天 = 实色横条无文字;首末天 = 半圆收口,首天显示文字 */
+/* 单日 chip 留点内边距,跟相邻 chip 视觉分开;span ribbon 不留 */
+.cal-cell-pill:not(.span) { margin: 0 2px; }
+/* 多天跨越条:首末天 = 半圆收口,首天显示文字 */
 .cal-cell-pill.span {
   background: var(--pill-color);
   color: var(--text-on-accent, white);
@@ -1539,6 +1542,9 @@ html, body { overscroll-behavior-y: contain; }
 .cal-cell-pill.span.span-first { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
 .cal-cell-pill.span.span-last  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
 .cal-cell-pill.span:not(.span-first):not(.span-last) { padding-left: 0; padding-right: 0; min-height: 14px; }
+/* span pill 用负 margin 吃掉 cell 自带的 2px 水平 padding,跨格无缝 — 但首尾天保留 padding 收口 */
+.cal-cell-pill.span:not(.span-first) { margin-left: -2px; }
+.cal-cell-pill.span:not(.span-last)  { margin-right: -2px; }
 .cal-cell-focus {
   font-size: 9px;
   color: var(--text-faint, var(--text-dim));

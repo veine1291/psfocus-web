@@ -18,7 +18,22 @@ window.addEventListener('error', (e) => {
   showFatal((e?.error?.stack) || (e?.message) || 'JS 错误');
 });
 window.addEventListener('unhandledrejection', (e) => {
-  showFatal('未处理的 Promise:' + (e?.reason?.message || e?.reason || ''));
+  const msg = String(e?.reason?.message || e?.reason || '');
+  // 已知暂态错误 — CloudBase SDK 内部 ws 超时会自动重连,iOS Safari 切后台 / 网络抖动会触发
+  // 这种全屏报错只会让用户以为"挂了"。日志记一下就好,不要 hijack 整个 app。
+  const isTransient =
+    /wsclient\.send timedout/i.test(msg) ||
+    /Failed to fetch/i.test(msg) ||
+    /Network request failed/i.test(msg) ||
+    /timeout/i.test(msg) ||
+    /WebSocket/i.test(msg) ||
+    /AbortError/i.test(msg);
+  if (isTransient) {
+    console.warn('[transient swallowed]', msg);
+    e.preventDefault && e.preventDefault();
+    return;
+  }
+  showFatal('未处理的 Promise:' + msg);
 });
 
 // ===== TCB 初始化 =====
@@ -316,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-1100';
+const _PSFOCUS_BUILD = '20260514-1300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -6699,6 +6714,8 @@ function bindCalendarGestures(el) {
   el.addEventListener('touchend', (e) => {
     if (!swiping) return; swiping = false;
     if (_calDragCreating) return; // 拖拽创建优先,跳过 swipe 翻月
+    // 月视图是连续滚动流(13 个月一锅渲染),不接收左右翻月手势 — 跟垂直滚动冲突 + 不必要
+    if (ui.calMode === 'month') return;
     const dx = (e.changedTouches[0].clientX - sx);
     const dy = (e.changedTouches[0].clientY - sy);
     const dt = Date.now() - t0;

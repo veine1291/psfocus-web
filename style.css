@@ -1401,7 +1401,13 @@ html, body { overscroll-behavior-y: contain; }
    日历视图
    ========================================================= */
 /* 月视图(连续周流,模仿桌面年视图)*/
-.cal-month-flow { padding-bottom: 24px; background: var(--bg-panel); min-height: 100%; }
+.cal-month-flow {
+  padding-bottom: 24px;
+  background: var(--bg-panel);
+  min-height: 100%;
+  touch-action: pan-y;   /* iOS Safari:月视图只接竖向拖,横向手势直接传给浏览器(不响应),根除误触横挪 */
+  overflow-x: hidden;    /* 兜底:就算有任何元素溢出也不让横滚 */
+}
 .cal-weekhead {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -1442,7 +1448,9 @@ html, body { overscroll-behavior-y: contain; }
 }
 .cal-week-row {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0;
+  /* 防止 1fr 在 iOS Safari 上某些版本产生 subpixel 间隙 — 让 ribbon 连续 */
 }
 .cal-cell {
   background: transparent;
@@ -1543,8 +1551,13 @@ html, body { overscroll-behavior-y: contain; }
 .cal-cell-pill.span.span-first { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
 .cal-cell-pill.span.span-last  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
 .cal-cell-pill.span:not(.span-first):not(.span-last) { padding-left: 0; padding-right: 0; min-height: 14px; }
-/* span pill 不要任何 margin — cell 已经无横向 padding,自然贴齐 */
+/* span pill 不要任何 margin;并把中间天宽度撑成 calc(100%+1px) 强行盖住 subpixel 缝 */
 .cal-cell-pill.span { margin-left: 0; margin-right: 0; }
+.cal-cell-pill.span:not(.span-last) {
+  width: calc(100% + 1px);   /* 多 1px 盖住相邻格交界处的 subpixel gap */
+  position: relative;
+  z-index: 1;
+}
 .cal-cell-focus {
   font-size: 9px;
   color: var(--text-faint, var(--text-dim));

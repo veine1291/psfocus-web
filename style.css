@@ -93,7 +93,7 @@
    Reset / 基础
    ========================================================= */
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: none; }
+html, body { margin: 0; padding: 0; height: 100%; overscroll-behavior-y: none; overflow-x: hidden; }
 body {
   font-family: var(--font-sans);
   font-size: 15px;
@@ -267,6 +267,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;            /* 月视图项目 ribbon 可能因负 margin 略溢出,这里兜底防止横向滚动 */
   -webkit-overflow-scrolling: touch;
   padding: 0 0 12px 0;
   position: relative;
@@ -1446,7 +1447,7 @@ html, body { overscroll-behavior-y: contain; }
 .cal-cell {
   background: transparent;
   min-height: 70px;
-  padding: 4px 2px;
+  padding: 4px 0;            /* 横向 0 padding,让 span pill 跨格无缝;单日 chip 用自己的 margin inset */
   display: flex; flex-direction: column;
   align-items: center;
   font-size: 13px;
@@ -1528,8 +1529,8 @@ html, body { overscroll-behavior-y: contain; }
   opacity: 0.5;
   text-decoration: line-through;
 }
-/* 单日 chip 留点内边距,跟相邻 chip 视觉分开;span ribbon 不留 */
-.cal-cell-pill:not(.span) { margin: 0 2px; }
+/* 单日 chip 留点内边距,跟相邻 chip 视觉分开;span ribbon 不留 → 自动贴齐相邻格 */
+.cal-cell-pill:not(.span) { margin: 0 3px; }
 /* 多天跨越条:首末天 = 半圆收口,首天显示文字 */
 .cal-cell-pill.span {
   background: var(--pill-color);
@@ -1542,9 +1543,8 @@ html, body { overscroll-behavior-y: contain; }
 .cal-cell-pill.span.span-first { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
 .cal-cell-pill.span.span-last  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
 .cal-cell-pill.span:not(.span-first):not(.span-last) { padding-left: 0; padding-right: 0; min-height: 14px; }
-/* span pill 用负 margin 吃掉 cell 自带的 2px 水平 padding,跨格无缝 — 但首尾天保留 padding 收口 */
-.cal-cell-pill.span:not(.span-first) { margin-left: -2px; }
-.cal-cell-pill.span:not(.span-last)  { margin-right: -2px; }
+/* span pill 不要任何 margin — cell 已经无横向 padding,自然贴齐 */
+.cal-cell-pill.span { margin-left: 0; margin-right: 0; }
 .cal-cell-focus {
   font-size: 9px;
   color: var(--text-faint, var(--text-dim));

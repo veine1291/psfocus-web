@@ -1493,7 +1493,7 @@ html, body { overscroll-behavior-y: contain; }
   display: inline-flex; flex-direction: column;
   align-items: center;
   line-height: 1;
-  min-height: 38px;   /* 跟 ribbon overlay 的 top 对齐 — 这样 ribbon 永远在日期下方 */
+  min-height: 52px;   /* 跟 ribbon overlay 的 top 对齐 — 给「N月」label + 日期圆点 + focus 时长都留足空间,ribbon 永远在日期下方 */
 }
 .cal-month-label {
   font-size: 10px;

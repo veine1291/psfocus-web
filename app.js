@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260514-2700';
+const _PSFOCUS_BUILD = '20260514-2900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -5423,7 +5423,7 @@ function renderMonthView(view) {
   let weeksHtml = '';
   const RIBBON_H = 14;         // 单条 ribbon 高度(px)— 跟单日 chip 视觉接近
   const RIBBON_GAP = 2;        // ribbon 之间的间距(px)
-  const NUM_AREA_H = 38;       // 日期区域(label + num + focus)预留高度,ribbon 起始 top
+  const NUM_AREA_H = 52;       // 日期区域(label + num + focus)预留高度,ribbon 起始 top — 给月初(有「5月」label)留足空间
   for (let w = 0; w < totalWeeks; w++) {
     const ws = addDays(firstWeek, w * 7);
     const weekStartMs = startOfDay(ws).getTime();

@@ -3185,6 +3185,20 @@ function worksStatusOf(p) {
 }
 const WORKS_STATUS_TEXT = { done: '已完成', pending: '未开始', active: '进行中' };
 
+// 项目封面云图 ID — 跟随桌面端逻辑:显式封面 → 完成图集首图 → 时间轴最新带图节点
+function worksCoverCloudID(p) {
+  if (!p) return null;
+  if (p.coverImageCloudID) return p.coverImageCloudID;
+  const finals = (p.finalImages || []).filter(f => f && f.cloudFileID);
+  if (finals.length) return finals[0].cloudFileID;
+  const tlImgs = (p.timeline || []).filter(n => n && n.cloudFileID);
+  if (tlImgs.length) {
+    tlImgs.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return tlImgs[0].cloudFileID;
+  }
+  return null;
+}
+
 function worksCardHtml(p) {
   const status = worksStatusOf(p);
   const rating = p.rating || 0;
@@ -3202,8 +3216,9 @@ function worksCardHtml(p) {
   const ms = projectFocusMs(p.id); if (ms > 0) metaParts.push(esc(fmtFocusMs(ms)));
   const color = p.color || '#8b8f96';
   const initial = esc((p.name || '?').slice(0, 1));
-  const thumbHtml = p.coverImageCloudID
-    ? `<div class="works-card-thumb works-card-thumb-img"><img class="works-card-cover" data-cloud-file-id="${esc(p.coverImageCloudID)}" alt="${esc(p.name || '')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="></div>`
+  const coverCloudID = worksCoverCloudID(p);
+  const thumbHtml = coverCloudID
+    ? `<div class="works-card-thumb works-card-thumb-img"><img class="works-card-cover" data-cloud-file-id="${esc(coverCloudID)}" alt="${esc(p.name || '')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="></div>`
     : `<div class="works-card-thumb" style="background:${esc(color)}">${initial}</div>`;
   return `<div class="works-card" data-works-card="${esc(p.id)}">
     ${thumbHtml}
@@ -3299,10 +3314,11 @@ function openWorksDetailSheet(pid) {
   const galleryNote = (p.galleryNote || '').trim();
   const color = p.color || '#8b8f96';
   const _imgPlaceholder = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
-  // 完成图集(只取已同步云端的)+ 封面缩略
+  // 完成图集(只取已同步云端的)+ 封面缩略(跟随桌面逻辑:显式封面→完成图→时间轴最新带图节点)
   const finals = (p.finalImages || []).filter(f => f && f.cloudFileID);
-  const detailThumb = p.coverImageCloudID
-    ? `<div class="works-card-thumb works-detail-thumb works-card-thumb-img"><img class="works-card-cover" data-cloud-file-id="${esc(p.coverImageCloudID)}" alt="${esc(p.name || '')}" src="${_imgPlaceholder}"></div>`
+  const detailCoverID = worksCoverCloudID(p);
+  const detailThumb = detailCoverID
+    ? `<div class="works-card-thumb works-detail-thumb works-card-thumb-img"><img class="works-card-cover" data-cloud-file-id="${esc(detailCoverID)}" alt="${esc(p.name || '')}" src="${_imgPlaceholder}"></div>`
     : `<div class="works-card-thumb works-detail-thumb" style="background:${esc(color)}">${esc((p.name || '?').slice(0, 1))}</div>`;
   const finalsHtml = finals.length
     ? `<div class="section-title" style="padding:14px 0 6px;">完成图集 · ${finals.length}</div>
@@ -3378,10 +3394,10 @@ function openWorksDetailSheet(pid) {
       coverThumb.addEventListener('click', () => {
         if (finals.length) {
           const slides = finals.map(f => ({ cloudFileID: f.cloudFileID, title: f.name || '' }));
-          let start = finals.findIndex(f => f.cloudFileID === p.coverImageCloudID);
+          let start = finals.findIndex(f => f.cloudFileID === detailCoverID);
           openImageLightbox(slides, start < 0 ? 0 : start);
-        } else if (p.coverImageCloudID) {
-          openImageLightbox([{ cloudFileID: p.coverImageCloudID, title: p.name || '' }], 0);
+        } else if (detailCoverID) {
+          openImageLightbox([{ cloudFileID: detailCoverID, title: p.name || '' }], 0);
         }
       });
     }

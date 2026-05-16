@@ -407,9 +407,16 @@ function startWatch() {
       onChange: (snapshot) => {
         const docs = snapshot && snapshot.docs ? snapshot.docs : [];
         if (!docs.length) return;
-        if (Date.now() - lastPushAt < 2000) return;
         const data = docs[0];
         if (!data || !data.state) return;
+        // 本地有还没推上去的改动(还在防抖窗口里)→ 绝不能用远端覆盖,
+        // 否则刚勾的「完成」会被并发的桌面端快照冲掉。立即把本地 flush 上去(占最新 ts)。
+        if (pushTimer) {
+          console.warn('[watch] 本地有未推送改动 — 跳过远端快照,立即 flush 本地');
+          flushPendingPush();
+          return;
+        }
+        if (Date.now() - lastPushAt < 2000) return;
         // 时间戳防御:云端比本地旧 → 跳过(本地有未同步的改动,如刚改完模块标题但 push 还在防抖窗口里)
         // 否则旧 snapshot 会覆盖本地的最新改动
         const remoteTs = (data.state && data.state._cloudUpdatedAt) || 0;
@@ -473,28 +480,45 @@ function pushState() {
   // (如:模块标题改了但还没 push,watcher 把还没同步的旧云端推回来,标题被复原)
   state._cloudUpdatedAt = Date.now();
   if (pushTimer) clearTimeout(pushTimer);
-  pushTimer = setTimeout(async () => {
-    try {
-      setSync('syncing', '同步中…');
-      lastPushAt = Date.now();
-      const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'push', docId: uid, state } });
-      const r = res && res.result;
-      if (!r || r.ok !== true) throw new Error((r && r.error) || '云函数返回失败');
-      _lastKnownGoodTaskCount = (state.tasks || []).length;  // push 成功后更新基准
-      setSync('synced', '已同步');
-    } catch (e) {
-      const errMsg = (e && (e.message || e.code || String(e))) || '未知';
-      setSync('error', '同步失败:' + errMsg);
-      console.error('[push error]', e);
-    }
-  }, 1000);
+  pushTimer = setTimeout(_performPush, 1000);
+}
+// 真正执行云端写入(pushState 防抖后调,或 flushPendingPush 立即调)
+async function _performPush() {
+  pushTimer = null;
+  if (applyingRemote || !uid || !_initialPullOk) return;
+  try {
+    setSync('syncing', '同步中…');
+    lastPushAt = Date.now();
+    const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'push', docId: uid, state } });
+    const r = res && res.result;
+    if (!r || r.ok !== true) throw new Error((r && r.error) || '云函数返回失败');
+    _lastKnownGoodTaskCount = (state.tasks || []).length;  // push 成功后更新基准
+    setSync('synced', '已同步');
+  } catch (e) {
+    const errMsg = (e && (e.message || e.code || String(e))) || '未知';
+    setSync('error', '同步失败:' + errMsg);
+    console.error('[push error]', e);
+  }
+}
+// 立刻把防抖窗口里待推送的本地改动推上去(watcher 检测到并发远端写入时调)
+// 会重新 bump _cloudUpdatedAt,确保本地这次写入的时间戳压过并发远端,避免被覆盖
+function flushPendingPush() {
+  if (!pushTimer) return;
+  clearTimeout(pushTimer);
+  pushTimer = null;
+  if (applyingRemote || !uid || !_initialPullOk) return;
+  state._cloudUpdatedAt = Date.now();
+  _performPush();
 }
 async function pullStateOnce() {
+  // 本地有还没推上去的改动 → 别拉远端覆盖,先把本地 flush 上去
+  if (pushTimer) { flushPendingPush(); return; }
   try {
     const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'pull', docId: uid } });
     const r = res && res.result;
     const remote = (r && r.ok) ? r.state : null;
     if (!remote) return;
+    if (pushTimer) { flushPendingPush(); return; }   // await 期间又产生了本地改动
     const local = state && state._cloudUpdatedAt || 0;
     const remoteTs = remote._cloudUpdatedAt || 0;
     if (remoteTs > local) {
@@ -531,6 +555,8 @@ async function manualPullState() {
   _lastSyncErrorMsg = '';
   if (!tcbApp) { _lastSyncErrorMsg = 'tcbApp 未就绪'; return 'no-cloud'; }
   if (!uid) { _lastSyncErrorMsg = '未登录(uid 为空)'; return 'no-cloud'; }
+  // 本地有还没推上去的改动 → 先 flush 上去再说,别让下拉刷新拉回旧数据盖掉
+  if (pushTimer) { flushPendingPush(); _lastSyncErrorMsg = ''; return 'no-change'; }
   try {
     const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'pull', docId: uid } });
     const r = res && res.result;
@@ -538,6 +564,7 @@ async function manualPullState() {
     if (r.ok === false) { _lastSyncErrorMsg = r.error || 'fn ok=false'; return 'error'; }
     const remote = r.state || null;
     if (!remote) { _lastSyncErrorMsg = '云端无 state'; return 'no-change'; }
+    if (pushTimer) { flushPendingPush(); return 'no-change'; }   // await 期间又产生了本地改动
     const before = _stateFingerprint(state);
     applyingRemote = true;
     state = sanitizeState(remote);

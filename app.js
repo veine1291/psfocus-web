@@ -416,11 +416,12 @@ function startWatch() {
           flushPendingPush();
           return;
         }
-        if (Date.now() - lastPushAt < 2000) return;
-        // 时间戳防御:云端比本地旧 → 跳过(本地有未同步的改动,如刚改完模块标题但 push 还在防抖窗口里)
-        // 否则旧 snapshot 会覆盖本地的最新改动
         const remoteTs = (data.state && data.state._cloudUpdatedAt) || 0;
         const localTs  = (state && state._cloudUpdatedAt) || 0;
+        // 精确跳过"自己的回声"(同 _cloudUpdatedAt)。不再用「push 后 2 秒盲窗」——
+        // 旧逻辑会把桌面端在这 2 秒内推上来的改动整段丢弃,导致刚同步的状态收不到。
+        if (remoteTs && remoteTs === localTs) return;
+        // 时间戳防御:云端比本地旧 → 跳过(本地有未同步的改动),并把本地推上去
         if (remoteTs < localTs) {
           console.warn('[watch] skip older snapshot:', remoteTs, '<', localTs, '— 本地更新,主动推一次');
           try { pushState(); } catch (_) {}
@@ -483,7 +484,9 @@ function pushState() {
   pushTimer = setTimeout(_performPush, 1000);
 }
 // 真正执行云端写入(pushState 防抖后调,或 flushPendingPush 立即调)
-async function _performPush() {
+// 失败自动重试,最多 3 次,指数退避 — 防一次网络抖动就把这次改动丢掉
+async function _performPush(attempt) {
+  attempt = attempt || 0;
   pushTimer = null;
   if (applyingRemote || !uid || !_initialPullOk) return;
   try {
@@ -496,8 +499,14 @@ async function _performPush() {
     setSync('synced', '已同步');
   } catch (e) {
     const errMsg = (e && (e.message || e.code || String(e))) || '未知';
-    setSync('error', '同步失败:' + errMsg);
-    console.error('[push error]', e);
+    console.error('[push error attempt ' + attempt + ']', e);
+    if (attempt < 3 && !pushTimer) {
+      const delay = 3000 * (attempt + 1);
+      setSync('syncing', '同步失败,' + (delay / 1000) + ' 秒后重试…');
+      pushTimer = setTimeout(() => _performPush(attempt + 1), delay);
+    } else {
+      setSync('error', '同步失败:' + errMsg);
+    }
   }
 }
 // 立刻把防抖窗口里待推送的本地改动推上去(watcher 检测到并发远端写入时调)

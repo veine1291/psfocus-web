@@ -2770,6 +2770,19 @@ function bindCloudTimelineImages(root) {
       });
     });
   });
+  // (5) 作品完成图集 → lightbox(整组可左右切换)
+  root.querySelectorAll('.works-finals-grid').forEach(grid => {
+    const imgs = Array.from(grid.querySelectorAll('.works-final-img'));
+    if (!imgs.length) return;
+    const slides = imgs.map(img => ({ cloudFileID: img.dataset.cloudFileId || '', title: img.alt || '' }));
+    imgs.forEach((img, i) => {
+      img.style.cursor = 'zoom-in';
+      img.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openImageLightbox(slides, i);
+      });
+    });
+  });
 }
 
 // =========================================================
@@ -3189,8 +3202,11 @@ function worksCardHtml(p) {
   const ms = projectFocusMs(p.id); if (ms > 0) metaParts.push(esc(fmtFocusMs(ms)));
   const color = p.color || '#8b8f96';
   const initial = esc((p.name || '?').slice(0, 1));
+  const thumbHtml = p.coverImageCloudID
+    ? `<div class="works-card-thumb works-card-thumb-img"><img class="works-card-cover" data-cloud-file-id="${esc(p.coverImageCloudID)}" alt="${esc(p.name || '')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="></div>`
+    : `<div class="works-card-thumb" style="background:${esc(color)}">${initial}</div>`;
   return `<div class="works-card" data-works-card="${esc(p.id)}">
-    <div class="works-card-thumb" style="background:${esc(color)}">${initial}</div>
+    ${thumbHtml}
     <div class="works-card-main">
       <div class="works-card-top">
         <span class="works-card-name">${esc(p.name || '未命名')}</span>
@@ -3256,6 +3272,8 @@ function renderWorksTab(view) {
     worksState.filter = { kind: 'tag', path: t.dataset.worksTag };
     renderAll();
   }));
+  // 异步加载项目卡片封面大图(云存储)
+  if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(view);
 }
 
 function openWorksDetailSheet(pid) {
@@ -3280,12 +3298,24 @@ function openWorksDetailSheet(pid) {
   const dueText = fmtRange(p.dueStart, p.dueEnd);
   const galleryNote = (p.galleryNote || '').trim();
   const color = p.color || '#8b8f96';
+  const _imgPlaceholder = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  // 完成图集(只取已同步云端的)+ 封面缩略
+  const finals = (p.finalImages || []).filter(f => f && f.cloudFileID);
+  const detailThumb = p.coverImageCloudID
+    ? `<div class="works-card-thumb works-detail-thumb works-card-thumb-img"><img class="works-card-cover" data-cloud-file-id="${esc(p.coverImageCloudID)}" alt="${esc(p.name || '')}" src="${_imgPlaceholder}"></div>`
+    : `<div class="works-card-thumb works-detail-thumb" style="background:${esc(color)}">${esc((p.name || '?').slice(0, 1))}</div>`;
+  const finalsHtml = finals.length
+    ? `<div class="section-title" style="padding:14px 0 6px;">完成图集 · ${finals.length}</div>
+       <div class="works-finals-grid">${finals.map(f =>
+         `<div class="works-final-cell"><img class="works-final-img" data-cloud-file-id="${esc(f.cloudFileID)}" alt="${esc(f.name || '')}" src="${_imgPlaceholder}"></div>`
+       ).join('')}</div>`
+    : '';
 
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content works-detail">
       <div class="works-detail-head">
-        <div class="works-card-thumb works-detail-thumb" style="background:${esc(color)}">${esc((p.name || '?').slice(0, 1))}</div>
+        ${detailThumb}
         <div class="works-detail-headmain">
           <div class="works-detail-name">${esc(p.name || '未命名')}</div>
           <div class="works-detail-badges">
@@ -3334,11 +3364,27 @@ function openWorksDetailSheet(pid) {
         </div>` : ''}
       </div>
 
+      ${finalsHtml}
+
       <div class="section-title" style="padding:14px 0 6px;">时间轴</div>
       ${projectTimelineBodyHtml(pid)}
     </div>
   `, (body) => {
     bindCloudTimelineImages(body);
+    // 头部封面缩略图 → 点击看大图(并入完成图集那一组)
+    const coverThumb = body.querySelector('.works-detail-thumb .works-card-cover');
+    if (coverThumb) {
+      coverThumb.style.cursor = 'zoom-in';
+      coverThumb.addEventListener('click', () => {
+        if (finals.length) {
+          const slides = finals.map(f => ({ cloudFileID: f.cloudFileID, title: f.name || '' }));
+          let start = finals.findIndex(f => f.cloudFileID === p.coverImageCloudID);
+          openImageLightbox(slides, start < 0 ? 0 : start);
+        } else if (p.coverImageCloudID) {
+          openImageLightbox([{ cloudFileID: p.coverImageCloudID, title: p.name || '' }], 0);
+        }
+      });
+    }
   });
 }
 

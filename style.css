@@ -4262,6 +4262,8 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   font-size: 22px;
   font-weight: 600;
 }
+.works-card-thumb-img { overflow: hidden; background: var(--bg-input); }
+.works-card-cover { width: 100%; height: 100%; object-fit: cover; display: block; }
 .works-card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .works-card-top { display: flex; align-items: center; gap: 8px; }
 .works-card-name {
@@ -4314,3 +4316,23 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .works-detail-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .works-detail-stars { font-size: 13px; color: #e8a83a; letter-spacing: 1.5px; }
 .works-detail-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+/* 完成图集 */
+.works-finals-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 0 12px;
+}
+.works-final-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-input);
+}
+.works-final-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}

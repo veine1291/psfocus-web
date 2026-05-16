@@ -793,6 +793,7 @@ function smartListTasks(sl) {
 // 底部 tab 注册表
 const TAB_DEFS = {
   tasks:    { label: '任务', icon: 'ico-folder' },
+  works:    { label: '项目', icon: 'ico-image' },
   calendar: { label: '日历', icon: 'ico-calendar' },
   summary:  { label: '摘要', icon: 'ico-pencil' },
   stats:    { label: '统计', icon: 'ico-history' },
@@ -933,6 +934,12 @@ function renderTopbar() {
   } else if (ui.tab === 'stats') {
     $('topbar-title').textContent = '统计'; $('topbar-subtitle').textContent = '';
     $('topbar-left-btn').classList.add('hidden'); $('topbar-right-btn').classList.add('hidden');
+  } else if (ui.tab === 'works') {
+    const total = worksProjects().length;
+    $('topbar-title').textContent = '项目';
+    $('topbar-subtitle').textContent = total ? `${total} 个项目` : '';
+    $('topbar-left-btn').classList.add('hidden');
+    $('topbar-right-btn').classList.add('hidden');
   } else if (ui.tab === 'summary') {
     $('topbar-title').textContent = '摘要';
     $('topbar-subtitle').textContent = '';
@@ -976,6 +983,7 @@ function renderTab(tab) {
   if (typeof _ensureCalSideToggleBtn === 'function') _ensureCalSideToggleBtn();
   if (tab !== 'calendar' && ui.calSideOpen) closeCalSideDrawer();
   if (tab === 'tasks') return renderTasksTab(view);
+  if (tab === 'works') return renderWorksTab(view);
   if (tab === 'calendar') return renderCalendarTab(view);
   if (tab === 'summary') return renderSummaryTab(view);
   if (tab === 'stats') return renderStatsTab(view);
@@ -3082,6 +3090,229 @@ function closeCalSideDrawer() {
   ui.calSideOpen = false; saveUI();
   dr.classList.remove('open');
   setTimeout(() => dr.classList.add('hidden'), 280);
+}
+
+// ============================================================
+// ===== 项目(作品)tab — 移动端项目画廊,对齐桌面 works 模块
+// ============================================================
+let worksState = {
+  filter: { kind: 'all' },   // all | category{id} | uncategorized | tag{path} | rating{stars} | untagged
+  sort: 'time',              // 'time' | 'custom'
+};
+
+function worksProjects() {
+  return (state.projects || []).filter(p => (p.kind || 'project') === 'project');
+}
+// 某分类的所有子孙分类 id(含自己)
+function worksCategoryDescendants(catId) {
+  const ids = new Set([catId]);
+  let added = true;
+  while (added) {
+    added = false;
+    for (const c of (state.workCategories || [])) {
+      if (c.parentId && ids.has(c.parentId) && !ids.has(c.id)) { ids.add(c.id); added = true; }
+    }
+  }
+  return ids;
+}
+function filterWorksList(list) {
+  const f = worksState.filter || { kind: 'all' };
+  if (f.kind === 'category') {
+    const ids = worksCategoryDescendants(f.id);
+    return list.filter(p => p.categoryId && ids.has(p.categoryId));
+  }
+  if (f.kind === 'uncategorized') return list.filter(p => !p.categoryId);
+  if (f.kind === 'untagged') return list.filter(p => !(p.tags || []).length && !(p.workTags || []).length);
+  if (f.kind === 'tag') return list.filter(p => {
+    const all = [...(p.tags || []), ...(p.workTags || [])];
+    return all.some(t => t === f.path || t.startsWith(f.path + '/'));
+  });
+  if (f.kind === 'rating') return list.filter(p => (p.rating || 0) === f.stars);
+  return list;
+}
+function sortWorksList(list) {
+  return list.slice().sort((a, b) => {
+    if (worksState.sort === 'custom') return (a.order || 0) - (b.order || 0);
+    const ta = a.completedAt || a.dueEnd || a.dueStart || a.createdAt || 0;
+    const tb = b.completedAt || b.dueEnd || b.dueStart || b.createdAt || 0;
+    return tb - ta;
+  });
+}
+function worksStatusOf(p) {
+  if (p.completedAt || p.archived) return 'done';
+  if (p.status === 'pending') return 'pending';
+  return 'active';
+}
+const WORKS_STATUS_TEXT = { done: '已完成', pending: '未开始', active: '进行中' };
+
+function worksCardHtml(p) {
+  const status = worksStatusOf(p);
+  const rating = p.rating || 0;
+  const stars = rating
+    ? `<span class="works-card-stars">${'★'.repeat(rating)}<span class="works-card-stars-dim">${'★'.repeat(5 - rating)}</span></span>`
+    : '';
+  const allTags = Array.from(new Set([...(p.tags || []), ...(p.workTags || [])]));
+  const tagsHtml = allTags.slice(0, 4).map(t =>
+    `<span class="works-card-tag" data-works-tag="${esc(t)}">#${esc(t.split('/').pop())}</span>`).join('');
+  const metaParts = [];
+  const dt = p.completedAt || p.dueEnd || p.dueStart;
+  if (dt) metaParts.push((p.completedAt ? '完成 ' : '') + fmtDate(dt));
+  if (p.clientName) metaParts.push(esc(p.clientName));
+  const pay = formatPayment(p.payment); if (pay) metaParts.push(esc(pay));
+  const ms = projectFocusMs(p.id); if (ms > 0) metaParts.push(esc(fmtFocusMs(ms)));
+  const color = p.color || '#8b8f96';
+  const initial = esc((p.name || '?').slice(0, 1));
+  return `<div class="works-card" data-works-card="${esc(p.id)}">
+    <div class="works-card-thumb" style="background:${esc(color)}">${initial}</div>
+    <div class="works-card-main">
+      <div class="works-card-top">
+        <span class="works-card-name">${esc(p.name || '未命名')}</span>
+        <span class="works-card-status works-card-status-${status}">${WORKS_STATUS_TEXT[status]}</span>
+      </div>
+      ${stars}
+      ${tagsHtml ? `<div class="works-card-tags">${tagsHtml}</div>` : ''}
+      ${metaParts.length ? `<div class="works-card-meta">${metaParts.join(' · ')}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderWorksTab(view) {
+  const all = worksProjects();
+  const filtered = sortWorksList(filterWorksList(all));
+  const cats = (state.workCategories || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+  const f = worksState.filter;
+  const chip = (active, label, attrs) =>
+    `<button class="works-fchip ${active ? 'active' : ''}" ${attrs}>${esc(label)}</button>`;
+  let chips = chip(f.kind === 'all', `全部 ${all.length}`, 'data-wf="all"');
+  for (const c of cats.filter(x => !x.parentId)) {
+    const ids = worksCategoryDescendants(c.id);
+    const n = all.filter(p => p.categoryId && ids.has(p.categoryId)).length;
+    chips += chip(f.kind === 'category' && f.id === c.id, `${c.name} ${n}`,
+      `data-wf="cat" data-wf-id="${esc(c.id)}"`);
+  }
+  const uncat = all.filter(p => !p.categoryId).length;
+  if (uncat) chips += chip(f.kind === 'uncategorized', `未分类 ${uncat}`, 'data-wf="uncat"');
+  // 标签 / 评分 临时筛选时也给个 chip(让用户能取消)
+  if (f.kind === 'tag')    chips += chip(true, `#${f.path}`, 'data-wf="all"');
+  if (f.kind === 'rating') chips += chip(true, `${'★'.repeat(f.stars)} ${f.stars}星`, 'data-wf="all"');
+  if (f.kind === 'untagged') chips += chip(true, '无标签', 'data-wf="all"');
+
+  const sortLabel = worksState.sort === 'time' ? '按时间' : '自定义';
+  view.innerHTML = `
+    <div class="works-wrap">
+      <div class="works-toolbar">
+        <div class="works-fchips">${chips}</div>
+        <button class="works-sort-btn" data-works-sort><span class="ico-history"></span>${esc(sortLabel)}</button>
+      </div>
+      ${filtered.length
+        ? `<div class="works-list">${filtered.map(worksCardHtml).join('')}</div>`
+        : `<div class="empty" style="padding:32px 18px;">没有符合条件的项目</div>`}
+    </div>`;
+  view.querySelectorAll('[data-wf]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.wf;
+    if (k === 'cat')        worksState.filter = { kind: 'category', id: b.dataset.wfId };
+    else if (k === 'uncat') worksState.filter = { kind: 'uncategorized' };
+    else                    worksState.filter = { kind: 'all' };
+    renderAll();
+  }));
+  const sb = view.querySelector('[data-works-sort]');
+  if (sb) sb.addEventListener('click', () => {
+    worksState.sort = worksState.sort === 'time' ? 'custom' : 'time';
+    renderAll();
+  });
+  view.querySelectorAll('[data-works-card]').forEach(c => c.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-works-tag]')) return;
+    openWorksDetailSheet(c.dataset.worksCard);
+  }));
+  view.querySelectorAll('[data-works-tag]').forEach(t => t.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    worksState.filter = { kind: 'tag', path: t.dataset.worksTag };
+    renderAll();
+  }));
+}
+
+function openWorksDetailSheet(pid) {
+  const p = state.projects.find(x => x.id === pid);
+  if (!p) return;
+  const status = worksStatusOf(p);
+  const rating = p.rating || 0;
+  const starsHtml = `<span class="works-detail-stars">${'★'.repeat(rating)}<span class="works-card-stars-dim">${'★'.repeat(5 - rating)}</span></span>`;
+  const cat = (state.workCategories || []).find(c => c.id === p.categoryId);
+  const allTags = Array.from(new Set([...(p.tags || []), ...(p.workTags || [])]));
+  const tagsHtml = allTags.length
+    ? `<div class="works-detail-tags">${allTags.map(t => `<span class="works-card-tag">#${esc(t)}</span>`).join('')}</div>`
+    : '<span class="proj-info-placeholder">无标签</span>';
+  const focusMs = projectFocusMs(pid);
+  const sessionCount = (state.sessions || []).filter(s => s.projectId === pid).length;
+  const fmtRange = (a, b) => {
+    if (a && b) return `${fmtDate(a)} ~ ${fmtDate(b)}`;
+    if (b) return `截止 ${fmtDate(b)}`;
+    if (a) return `开始 ${fmtDate(a)}`;
+    return '';
+  };
+  const dueText = fmtRange(p.dueStart, p.dueEnd);
+  const galleryNote = (p.galleryNote || '').trim();
+  const color = p.color || '#8b8f96';
+
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content works-detail">
+      <div class="works-detail-head">
+        <div class="works-card-thumb works-detail-thumb" style="background:${esc(color)}">${esc((p.name || '?').slice(0, 1))}</div>
+        <div class="works-detail-headmain">
+          <div class="works-detail-name">${esc(p.name || '未命名')}</div>
+          <div class="works-detail-badges">
+            <span class="works-card-status works-card-status-${status}">${WORKS_STATUS_TEXT[status]}</span>
+            ${rating ? starsHtml : ''}
+          </div>
+        </div>
+      </div>
+
+      <div class="proj-info-list works-detail-info">
+        <div class="proj-info-row">
+          <span class="proj-info-key">分类</span>
+          <span class="proj-info-val">${cat ? esc(cat.name) : '<span class="proj-info-placeholder">未分类</span>'}</span>
+        </div>
+        <div class="proj-info-row proj-info-row-multiline">
+          <span class="proj-info-key">标签</span>
+          <span class="proj-info-val">${tagsHtml}</span>
+        </div>
+        <div class="proj-info-row">
+          <span class="proj-info-key">薪酬</span>
+          <span class="proj-info-val">${formatPayment(p.payment) ? esc(formatPayment(p.payment)) : '<span class="proj-info-placeholder">未设</span>'}</span>
+        </div>
+        <div class="proj-info-row">
+          <span class="proj-info-key">客户</span>
+          <span class="proj-info-val">${p.clientName ? esc(p.clientName) + (p.clientContact ? ' · ' + esc(p.clientContact) : '') : '<span class="proj-info-placeholder">未设</span>'}</span>
+        </div>
+        <div class="proj-info-row">
+          <span class="proj-info-key">周期</span>
+          <span class="proj-info-val">${dueText ? esc(dueText) : '<span class="proj-info-placeholder">未设</span>'}</span>
+        </div>
+        ${p.completedAt ? `<div class="proj-info-row">
+          <span class="proj-info-key">完成于</span>
+          <span class="proj-info-val">${esc(fmtDate(p.completedAt))}</span>
+        </div>` : ''}
+        <div class="proj-info-row">
+          <span class="proj-info-key">累计专注</span>
+          <span class="proj-info-val">${esc(fmtFocusMs(focusMs))} · ${sessionCount} 次</span>
+        </div>
+        ${galleryNote ? `<div class="proj-info-row proj-info-row-multiline">
+          <span class="proj-info-key">简介</span>
+          <span class="proj-info-val">${esc(galleryNote)}</span>
+        </div>` : ''}
+        ${(p.note || '').trim() ? `<div class="proj-info-row proj-info-row-multiline">
+          <span class="proj-info-key">备注</span>
+          <span class="proj-info-val">${esc((p.note || '').trim())}</span>
+        </div>` : ''}
+      </div>
+
+      <div class="section-title" style="padding:14px 0 6px;">时间轴</div>
+      ${projectTimelineBodyHtml(pid)}
+    </div>
+  `, (body) => {
+    bindCloudTimelineImages(body);
+  });
 }
 
 function renderCalSideDrawer() {

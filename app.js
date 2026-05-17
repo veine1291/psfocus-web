@@ -7951,18 +7951,26 @@ function openCreateTaskSheet(opts) {
         </button>
       </div>
       <div class="dp-title-row">
-        <span class="dp-check" style="visibility:hidden"></span>
+        <button class="dp-check" id="qe-check" title="创建为已完成"></button>
         <input type="text" class="dp-title-input" id="qe-title" placeholder="任务标题">
       </div>
       <div class="dp-section dp-merged-section">
         <textarea class="dp-note-input" id="qe-note" rows="3" placeholder="备注、笔记…  输入 #xxx 自动加标签"></textarea>
-        <div class="dp-merged-row" style="margin-top:8px;">
-          <div id="qe-img-list" class="dp-image-grid" style="min-height:0;"></div>
+        <div class="dp-merged-row">
+          <div class="dp-merged-tags"><span class="dp-merged-tags-empty">输入 #标签 自动加</span></div>
           <label class="dp-merged-add-img" title="上传图片">
             <input type="file" accept="image/*" multiple id="qe-img-input" hidden>
             <span class="ico-plus"></span>
           </label>
         </div>
+        <div id="qe-img-list" class="dp-image-grid" style="min-height:0;"></div>
+      </div>
+      <div class="dp-section">
+        <div class="dp-section-title">子待办 <span class="dp-section-count" id="qe-sub-count">0</span></div>
+        <div class="dp-sub-add">
+          <input type="text" class="dp-sub-add-input" id="qe-sub-add" placeholder="加个子任务,回车确认">
+        </div>
+        <ul class="dp-sub-list" id="qe-sub-list"></ul>
       </div>
     </div>
     <div class="dp-footer">
@@ -7976,6 +7984,9 @@ function openCreateTaskSheet(opts) {
     const imgList = body.querySelector('#qe-img-list');
     // 暂存待上传成功的图(创建时再写到 task.images)
     const pendingImages = [];
+    // 暂存子待办 + 完成状态(创建时再落库)
+    const pendingSubs = [];
+    let pendingDone = false;
     const refreshImgs = () => {
       imgList.innerHTML = pendingImages.map(im => `
         <div class="dp-image-cell" data-img-id="${esc(im.id)}">
@@ -8009,6 +8020,46 @@ function openCreateTaskSheet(opts) {
       refreshImgs();
     });
     setTimeout(() => titleEl.focus(), 80);
+
+    // 标题勾选框 — 点一下 = 创建为已完成
+    const checkBtn = body.querySelector('#qe-check');
+    checkBtn.onclick = () => {
+      pendingDone = !pendingDone;
+      checkBtn.classList.toggle('done', pendingDone);
+      checkBtn.textContent = pendingDone ? '✓' : '';
+      titleEl.classList.toggle('done', pendingDone);
+    };
+
+    // 子待办 — 创建时就能加,保存时一并落库为独立 task(parentTaskId)
+    const subList = body.querySelector('#qe-sub-list');
+    const subCount = body.querySelector('#qe-sub-count');
+    const refreshSubs = () => {
+      subCount.textContent = pendingSubs.length;
+      subList.innerHTML = pendingSubs.map(s => `
+        <li class="dp-sub ${s.done ? 'done' : ''}" data-sub-id="${esc(s.id)}">
+          <button class="dp-sub-check ${s.done ? 'done' : ''}" data-qe-sub-toggle="${esc(s.id)}">${s.done ? '✓' : ''}</button>
+          <span class="dp-sub-title">${esc(s.title)}</span>
+          <button class="dp-sub-del" data-qe-sub-del="${esc(s.id)}" title="删除">×</button>
+        </li>`).join('');
+      subList.querySelectorAll('[data-qe-sub-toggle]').forEach(b => b.onclick = () => {
+        const s = pendingSubs.find(x => x.id === b.dataset.qeSubToggle);
+        if (s) { s.done = !s.done; refreshSubs(); }
+      });
+      subList.querySelectorAll('[data-qe-sub-del]').forEach(b => b.onclick = () => {
+        const i = pendingSubs.findIndex(x => x.id === b.dataset.qeSubDel);
+        if (i >= 0) { pendingSubs.splice(i, 1); refreshSubs(); }
+      });
+    };
+    const subAddEl = body.querySelector('#qe-sub-add');
+    subAddEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const v = subAddEl.value.trim();
+      if (!v) return;
+      pendingSubs.push({ id: genId('t'), title: v, done: false });
+      subAddEl.value = '';
+      refreshSubs();
+    });
 
     function refreshSchedRow() {
       const bar = body.querySelector('#qe-time-bar');
@@ -8080,8 +8131,8 @@ function openCreateTaskSheet(opts) {
         id: genId('t'),
         title,
         note,
-        done: false,
-        doneAt: null,
+        done: pendingDone,
+        doneAt: pendingDone ? Date.now() : null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         projectId: pickedProjectId || null,
@@ -8102,6 +8153,33 @@ function openCreateTaskSheet(opts) {
       };
       newTask.images = pendingImages.slice();
       state.tasks.push(newTask);
+      // 子待办 → 独立 task + parentTaskId(对齐详情/桌面模型)
+      let subOrder = 100;
+      for (const s of pendingSubs) {
+        state.tasks.push({
+          id: s.id,
+          title: s.title,
+          note: '',
+          done: !!s.done,
+          doneAt: s.done ? Date.now() : null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          projectId: newTask.projectId,
+          parentTaskId: newTask.id,
+          parentEventId: null,
+          dueAt: null, start: null, end: null,
+          allDay: false,
+          color: '',
+          tags: [],
+          subtasks: [],
+          schedules: [],
+          images: [],
+          completedOccurrences: [],
+          kanbanColumn: null,
+          order: subOrder,
+        });
+        subOrder += 100;
+      }
       pushState(); closeSheet(); renderAll();
     };
     body.querySelector('[data-action="save"]').onclick = save;

@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260517-2300';
+const _PSFOCUS_BUILD = '20260517-2330';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -5043,6 +5043,7 @@ function openEditProjectSheet(p) {
         <select id="ep-folder">
           <option value="">未分组</option>
           ${folders.map(f => `<option value="${esc(f.id)}" ${(p.folderId===f.id)?'selected':''}>${esc(f.name||'未命名')}</option>`).join('')}
+          <option value="__new__">+ 新建文件夹…</option>
         </select>
       </div>
       <div class="form-row" style="margin-top:8px;">
@@ -5075,6 +5076,33 @@ function openEditProjectSheet(p) {
       };
     });
     colorInp.onchange = () => { pickedColor = colorInp.value; refreshSwatches(); };
+    // 文件夹下拉:选「+ 新建文件夹」→ 弹输入名 → 建好并选中
+    const folderSel = body.querySelector('#ep-folder');
+    let _prevFolderVal = folderSel.value;
+    folderSel.addEventListener('change', () => {
+      if (folderSel.value !== '__new__') { _prevFolderVal = folderSel.value; return; }
+      const name = (prompt('新文件夹名称') || '').trim();
+      if (!name) { folderSel.value = _prevFolderVal; return; }
+      const maxOrder = (state.folders || []).reduce((m, x) => Math.max(m, x.order || 0), 0);
+      const nf = {
+        id: 'f-' + Math.random().toString(36).slice(2, 10),
+        name, color: '', icon: '', order: maxOrder + 100,
+        kind: wantedFolderKind,
+        createdAt: Date.now(), updatedAt: Date.now(),
+      };
+      if (!Array.isArray(state.folders)) state.folders = [];
+      state.folders.push(nf);
+      pushState();
+      // 重建下拉:未分组 + 同 kind 文件夹 + 新建项,选中刚建的
+      const sameKind = (state.folders || [])
+        .filter(f => (f.kind || 'project') === wantedFolderKind)
+        .slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      folderSel.innerHTML = '<option value="">未分组</option>'
+        + sameKind.map(f => `<option value="${esc(f.id)}" ${f.id === nf.id ? 'selected' : ''}>${esc(f.name || '未命名')}</option>`).join('')
+        + '<option value="__new__">+ 新建文件夹…</option>';
+      folderSel.value = nf.id;
+      _prevFolderVal = nf.id;
+    });
     body.querySelector('[data-action="cancel"]').onclick = closeSheet;
     body.querySelector('[data-action="del"]').onclick = () => {
       if (!confirm(`删除${isProj?'项目':'清单'}「${p.name||'未命名'}」?该${isProj?'项目':'清单'}下的任务也会被删除。`)) return;

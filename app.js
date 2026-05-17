@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0600';
+const _PSFOCUS_BUILD = '20260518-0630';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -400,6 +400,43 @@ function _scheduleWatchReconnect() {
     }
   }, 4000);
 }
+// ── 输入法保护:正在打字/拼音组合中时,延后应用远端快照 ──────────────
+// 根因:云端 watcher / 定时 pull 收到远端 state 后会 renderAll(),
+// 整页重建会销毁当前聚焦的 <input>,正在拼音组合的中文输入因此被打断。
+// 方案:用户正在输入(IME 组合中 或 焦点在输入框)时,把远端快照暂存,
+// 等组合结束 + 失焦后再应用;应用前重新比对 _cloudUpdatedAt 决定用谁。
+let _imeComposingM = false;
+let _pendingRemoteRaw = null;
+function _isTypingNowM() {
+  if (_imeComposingM) return true;
+  const el = document.activeElement;
+  return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+}
+function _applyRemoteSnapshot(rawState) {
+  if (!rawState || typeof rawState !== 'object') return;
+  if (_isTypingNowM()) { _pendingRemoteRaw = rawState; return; }
+  _pendingRemoteRaw = null;
+  applyingRemote = true;
+  state = sanitizeState(rawState);
+  applyingRemote = false;
+  _initialPullOk = true;
+  _lastKnownGoodTaskCount = (state.tasks || []).length;
+  setSync('synced', '已同步');
+  applyAllAppearance();
+  renderAll();
+}
+function _flushPendingRemoteM() {
+  if (!_pendingRemoteRaw || _isTypingNowM()) return;
+  const raw = _pendingRemoteRaw; _pendingRemoteRaw = null;
+  const rt = (raw && raw._cloudUpdatedAt) || 0;
+  const lt = (state && state._cloudUpdatedAt) || 0;
+  if (rt >= lt) _applyRemoteSnapshot(raw);
+  else { try { pushState(); } catch (_) {} }
+}
+document.addEventListener('compositionstart', () => { _imeComposingM = true; });
+document.addEventListener('compositionend', () => { _imeComposingM = false; setTimeout(_flushPendingRemoteM, 0); });
+document.addEventListener('focusout', () => { setTimeout(_flushPendingRemoteM, 0); });
+
 function startWatch() {
   stopWatch();
   try {
@@ -427,14 +464,7 @@ function startWatch() {
           try { pushState(); } catch (_) {}
           return;
         }
-        applyingRemote = true;
-        state = sanitizeState(data.state);
-        applyingRemote = false;
-        _initialPullOk = true;  // watcher 收到 = 云端可达
-        _lastKnownGoodTaskCount = (state.tasks || []).length;
-        setSync('synced', '已同步');
-        applyAllAppearance();
-        renderAll();
+        _applyRemoteSnapshot(data.state);
       },
       onError: (err) => {
         console.warn('[cloud watch error]', err);
@@ -531,13 +561,7 @@ async function pullStateOnce() {
     const local = state && state._cloudUpdatedAt || 0;
     const remoteTs = remote._cloudUpdatedAt || 0;
     if (remoteTs > local) {
-      applyingRemote = true;
-      state = sanitizeState(remote);
-      applyingRemote = false;
-      _initialPullOk = true;
-      _lastKnownGoodTaskCount = (state.tasks || []).length;
-      applyAllAppearance();
-      renderAll();
+      _applyRemoteSnapshot(remote);
     } else if (remote) {
       // 哪怕没更新也算云端可达
       _initialPullOk = true;

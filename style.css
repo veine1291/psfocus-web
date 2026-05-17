@@ -240,6 +240,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
   border-radius: var(--radius-pill);
 }
 .topbar-btn:active { background: var(--bg-active); }
+/* 占位用:保留 40px 宽度但不可见、不可点 — 让中间标题真正居中 */
+.topbar-btn.topbar-btn-spacer { visibility: hidden; pointer-events: none; }
 .topbar-title {
   flex: 1 1 auto;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -4503,9 +4505,33 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .lg-cat-pct { color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
 .lg-cat-amt { color: var(--text); font-weight: 600; flex-shrink: 0; }
 .lg-budget-track { height: 8px; border-radius: 4px; background: var(--bg-section); overflow: hidden; margin-top: 10px; }
+.lg-budget-track-sm { height: 6px; margin-top: 6px; }
 .lg-budget-fill { display: block; height: 100%; background: var(--accent); }
 .lg-budget-fill.over { background: #d9534f; }
+.lg-budget-pctline { font-size: 11.5px; color: var(--text-faint); margin-top: 6px; }
+.lg-budget-pctline.over { color: #d9534f; }
+.lg-budget-cats { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.lg-budget-cat-head { display: flex; align-items: center; gap: 7px; font-size: 12.5px; }
+.lg-budget-cat-pct { font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
+.lg-budget-cat-pct.over { color: #d9534f; }
+/* 可点击的分类行 — 单击进详情抽屉 */
+.lg-cat-line-tap { cursor: pointer; border-radius: 6px; }
+.lg-cat-line-tap:active { background: var(--bg-active); }
+.lg-cat-chev { color: var(--text-faint); font-size: 14px; flex-shrink: 0; margin-left: -2px; }
+.lg-cat-name-dim { color: var(--text-faint); }
 .lg-empty { font-size: 12px; color: var(--text-faint); padding: 10px 0; }
+/* 支出分类详情抽屉 */
+.lg-detail-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; }
+.lg-detail-name { font-size: 16px; font-weight: 700; color: var(--text-strong); }
+.lg-detail-sub { font-size: 12px; color: var(--text-faint); margin-left: auto; }
+.lg-detail-sec-title { font-size: 12px; font-weight: 600; color: var(--text-dim); margin: 16px 0 4px; }
+.lg-detail-txs { display: flex; flex-direction: column; gap: 2px; }
+.lg-detail-tx { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.lg-detail-tx-date { font-size: 11px; color: var(--text-faint); flex-shrink: 0; width: 68px; }
+.lg-detail-tx-mid { flex: 1; min-width: 0; }
+.lg-detail-tx-title { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-detail-tx-cp { font-size: 11px; color: var(--text-faint); margin-top: 1px; }
+.lg-detail-tx-amt { font-size: 14px; font-weight: 700; flex-shrink: 0; }
 .lg-tx-group { margin: 0 12px; }
 .lg-tx-day { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-faint); padding: 10px 2px 4px; }
 .lg-tx-row {

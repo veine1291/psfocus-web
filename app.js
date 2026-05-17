@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0700';
+const _PSFOCUS_BUILD = '20260518-0730';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -950,6 +950,8 @@ function renderTopbar() {
   const leftBtn = $('topbar-left-btn');
   // 离开日历 tab 时移除 cal-nav-row 类(防止 #topbar-title 被定型成 flex row,影响其它 tab 的标题显示)
   $('topbar-title').classList.remove('cal-nav-row');
+  // 重置右上按钮的占位态(账本 tab 用它占位以保证标题居中)
+  $('topbar-right-btn').classList.remove('topbar-btn-spacer');
   if (ui.tab === 'tasks') {
     const cl = getCurrentList();
     const titleEl = $('topbar-title');
@@ -1057,7 +1059,11 @@ function renderTopbar() {
     leftBtn.innerHTML = `<span class="cal-view-switch-pill"><span class="cal-view-switch-label">${esc(lgViewLabel)}</span><span class="ico-chevron-down"></span></span>`;
     leftBtn.setAttribute('aria-label', '账本期间切换');
     leftBtn.classList.remove('hidden');
-    $('topbar-right-btn').classList.add('hidden');
+    // 右上无功能,但保留 40px 占位 — 否则中间日期不居中
+    const lgRb = $('topbar-right-btn');
+    lgRb.classList.remove('hidden');
+    lgRb.classList.add('topbar-btn-spacer');
+    lgRb.innerHTML = '';
   } else if (ui.tab === 'settings') {
     const subTitles = { appearance: '外观', system: '系统', templates: '模板', account: '账号', about: '关于' };
     if (ui.settingsPage && subTitles[ui.settingsPage]) {
@@ -3800,11 +3806,12 @@ function renderLedgerTab(view) {
     const m = new Map();
     for (const t of txs) {
       const k = t.categoryId || '__none__';
-      m.set(k, (m.get(k) || 0) + t.amount);
+      if (!m.has(k)) m.set(k, { amt: 0, txs: [] });
+      const o = m.get(k); o.amt += t.amount; o.txs.push(t);
     }
-    return Array.from(m.entries()).map(([id, amt]) => {
+    return Array.from(m.entries()).map(([id, o]) => {
       const c = id === '__none__' ? null : _ledgerCatById(id);
-      return { id, amt, name: c ? c.name : '未分类', color: c ? c.color : '#9aa0a8' };
+      return { id, amt: o.amt, txs: o.txs, name: c ? c.name : '未分类', color: c ? c.color : '#9aa0a8' };
     }).sort((a, b) => b.amt - a.amt);
   };
   const expRows = byCat(expTx), incRows = byCat(incTx);
@@ -3814,17 +3821,18 @@ function renderLedgerTab(view) {
   const totalBudget = Math.max((lg.monthBudget || 0) * vm, catBudgetSum);
   const assetTotal = (lg.accounts || []).reduce((s, a) => s + (a.amount || 0), 0);
 
-  const breakdown = (rows, total) => {
+  const breakdown = (rows, total, tappable) => {
     if (!rows.length) return '<div class="lg-empty">这段时间没有记录</div>';
     const bar = `<div class="lg-bar">${rows.map(r => {
       const pct = total > 0 ? r.amt / total * 100 : 0;
       return `<span class="lg-bar-seg" style="width:${pct}%;background:${esc(r.color)}"></span>`;
     }).join('')}</div>`;
-    const lines = rows.map(r => `<div class="lg-cat-line">
+    const lines = rows.map(r => `<div class="lg-cat-line${tappable ? ' lg-cat-line-tap' : ''}"${tappable ? ` data-lg-cat-detail="${esc(r.id)}"` : ''}>
       <span class="lg-dot" style="background:${esc(r.color)}"></span>
       <span class="lg-cat-name">${esc(r.name)}</span>
       <span class="lg-cat-pct">${total > 0 ? Math.round(r.amt / total * 100) : 0}%</span>
       <span class="lg-cat-amt" style="color:${esc(r.color)}">¥${_ledgerMoney(r.amt)}</span>
+      ${tappable ? '<span class="lg-cat-chev">›</span>' : ''}
     </div>`).join('');
     return bar + `<div class="lg-cat-lines">${lines}</div>`;
   };
@@ -3834,24 +3842,35 @@ function renderLedgerTab(view) {
       <div class="lg-card">
         <div class="lg-card-head"><span class="lg-card-title">${_ledgerViewWord()}支出</span>
           <span class="lg-card-num exp">¥${_ledgerMoney(expTotal)}</span></div>
-        ${breakdown(expRows, expTotal)}
+        ${breakdown(expRows, expTotal, true)}
       </div>
       <div class="lg-card">
         <div class="lg-card-head"><span class="lg-card-title">${_ledgerViewWord()}收入</span>
           <span class="lg-card-num inc">¥${_ledgerMoney(incTotal)}</span></div>
-        ${breakdown(incRows, incTotal)}
+        ${breakdown(incRows, incTotal, false)}
       </div>
       <div class="lg-card">
         <div class="lg-card-head"><span class="lg-card-title">${_ledgerViewWord()}预算</span>
           <span class="lg-card-num">${totalBudget > 0 ? '¥' + _ledgerMoney(expTotal) + ' / ¥' + _ledgerMoney(totalBudget) : '未设'}</span></div>
-        ${totalBudget > 0 ? `<div class="lg-budget-track"><span class="lg-budget-fill ${expTotal > totalBudget ? 'over' : ''}" style="width:${Math.min(100, expTotal / totalBudget * 100)}%"></span></div>` : ''}
-        ${expCats.length ? `<div class="lg-cat-lines">${expCats.map(c => {
+        ${totalBudget > 0 ? (() => {
+          const tpct = expTotal / totalBudget * 100;
+          const tover = expTotal > totalBudget;
+          return `<div class="lg-budget-track"><span class="lg-budget-fill ${tover ? 'over' : ''}" style="width:${Math.min(100, tpct)}%"></span></div>
+        <div class="lg-budget-pctline ${tover ? 'over' : ''}">已用 ${Math.round(tpct)}%${tover ? ' · 超支 ¥' + _ledgerMoney(expTotal - totalBudget) : ' · 剩余 ¥' + _ledgerMoney(totalBudget - expTotal)}</div>`;
+        })() : ''}
+        ${expCats.length ? `<div class="lg-budget-cats">${expCats.map(c => {
           const spent = (expRows.find(r => r.id === c.id) || {}).amt || 0;
           const bd = (c.monthBudget || 0) * vm;
-          return `<div class="lg-cat-line">
-            <span class="lg-dot" style="background:${esc(c.color)}"></span>
-            <span class="lg-cat-name">${esc(c.name)}</span>
-            <span class="lg-cat-amt">¥${_ledgerMoney(spent)}${bd > 0 ? ' / ¥' + _ledgerMoney(bd) : ''}</span>
+          const pct = bd > 0 ? spent / bd * 100 : 0;
+          const over = bd > 0 && spent > bd;
+          return `<div class="lg-budget-cat">
+            <div class="lg-budget-cat-head">
+              <span class="lg-dot" style="background:${esc(c.color)}"></span>
+              <span class="lg-cat-name">${esc(c.name)}</span>
+              ${bd > 0 ? `<span class="lg-budget-cat-pct${over ? ' over' : ''}">${Math.round(pct)}%</span>` : ''}
+              <span class="lg-cat-amt" style="color:${esc(c.color)}">¥${_ledgerMoney(spent)}${bd > 0 ? ' / ¥' + _ledgerMoney(bd) : ''}</span>
+            </div>
+            ${bd > 0 ? `<div class="lg-budget-track lg-budget-track-sm"><span class="lg-budget-fill${over ? ' over' : ''}" style="width:${Math.min(100, pct)}%;${over ? '' : 'background:' + esc(c.color)}"></span></div>` : ''}
           </div>`;
         }).join('')}</div>` : ''}
       </div>
@@ -3867,6 +3886,81 @@ function renderLedgerTab(view) {
     </div>`;
 
   // 期间切换(月/季/年)与前后导航已移到顶栏 — 见 renderTopbar 的 ledger 分支
+  // 支出分类单击 → 详情抽屉(tag 拆解 + 最大支出账单)
+  view.querySelectorAll('[data-lg-cat-detail]').forEach(el => {
+    el.addEventListener('click', () => openLedgerCatDetailSheet(el.dataset.lgCatDetail));
+  });
+}
+
+function _ledgerTagById(id) { return ((state.ledger && state.ledger.tags) || []).find(t => t.id === id) || null; }
+
+// 支出分类详情抽屉 — 该分类下:二级标签占比/额度 + 金额最大的账单
+function openLedgerCatDetailSheet(catId) {
+  const vtx = _ledgerViewTx();
+  const txs = vtx.filter(t => t.dir === 'expense' && (t.categoryId || '__none__') === catId);
+  const cat = catId === '__none__' ? null : _ledgerCatById(catId);
+  const catName = cat ? cat.name : '未分类';
+  const catColor = cat ? cat.color : '#9aa0a8';
+  const catTotal = txs.reduce((s, t) => s + t.amount, 0);
+
+  // 二级标签拆解 — 一笔可挂多 tag,各计一次(合计可超分类总额);无 tag 计入「未标记」
+  const tagMap = new Map();
+  let untagged = 0;
+  for (const t of txs) {
+    const tids = t.tagIds || [];
+    if (!tids.length) { untagged += t.amount; continue; }
+    for (const tid of tids) tagMap.set(tid, (tagMap.get(tid) || 0) + t.amount);
+  }
+  const tagRows = Array.from(tagMap.entries())
+    .map(([tid, amt]) => { const tg = _ledgerTagById(tid); return { name: tg ? tg.name : '(标签)', color: tg ? tg.color : '#9aa0a8', amt }; })
+    .sort((a, b) => b.amt - a.amt);
+  if (untagged > 0) tagRows.push({ name: '未标记', color: '#c8ccd2', amt: untagged, untag: true });
+
+  const tagHtml = tagRows.length
+    ? tagRows.map(r => `<div class="lg-cat-line">
+        <span class="lg-dot" style="background:${esc(r.color)}"></span>
+        <span class="lg-cat-name${r.untag ? ' lg-cat-name-dim' : ''}">${esc(r.name)}</span>
+        <span class="lg-cat-pct">${catTotal > 0 ? Math.round(r.amt / catTotal * 100) : 0}%</span>
+        <span class="lg-cat-amt" style="color:${esc(r.untag ? '#9aa0a8' : r.color)}">¥${_ledgerMoney(r.amt)}</span>
+      </div>`).join('')
+    : '<div class="lg-empty">该分类账单还没打标签</div>';
+
+  // 金额最大的账单(最多 8 笔)
+  const topTx = txs.slice().sort((a, b) => b.amount - a.amount).slice(0, 8);
+  const txHtml = topTx.length
+    ? topTx.map(t => {
+        const d = new Date(t.ts);
+        const cp = (t.counterparty || '').trim();
+        return `<div class="lg-detail-tx">
+          <span class="lg-detail-tx-date">${d.getFullYear()}.${d.getMonth() + 1}.${String(d.getDate()).padStart(2, '0')}</span>
+          <div class="lg-detail-tx-mid">
+            <div class="lg-detail-tx-title">${esc(t.title || '(无名)')}</div>
+            ${cp ? `<div class="lg-detail-tx-cp">对方 · ${esc(cp)}</div>` : ''}
+          </div>
+          <span class="lg-detail-tx-amt" style="color:${esc(catColor)}">¥${_ledgerMoney(t.amount)}</span>
+        </div>`;
+      }).join('')
+    : '<div class="lg-empty">该分类暂无账单</div>';
+
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="lg-detail-head">
+        <span class="lg-dot" style="background:${esc(catColor)};width:12px;height:12px;"></span>
+        <span class="lg-detail-name">${esc(catName)}</span>
+        <span class="lg-detail-sub">${txs.length} 笔 · ¥${_ledgerMoney(catTotal)}</span>
+      </div>
+      <div class="lg-detail-sec-title">标签拆解</div>
+      <div class="lg-cat-lines">${tagHtml}</div>
+      <div class="lg-detail-sec-title">最大支出账单</div>
+      <div class="lg-detail-txs">${txHtml}</div>
+    </div>
+    <div class="sheet-actions">
+      <button class="primary" data-action="close">关闭</button>
+    </div>
+  `, (body) => {
+    body.querySelector('[data-action="close"]').onclick = closeSheet;
+  });
 }
 
 function _ledgerTxListHtml(txs) {

@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260517-2200';
+const _PSFOCUS_BUILD = '20260517-2230';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -8424,12 +8424,15 @@ function bindGlobalEvents() {
       locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
     }
     if (locked === 'y') { reset(false); return; }
+    // 关键:从左边缘开始的横向拖拽 → preventDefault 吃掉 iOS Safari 的「边缘返回」系统手势,
+    // 否则系统返回会和呼出抽屉同时触发(监听器必须 passive:false 才能 preventDefault)
+    if (e.cancelable) e.preventDefault();
     if (locked !== 'x' || dx <= 0) return;
     const w = panel.getBoundingClientRect().width || 280;
     const ratio = Math.min(1, dx / w);
     panel.style.transform = `translateX(${(ratio - 1) * 100}%)`;
     if (mask) mask.style.background = `rgba(0, 0, 0, ${0.34 * ratio})`;
-  }, { passive: true });
+  }, { passive: false });
   document.body.addEventListener('touchend', () => {
     if (!dragging) return;
     if (panel) panel.style.transition = '';

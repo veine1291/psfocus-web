@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0350';
+const _PSFOCUS_BUILD = '20260518-0420';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -3303,6 +3303,7 @@ function filterWorksList(list) {
 function sortWorksList(list) {
   return list.slice().sort((a, b) => {
     if (worksState.sort === 'custom') return (a.order || 0) - (b.order || 0);
+    if (worksState.sort === 'updated') return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
     const ta = a.completedAt || a.dueEnd || a.dueStart || a.createdAt || 0;
     const tb = b.completedAt || b.dueEnd || b.dueStart || b.createdAt || 0;
     return tb - ta;
@@ -5746,6 +5747,8 @@ function openWorksSortMenu(anchor) {
     { sectionTitle: '排序' },
     { label: '按时间', icon: 'ico-history', stateText: worksState.sort === 'time' ? '当前' : '',
       action: () => { worksState.sort = 'time'; closePopover(); renderAll(); } },
+    { label: '最近更新', icon: 'ico-clock', stateText: worksState.sort === 'updated' ? '当前' : '',
+      action: () => { worksState.sort = 'updated'; closePopover(); renderAll(); } },
     { label: '自定义顺序', icon: 'ico-template', stateText: worksState.sort === 'custom' ? '当前' : '',
       action: () => { worksState.sort = 'custom'; closePopover(); renderAll(); } },
   ], { anchor });

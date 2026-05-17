@@ -2724,18 +2724,51 @@ async function getCloudImageUrl(fileID) {
     return null;
   }
 }
-function bindCloudTimelineImages(root) {
-  // (1) 异步换 src
-  const imgs = root.querySelectorAll('img[data-cloud-file-id]');
-  imgs.forEach(async (img) => {
+// 批量换 src — 把 N 次 getTempFileURL 合并成 N/50 次,首屏图片快很多。
+// 分批顺序拿:每批(50 个)拿到就立刻填该批的 img,所以顶部图片一个来回就出来了。
+async function _loadCloudImages(imgs) {
+  const byFid = new Map();   // fileID -> [img,...](同 fileID 复用一次解析)
+  for (const img of imgs) {
     const fid = img.dataset.cloudFileId;
-    const url = await getCloudImageUrl(fid);
-    if (url) img.src = url;
-    else img.replaceWith(Object.assign(document.createElement('div'), {
-      className: 'proj-tl-img-placeholder',
-      innerHTML: '<span class="ico-eye"></span><span>附图加载失败</span>',
-    }));
-  });
+    if (!fid) continue;
+    if (!byFid.has(fid)) byFid.set(fid, []);
+    byFid.get(fid).push(img);
+  }
+  const now = Date.now();
+  const need = [];
+  for (const fid of byFid.keys()) {
+    const c = _cloudImageCache.get(fid);
+    if (c && c.expiry > now) { for (const im of byFid.get(fid)) im.src = c.url; }
+    else need.push(fid);
+  }
+  for (let i = 0; i < need.length; i += 50) {
+    const chunk = need.slice(i, i + 50);
+    try {
+      const res = await tcbApp.getTempFileURL({ fileList: chunk });
+      const list = (res && res.fileList) || [];
+      for (const item of list) {
+        if (item && item.code === 'SUCCESS' && item.tempFileURL && item.fileID) {
+          _cloudImageCache.set(item.fileID, { url: item.tempFileURL, expiry: Date.now() + 110 * 60 * 1000 });
+          for (const im of (byFid.get(item.fileID) || [])) im.src = item.tempFileURL;
+        }
+      }
+    } catch (e) { console.warn('[cloud images batch]', e && e.message); }
+  }
+  // 仍没拿到 URL 的 → 占位
+  for (const fid of need) {
+    if (_cloudImageCache.get(fid)) continue;
+    for (const im of (byFid.get(fid) || [])) {
+      if (im.isConnected) im.replaceWith(Object.assign(document.createElement('div'), {
+        className: 'proj-tl-img-placeholder',
+        innerHTML: '<span class="ico-eye"></span><span>附图加载失败</span>',
+      }));
+    }
+  }
+}
+function bindCloudTimelineImages(root) {
+  // (1) 批量异步换 src
+  const imgs = Array.from(root.querySelectorAll('img[data-cloud-file-id]'));
+  if (imgs.length) _loadCloudImages(imgs);
   // (2) 时间轴节点大图 click → lightbox(同一 .proj-tl-line 容器内为一组)
   root.querySelectorAll('.proj-tl-line').forEach(line => {
     const tlImgs = Array.from(line.querySelectorAll('.proj-tl-img'));
@@ -3227,7 +3260,7 @@ function worksCardHtml(p) {
   const initial = esc((p.name || '?').slice(0, 1));
   const coverCloudID = worksCoverCloudID(p);
   const thumbHtml = coverCloudID
-    ? `<div class="works-card-thumb works-card-thumb-img"><img class="works-card-cover" data-cloud-file-id="${esc(coverCloudID)}" alt="${esc(p.name || '')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="></div>`
+    ? `<div class="works-card-thumb works-card-thumb-img"><img class="works-card-cover" loading="lazy" data-cloud-file-id="${esc(coverCloudID)}" alt="${esc(p.name || '')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="></div>`
     : `<div class="works-card-thumb" style="background:${esc(color)}">${initial}</div>`;
   return `<div class="works-card" data-works-card="${esc(p.id)}">
     ${thumbHtml}
@@ -3332,7 +3365,7 @@ function openWorksDetailSheet(pid) {
   const finalsHtml = finals.length
     ? `<div class="section-title" style="padding:14px 0 6px;">完成图集 · ${finals.length}</div>
        <div class="works-finals-grid">${finals.map(f =>
-         `<div class="works-final-cell"><img class="works-final-img" data-cloud-file-id="${esc(f.cloudFileID)}" alt="${esc(f.name || '')}" src="${_imgPlaceholder}"></div>`
+         `<div class="works-final-cell"><img class="works-final-img" loading="lazy" data-cloud-file-id="${esc(f.cloudFileID)}" alt="${esc(f.name || '')}" src="${_imgPlaceholder}"></div>`
        ).join('')}</div>`
     : '';
 

@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0210';
+const _PSFOCUS_BUILD = '20260518-0240';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1336,13 +1336,13 @@ function _renderSummaryInputBox() {
       <span class="sum-input-day-mods-chev">${inputModsCollapsed ? '▶' : '▼'}</span>
       <span class="sum-input-day-mods-label">今日 · 待录入 <span class="sum-input-day-mods-count">(${todayMods.length})</span></span>
     </button>
-    ${inputModsCollapsed ? '' : `<div class="sum-input-day-mods-body">
+    <div class="sum-input-day-mods-body">
       ${todayMods.map(m => _renderSummaryModuleEditor(m, todayKey)).join('')}
-    </div>`}
+    </div>
   </div>` : '';
   const hasPending = Object.keys(summaryState.pendingModuleValues || {}).length > 0;
   return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
-    <textarea class="sum-input" rows="2" placeholder="现在的想法是…  输入 #xxx 自动加标签;粘贴图片直接上传"
+    <textarea class="sum-input" rows="2" placeholder="现在的想法是…"
       data-action-input="summary-input-autosize">${esc(summaryState.draftNote || '')}</textarea>
     ${pendingImgs ? `<div class="sum-input-pending">${pendingImgs}</div>` : ''}
     ${todayModsHtml}
@@ -1885,7 +1885,13 @@ const _summaryActions = {
   'summary-toggle-input-mods': () => {
     summaryState.inputModsCollapsed = !summaryState.inputModsCollapsed;
     try { localStorage.setItem('psfocus_inputModsCollapsed', summaryState.inputModsCollapsed ? '1' : '0'); } catch (_) {}
-    renderAll();
+    // 直接改 DOM(输入框在浮动 sheet 里,renderAll 不会重渲它)— 同时保住 textarea 焦点/内容
+    const wrap = document.querySelector('.sum-input-day-mods');
+    if (wrap) {
+      wrap.classList.toggle('collapsed', summaryState.inputModsCollapsed);
+      const chev = wrap.querySelector('.sum-input-day-mods-chev');
+      if (chev) chev.textContent = summaryState.inputModsCollapsed ? '▶' : '▼';
+    }
   },
   'summary-input-autosize': (el, e) => {
     // 实时保存草稿 — 防 renderAll(点 dot / 模块按钮等)时 textarea 被替换丢失内容

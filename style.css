@@ -3324,6 +3324,8 @@ html, body { overscroll-behavior-y: contain; }
   margin: 0;
   padding: 0;
 }
+/* 输入面板按内容收紧高度 — 否则 sheet 默认 min-height 撑出大片空白,工具栏离键盘太远 */
+.sheet-content.sum-input-sheet { min-height: 0; padding-bottom: 8px; }
 .sum-input {
   width: 100%;
   resize: none;
@@ -3403,6 +3405,7 @@ html, body { overscroll-behavior-y: contain; }
   font-weight: 400;
 }
 .sum-input-day-mods.collapsed { gap: 0; padding-bottom: 0; }
+.sum-input-day-mods.collapsed .sum-input-day-mods-body { display: none; }
 /* 紧凑卡片网格 — flex-wrap,卡片根据数量自适应高度 */
 .sum-input-day-mods-body {
   display: flex;

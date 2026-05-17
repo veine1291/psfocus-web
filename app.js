@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0040';
+const _PSFOCUS_BUILD = '20260518-0110';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -888,7 +888,8 @@ function renderAll() {
   if ($('drawer-nav').classList.contains('open')) renderDrawerNav();
   if ($('drawer-right') && $('drawer-right').classList.contains('open')) renderCalendarSidebar();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
-  $('fab').classList.toggle('hidden', !(ui.tab === 'tasks' || ui.tab === 'calendar'));
+  $('fab').classList.toggle('hidden', !(ui.tab === 'tasks' || ui.tab === 'calendar'
+    || (ui.tab === 'summary' && summaryState.tab !== 'data')));
 }
 function renderTabBar() {
   const bar = document.querySelector('.tabbar');
@@ -1271,7 +1272,6 @@ function renderSummaryTab(view) {
           <div class="sum-data-empty-hint">敬请期待 — 这里会展示模块多日趋势</div>
         </div>`
       : `<div class="sum-main">
-           ${_renderSummaryInputBox()}
            <div class="sum-list">${_renderSummaryList()}</div>
          </div>`
     }
@@ -1280,24 +1280,35 @@ function renderSummaryTab(view) {
     const si = view.querySelector('.sum-search');
     if (si) setTimeout(() => si.focus(), 60);
   }
-
-  // 输入框 paste 图片直接上传 + Ctrl/⌘+Enter 提交
-  const ta = view.querySelector('.sum-input');
-  if (ta) {
-    ta.addEventListener('paste', _summaryHandlePaste);
-    ta.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        if (actions['summary-submit']) actions['summary-submit']();
-      }
-    });
-    setTimeout(() => {
-      ta.style.height = 'auto';
-      ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
-    }, 0);
-  }
   // 异步加载摘要里的云图 — 跟 task detail 共用 bindCloudTimelineImages
   if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(view);
+}
+
+// 摘要输入面板 — 浮动 FAB 点开的底部输入(参考 flomo:不常驻,用时弹出)
+function openSummaryInputSheet() {
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content sum-input-sheet">
+      ${_renderSummaryInputBox()}
+    </div>
+  `, (body) => {
+    const ta = body.querySelector('.sum-input');
+    if (ta) {
+      ta.addEventListener('paste', _summaryHandlePaste);
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          if (actions['summary-submit']) actions['summary-submit']();
+        }
+      });
+      setTimeout(() => {
+        ta.focus();
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+      }, 60);
+    }
+    if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(body);
+  });
 }
 
 function _renderSummaryTagBar() {
@@ -2044,6 +2055,7 @@ const _summaryActions = {
     summaryState.draftNote = '';
     if (ta) ta.value = '';
     pushState();
+    if (typeof closeSheet === 'function') closeSheet();   // 收起浮动输入面板
     renderAll();
   },
   // 笔记右上 ⋯ → 弹一个小 sheet:编辑 / 删除
@@ -8460,6 +8472,7 @@ function bindGlobalEvents() {
       longPressed = false;
       clearTimer();
       timer = setTimeout(() => {
+        if (ui.tab === 'summary') return;   // 摘要 tab 的 FAB 只开输入面板,无长按动作
         longPressed = true;
         try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
         if ((state.templates || []).some(t => t.kind === 'task' || t.kind === 'event')) {
@@ -8479,7 +8492,8 @@ function bindGlobalEvents() {
     fab.addEventListener('mouseleave', cancel);
     fab.addEventListener('click', (e) => {
       if (longPressed) { e.preventDefault(); e.stopPropagation(); longPressed = false; return; }
-      openCreateTaskSheet();
+      if (ui.tab === 'summary') openSummaryInputSheet();
+      else openCreateTaskSheet();
     });
   })();
   // 顶部标题点击:日历 tab 时回今日

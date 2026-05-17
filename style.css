@@ -4375,6 +4375,67 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .works-detail-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .works-detail-stars { font-size: 13px; color: #e8a83a; letter-spacing: 1.5px; }
 .works-detail-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+/* 详情头部「编辑信息」按钮 */
+.works-detail-edit {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.works-detail-edit .ico-edit { width: 16px; height: 16px; }
+.works-detail-edit:active { background: var(--bg-active); }
+/* 项目信息编辑表单控件 */
+.form-row input[type="text"], .form-row input[type="number"], .form-row select {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text);
+  font-family: inherit;
+}
+.we-status-pills { flex: 1 1 0; display: flex; gap: 6px; }
+.we-status-pill {
+  flex: 1 1 0;
+  padding: 7px 4px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.we-status-pill.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.we-date-wrap { flex: 1 1 0; display: flex; gap: 6px; align-items: center; }
+.we-date-wrap input[type="date"] { flex: 1 1 0; }
+.we-mini-btn {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.we-mini-btn:active { background: var(--bg-active); }
+.we-pay-wrap { flex: 1 1 0; display: flex; gap: 6px; }
+.we-pay-wrap input { flex: 1 1 0; }
+.we-pay-wrap select { flex: 0 0 64px; }
+.we-stars { flex: 1 1 0; display: flex; gap: 4px; }
+.we-star {
+  border: 0; background: transparent; cursor: pointer;
+  font-size: 24px; line-height: 1; padding: 2px 4px;
+  color: var(--border-light);
+}
+.we-star.on { color: #e8a83a; }
 /* 完成图集 */
 .works-finals-grid {
   display: grid;

@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0240';
+const _PSFOCUS_BUILD = '20260518-0320';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -3464,6 +3464,7 @@ function openWorksDetailSheet(pid) {
             ${rating ? starsHtml : ''}
           </div>
         </div>
+        <button class="works-detail-edit" data-works-edit type="button" title="编辑信息"><span class="ico-edit"></span></button>
       </div>
 
       <div class="proj-info-list works-detail-info">
@@ -3512,6 +3513,8 @@ function openWorksDetailSheet(pid) {
     </div>
   `, (body) => {
     bindCloudTimelineImages(body);
+    const editBtnEl = body.querySelector('[data-works-edit]');
+    if (editBtnEl) editBtnEl.onclick = () => openWorksEditSheet(pid);
     // 头部封面缩略图 → 点击看大图(并入完成图集那一组)
     const coverThumb = body.querySelector('.works-detail-thumb .works-card-cover');
     if (coverThumb) {
@@ -3526,6 +3529,115 @@ function openWorksDetailSheet(pid) {
         }
       });
     }
+  });
+}
+
+// 项目信息编辑 — 状态 / 完成日期 / 期限 / 客户 / 薪酬 / 评分(对齐桌面端能编辑的字段)
+function openWorksEditSheet(pid) {
+  const p = state.projects.find(x => x.id === pid);
+  if (!p) return;
+  let pendingStatus = worksStatusOf(p);
+  let pendingRating = p.rating || 0;
+  const pay = p.payment || {};
+  const UNIT_OPTS = [['none', '无'], ['hundred', '百'], ['thousand', '千'], ['tenK', '万']];
+  const dInput = (ts) => ts ? tsToDateInput(ts) : '';
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 12px;">编辑项目信息</div>
+      <div class="form-row" style="align-items:flex-start;">
+        <label>状态</label>
+        <div class="we-status-pills">
+          ${['pending', 'active', 'done'].map(s =>
+            `<button class="we-status-pill ${s === pendingStatus ? 'active' : ''}" data-we-status="${s}" type="button">${WORKS_STATUS_TEXT[s]}</button>`).join('')}
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <label>完成日期</label>
+        <div class="we-date-wrap">
+          <input type="date" id="we-completed" value="${esc(dInput(p.completedAt))}">
+          <button class="we-mini-btn" id="we-use-due" type="button">用截止</button>
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <label>开始日期</label>
+        <input type="date" id="we-start" value="${esc(dInput(p.dueStart))}">
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <label>截止日期</label>
+        <input type="date" id="we-end" value="${esc(dInput(p.dueEnd))}">
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <label>客户</label>
+        <input type="text" id="we-client" value="${esc(p.clientName || '')}" placeholder="客户 / 来源">
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <label>联系</label>
+        <input type="text" id="we-contact" value="${esc(p.clientContact || '')}" placeholder="联系方式(可选)">
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <label>薪酬</label>
+        <div class="we-pay-wrap">
+          <input type="number" id="we-pay-val" value="${pay.value ? esc(String(pay.value)) : ''}" placeholder="金额" step="0.01" min="0">
+          <select id="we-pay-unit">
+            ${UNIT_OPTS.map(([v, l]) => `<option value="${v}" ${(pay.unit || 'none') === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <label>评分</label>
+        <div class="we-stars">
+          ${[1, 2, 3, 4, 5].map(s => `<button class="we-star ${s <= pendingRating ? 'on' : ''}" data-we-star="${s}" type="button">★</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="primary" data-action="save">保存</button>
+    </div>
+  `, (body) => {
+    body.querySelectorAll('[data-we-status]').forEach(b => b.onclick = () => {
+      pendingStatus = b.dataset.weStatus;
+      body.querySelectorAll('[data-we-status]').forEach(x => x.classList.toggle('active', x === b));
+    });
+    body.querySelectorAll('[data-we-star]').forEach(b => b.onclick = () => {
+      const s = parseInt(b.dataset.weStar, 10);
+      pendingRating = (pendingRating === s) ? 0 : s;   // 再点当前分 = 清零
+      body.querySelectorAll('[data-we-star]').forEach(x => x.classList.toggle('on', parseInt(x.dataset.weStar, 10) <= pendingRating));
+    });
+    body.querySelector('#we-use-due').onclick = () => {
+      const v = body.querySelector('#we-end').value || body.querySelector('#we-start').value;
+      if (!v) { showToast('还没设截止日期'); return; }
+      body.querySelector('#we-completed').value = v;
+    };
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="save"]').onclick = () => {
+      const parseD = (s) => s ? (combineDateAndTime(s, '') || null) : null;
+      p.status = pendingStatus;
+      if (pendingStatus === 'done') {
+        p.completedAt = parseD(body.querySelector('#we-completed').value) || p.completedAt || Date.now();
+        p.archived = true;
+      } else {
+        p.completedAt = null;
+        p.archived = false;
+      }
+      p.dueStart = parseD(body.querySelector('#we-start').value);
+      p.dueEnd = parseD(body.querySelector('#we-end').value);
+      p.clientName = body.querySelector('#we-client').value.trim();
+      p.clientContact = body.querySelector('#we-contact').value.trim();
+      const pv = parseFloat(body.querySelector('#we-pay-val').value);
+      p.payment = {
+        value: Number.isFinite(pv) && pv > 0 ? pv : 0,
+        unit: body.querySelector('#we-pay-unit').value || 'none',
+        currencyId: (p.payment && p.payment.currencyId) || 'CNY',
+      };
+      p.rating = pendingRating;
+      p.updatedAt = Date.now();
+      pushState();
+      closeSheet();
+      openWorksDetailSheet(pid);
+      renderAll();
+    };
   });
 }
 

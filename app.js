@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260517-2100';
+const _PSFOCUS_BUILD = '20260517-2200';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2724,44 +2724,80 @@ async function getCloudImageUrl(fileID) {
     return null;
   }
 }
-// 批量换 src — 把 N 次 getTempFileURL 合并成 N/50 次,首屏图片快很多。
-// 分批顺序拿:每批(50 个)拿到就立刻填该批的 img,所以顶部图片一个来回就出来了。
+// 云图持久缓存(Cache Storage)— 按 fileID 存图片 blob,跨会话保留,重开秒出图
+const _IMG_CACHE_NAME = 'psfocus-cloud-img-v1';
+function _imgCacheKey(fid) { return 'https://psfocus-img-cache.local/' + encodeURIComponent(fid); }
+// 批量换 src:① 持久缓存命中 → 本地 blob 立刻出图(无网络) ② 未命中 → 批量解析临时 URL
+// 显示(保持 loading=lazy),图片加载完成后顺手把它存进持久缓存,下次重开就秒出。
 async function _loadCloudImages(imgs) {
-  const byFid = new Map();   // fileID -> [img,...](同 fileID 复用一次解析)
+  const byFid = new Map();   // fileID -> [img,...](同 fileID 复用)
   for (const img of imgs) {
     const fid = img.dataset.cloudFileId;
     if (!fid) continue;
     if (!byFid.has(fid)) byFid.set(fid, []);
     byFid.get(fid).push(img);
   }
-  const now = Date.now();
+  const fids = Array.from(byFid.keys());
+  if (!fids.length) return;
+  const setSrc = (fid, url) => { for (const im of (byFid.get(fid) || [])) im.src = url; };
+
+  let cache = null;
+  try { cache = window.caches ? await caches.open(_IMG_CACHE_NAME) : null; } catch (_) { cache = null; }
+
+  // ① 持久缓存命中 → 直接用本地 blob,零网络
   const need = [];
-  for (const fid of byFid.keys()) {
-    const c = _cloudImageCache.get(fid);
-    if (c && c.expiry > now) { for (const im of byFid.get(fid)) im.src = c.url; }
-    else need.push(fid);
+  if (cache) {
+    await Promise.all(fids.map(async (fid) => {
+      try {
+        const hit = await cache.match(_imgCacheKey(fid));
+        if (hit) {
+          const blob = await hit.blob();
+          if (blob && blob.size > 0) { setSrc(fid, URL.createObjectURL(blob)); return; }
+        }
+      } catch (_) {}
+      need.push(fid);
+    }));
+  } else {
+    need.push(...fids);
   }
-  for (let i = 0; i < need.length; i += 50) {
-    const chunk = need.slice(i, i + 50);
+  if (!need.length) return;
+
+  // ② 未命中 → 批量解析临时 URL(50 个一批)
+  const now = Date.now();
+  const toResolve = need.filter(fid => {
+    const c = _cloudImageCache.get(fid);
+    return !(c && c.expiry > now);
+  });
+  for (let i = 0; i < toResolve.length; i += 50) {
+    const chunk = toResolve.slice(i, i + 50);
     try {
       const res = await tcbApp.getTempFileURL({ fileList: chunk });
-      const list = (res && res.fileList) || [];
-      for (const item of list) {
+      for (const item of ((res && res.fileList) || [])) {
         if (item && item.code === 'SUCCESS' && item.tempFileURL && item.fileID) {
           _cloudImageCache.set(item.fileID, { url: item.tempFileURL, expiry: Date.now() + 110 * 60 * 1000 });
-          for (const im of (byFid.get(item.fileID) || [])) im.src = item.tempFileURL;
         }
       }
     } catch (e) { console.warn('[cloud images batch]', e && e.message); }
   }
-  // 仍没拿到 URL 的 → 占位
+
+  // ③ 用临时 URL 显示;图片 load 完成后 fetch 同 URL(基本走浏览器缓存)存进持久缓存
   for (const fid of need) {
-    if (_cloudImageCache.get(fid)) continue;
-    for (const im of (byFid.get(fid) || [])) {
-      if (im.isConnected) im.replaceWith(Object.assign(document.createElement('div'), {
-        className: 'proj-tl-img-placeholder',
-        innerHTML: '<span class="ico-eye"></span><span>附图加载失败</span>',
-      }));
+    const c = _cloudImageCache.get(fid);
+    if (!c || !c.url) {
+      for (const im of (byFid.get(fid) || [])) {
+        if (im.isConnected) im.replaceWith(Object.assign(document.createElement('div'), {
+          className: 'proj-tl-img-placeholder',
+          innerHTML: '<span class="ico-eye"></span><span>附图加载失败</span>',
+        }));
+      }
+      continue;
+    }
+    setSrc(fid, c.url);
+    if (cache) {
+      const first = (byFid.get(fid) || [])[0];
+      if (first) first.addEventListener('load', () => {
+        fetch(c.url).then(r => { if (r && r.ok) cache.put(_imgCacheKey(fid), r); }).catch(() => {});
+      }, { once: true });
     }
   }
 }
@@ -3322,7 +3358,9 @@ function renderWorksTab(view) {
   });
   view.querySelectorAll('[data-works-card]').forEach(c => c.addEventListener('click', (ev) => {
     if (ev.target.closest('[data-works-tag]')) return;
-    openWorksDetailSheet(c.dataset.worksCard);
+    // 点缩略图 → 看项目大图;点右侧文字区 → 进项目详情
+    if (ev.target.closest('.works-card-thumb')) openWorksImages(c.dataset.worksCard);
+    else openWorksDetailSheet(c.dataset.worksCard);
   }));
   view.querySelectorAll('[data-works-tag]').forEach(t => t.addEventListener('click', (ev) => {
     ev.stopPropagation();
@@ -3331,6 +3369,23 @@ function renderWorksTab(view) {
   }));
   // 异步加载项目卡片封面大图(云存储)
   if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(view);
+}
+
+// 点项目缩略图 → 直接看项目大图(完成图集;没有则封面;都没有就退而打开详情)
+function openWorksImages(pid) {
+  const p = state.projects.find(x => x.id === pid);
+  if (!p) return;
+  const finals = (p.finalImages || []).filter(f => f && f.cloudFileID);
+  const coverID = worksCoverCloudID(p);
+  if (finals.length) {
+    const slides = finals.map(f => ({ cloudFileID: f.cloudFileID, title: f.name || '' }));
+    let start = finals.findIndex(f => f.cloudFileID === coverID);
+    openImageLightbox(slides, start < 0 ? 0 : start);
+  } else if (coverID) {
+    openImageLightbox([{ cloudFileID: coverID, title: p.name || '' }], 0);
+  } else {
+    openWorksDetailSheet(pid);   // 没有任何图 → 退而打开详情
+  }
 }
 
 function openWorksDetailSheet(pid) {

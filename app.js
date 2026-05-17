@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0140';
+const _PSFOCUS_BUILD = '20260518-0210';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2936,11 +2936,16 @@ function openImageLightbox(images, startIdx) {
     <div class="img-lb-slide">
       <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" data-cloud-file-id="${esc(im.cloudFileID || '')}" alt="${esc(im.title || '')}">
     </div>`).join('');
-  // 异步加载所有图(reuse 现成函数,但 lightbox 内不会有 .proj-tl-line / .dp-image-grid,不会再绑 click)
-  track.querySelectorAll('img[data-cloud-file-id]').forEach(async (img) => {
-    const url = await getCloudImageUrl(img.dataset.cloudFileId);
-    if (url) img.src = url;
-  });
+  // 懒加载:只加载当前 ±2 张 — 跨项目浏览时 slides 可能上百张,不能一次性全发请求
+  const _loadSlide = (i) => {
+    if (i < 0 || i >= images.length) return;
+    const sEl = track.children[i];
+    const img = sEl && sEl.querySelector('img[data-cloud-file-id]');
+    if (!img || img.dataset.loaded) return;
+    img.dataset.loaded = '1';
+    getCloudImageUrl(img.dataset.cloudFileId).then(url => { if (url) img.src = url; });
+  };
+  const _loadAround = (i) => { for (let d = -2; d <= 2; d++) _loadSlide(i + d); };
   let idx = startIdx;
   const counter = lb.querySelector('.img-lb-counter');
   const titleEl = lb.querySelector('.img-lb-title');
@@ -2977,6 +2982,7 @@ function openImageLightbox(images, startIdx) {
     track.style.transform = `translateX(${-idx * 100}%)`;
     counter.textContent = `${idx + 1} / ${images.length}`;
     titleEl.textContent = images[idx].title || '';
+    _loadAround(idx);
   };
   updateUI(false);
 
@@ -3375,21 +3381,33 @@ function renderWorksTab(view) {
   if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(view);
 }
 
-// 点项目缩略图 → 直接看项目大图(完成图集;没有则封面;都没有就退而打开详情)
-function openWorksImages(pid) {
-  const p = state.projects.find(x => x.id === pid);
-  if (!p) return;
+// 取一个项目的灯箱图组(完成图集;没有则封面)
+function _worksProjectSlides(p) {
   const finals = (p.finalImages || []).filter(f => f && f.cloudFileID);
+  if (finals.length) return finals.map(f => ({ cloudFileID: f.cloudFileID, title: p.name || '' }));
   const coverID = worksCoverCloudID(p);
-  if (finals.length) {
-    const slides = finals.map(f => ({ cloudFileID: f.cloudFileID, title: f.name || '' }));
-    let start = finals.findIndex(f => f.cloudFileID === coverID);
-    openImageLightbox(slides, start < 0 ? 0 : start);
-  } else if (coverID) {
-    openImageLightbox([{ cloudFileID: coverID, title: p.name || '' }], 0);
-  } else {
-    openWorksDetailSheet(pid);   // 没有任何图 → 退而打开详情
+  return coverID ? [{ cloudFileID: coverID, title: p.name || '' }] : [];
+}
+// 点项目缩略图 → 看大图;左右滑跨项目 — slides 拼接当前列表里所有项目的图
+function openWorksImages(pid) {
+  const p0 = state.projects.find(x => x.id === pid);
+  if (!p0) return;
+  if (!_worksProjectSlides(p0).length) { openWorksDetailSheet(pid); return; }   // 这个项目没图 → 开详情
+  // 按项目页当前可见顺序拼所有项目的图,起点 = 点中项目的封面
+  const list = sortWorksList(filterWorksList(worksProjects()));
+  const p0cover = worksCoverCloudID(p0);
+  const slides = [];
+  let startIdx = 0;
+  for (const p of list) {
+    const imgs = _worksProjectSlides(p);
+    if (p.id === pid) {
+      const off = imgs.findIndex(im => im.cloudFileID === p0cover);
+      startIdx = slides.length + (off < 0 ? 0 : off);
+    }
+    for (const im of imgs) slides.push(im);
   }
+  if (!slides.length) { openWorksDetailSheet(pid); return; }
+  openImageLightbox(slides, Math.min(startIdx, slides.length - 1));
 }
 
 function openWorksDetailSheet(pid) {

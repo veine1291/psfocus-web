@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0510';
+const _PSFOCUS_BUILD = '20260518-0600';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -832,6 +832,7 @@ const TAB_DEFS = {
   works:    { label: '项目', icon: 'ico-image' },
   calendar: { label: '日历', icon: 'ico-calendar' },
   summary:  { label: '摘要', icon: 'ico-pencil' },
+  ledger:   { label: '账本', icon: 'ico-wallet' },
   stats:    { label: '统计', icon: 'ico-history' },
   timer:    { label: '计时', icon: 'ico-clock' },
   settings: { label: '设置', icon: 'ico-settings' },
@@ -889,6 +890,7 @@ function renderAll() {
   if ($('drawer-right') && $('drawer-right').classList.contains('open')) renderCalendarSidebar();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   $('fab').classList.toggle('hidden', !(ui.tab === 'tasks' || ui.tab === 'calendar'
+    || ui.tab === 'ledger'
     || (ui.tab === 'summary' && summaryState.tab !== 'data')));
 }
 function renderTabBar() {
@@ -1007,6 +1009,11 @@ function renderTopbar() {
       rightBtn.classList.remove('hidden');
       rightBtn.classList.toggle('active', !!summaryState.searchOpen);
     }
+  } else if (ui.tab === 'ledger') {
+    $('topbar-title').textContent = '账本';
+    $('topbar-subtitle').textContent = '';
+    leftBtn.classList.add('hidden');
+    $('topbar-right-btn').classList.add('hidden');
   } else if (ui.tab === 'settings') {
     const subTitles = { appearance: '外观', system: '系统', templates: '模板', account: '账号', about: '关于' };
     if (ui.settingsPage && subTitles[ui.settingsPage]) {
@@ -1046,6 +1053,7 @@ function renderTab(tab) {
   if (tab === 'works') return renderWorksTab(view);
   if (tab === 'calendar') return renderCalendarTab(view);
   if (tab === 'summary') return renderSummaryTab(view);
+  if (tab === 'ledger') return renderLedgerTab(view);
   if (tab === 'stats') return renderStatsTab(view);
   if (tab === 'timer') return renderTimerTab(view);
   if (tab === 'settings') return renderSettingsTab(view);
@@ -3666,6 +3674,266 @@ function openWorksEditSheet(pid) {
       renderAll();
     };
   });
+}
+
+// ============================================================
+// ===== 账本 tab — 查看月/季/年收支 + 预算 + 资产 + 流水;手动记一笔
+// ============================================================
+let ledgerMState = { monthTs: 0, view: 'month' };   // monthTs = 当前月 startOfMonth ms
+let _lgAddDraft = {};
+function _ledgerCurMonthTs() {
+  if (!ledgerMState.monthTs) {
+    const d = new Date();
+    ledgerMState.monthTs = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  }
+  return ledgerMState.monthTs;
+}
+function _ledgerMoney(n) {
+  const v = Math.round((n || 0) * 100) / 100;
+  return v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function _ledgerViewMonths() { return ledgerMState.view === 'year' ? 12 : ledgerMState.view === 'quarter' ? 3 : 1; }
+function _ledgerViewWord() { return ledgerMState.view === 'year' ? '年度' : ledgerMState.view === 'quarter' ? '季度' : '月度'; }
+function _ledgerViewLabel() {
+  const m = new Date(_ledgerCurMonthTs());
+  if (ledgerMState.view === 'year') return `${m.getFullYear()} 年`;
+  if (ledgerMState.view === 'quarter') return `${m.getFullYear()} 年 Q${Math.floor(m.getMonth() / 3) + 1}`;
+  return `${m.getFullYear()} 年 ${m.getMonth() + 1} 月`;
+}
+function _ledgerViewRange() {
+  const m = new Date(_ledgerCurMonthTs());
+  if (ledgerMState.view === 'year') {
+    const y = m.getFullYear();
+    return { start: new Date(y, 0, 1).getTime(), end: new Date(y + 1, 0, 1).getTime() };
+  }
+  if (ledgerMState.view === 'quarter') {
+    const q = Math.floor(m.getMonth() / 3);
+    return { start: new Date(m.getFullYear(), q * 3, 1).getTime(), end: new Date(m.getFullYear(), q * 3 + 3, 1).getTime() };
+  }
+  return { start: m.getTime(), end: new Date(m.getFullYear(), m.getMonth() + 1, 1).getTime() };
+}
+function _ledgerViewTx() {
+  const { start, end } = _ledgerViewRange();
+  return ((state.ledger && state.ledger.transactions) || []).filter(t => t.ts >= start && t.ts < end);
+}
+function _ledgerNav(dir) {
+  const m = new Date(_ledgerCurMonthTs());
+  if (ledgerMState.view === 'year') m.setFullYear(m.getFullYear() + dir);
+  else if (ledgerMState.view === 'quarter') m.setMonth(m.getMonth() + dir * 3);
+  else m.setMonth(m.getMonth() + dir);
+  ledgerMState.monthTs = new Date(m.getFullYear(), m.getMonth(), 1).getTime();
+  renderAll();
+}
+function _ledgerCatById(id) { return ((state.ledger && state.ledger.categories) || []).find(c => c.id === id) || null; }
+
+function renderLedgerTab(view) {
+  const lg = state.ledger || {};
+  const cats = lg.categories || [];
+  const vtx = _ledgerViewTx();
+  const expTx = vtx.filter(t => t.dir === 'expense');
+  const incTx = vtx.filter(t => t.dir === 'income');
+  const expTotal = expTx.reduce((s, t) => s + t.amount, 0);
+  const incTotal = incTx.reduce((s, t) => s + t.amount, 0);
+  const byCat = (txs) => {
+    const m = new Map();
+    for (const t of txs) {
+      const k = t.categoryId || '__none__';
+      m.set(k, (m.get(k) || 0) + t.amount);
+    }
+    return Array.from(m.entries()).map(([id, amt]) => {
+      const c = id === '__none__' ? null : _ledgerCatById(id);
+      return { id, amt, name: c ? c.name : '未分类', color: c ? c.color : '#9aa0a8' };
+    }).sort((a, b) => b.amt - a.amt);
+  };
+  const expRows = byCat(expTx), incRows = byCat(incTx);
+  const vm = _ledgerViewMonths();
+  const expCats = cats.filter(c => (c.kind || 'expense') === 'expense');
+  const catBudgetSum = expCats.reduce((s, c) => s + ((c.monthBudget || 0) * vm), 0);
+  const totalBudget = Math.max((lg.monthBudget || 0) * vm, catBudgetSum);
+  const assetTotal = (lg.accounts || []).reduce((s, a) => s + (a.amount || 0), 0);
+
+  const breakdown = (rows, total) => {
+    if (!rows.length) return '<div class="lg-empty">这段时间没有记录</div>';
+    const bar = `<div class="lg-bar">${rows.map(r => {
+      const pct = total > 0 ? r.amt / total * 100 : 0;
+      return `<span class="lg-bar-seg" style="width:${pct}%;background:${esc(r.color)}"></span>`;
+    }).join('')}</div>`;
+    const lines = rows.map(r => `<div class="lg-cat-line">
+      <span class="lg-dot" style="background:${esc(r.color)}"></span>
+      <span class="lg-cat-name">${esc(r.name)}</span>
+      <span class="lg-cat-pct">${total > 0 ? Math.round(r.amt / total * 100) : 0}%</span>
+      <span class="lg-cat-amt" style="color:${esc(r.color)}">¥${_ledgerMoney(r.amt)}</span>
+    </div>`).join('');
+    return bar + `<div class="lg-cat-lines">${lines}</div>`;
+  };
+
+  view.innerHTML = `
+    <div class="lg-view">
+      <div class="lg-period">
+        <div class="lg-period-switch">
+          ${[['month', '月'], ['quarter', '季'], ['year', '年']].map(([v, l]) =>
+            `<button class="lg-period-btn ${ledgerMState.view === v ? 'on' : ''}" data-lg-view="${v}">${l}</button>`).join('')}
+        </div>
+        <div class="lg-period-nav">
+          <button class="lg-nav-btn" data-lg-nav="-1">‹</button>
+          <span class="lg-period-label">${esc(_ledgerViewLabel())}</span>
+          <button class="lg-nav-btn" data-lg-nav="1">›</button>
+        </div>
+      </div>
+      <div class="lg-card">
+        <div class="lg-card-head"><span class="lg-card-title">${_ledgerViewWord()}支出</span>
+          <span class="lg-card-num exp">¥${_ledgerMoney(expTotal)}</span></div>
+        ${breakdown(expRows, expTotal)}
+      </div>
+      <div class="lg-card">
+        <div class="lg-card-head"><span class="lg-card-title">${_ledgerViewWord()}收入</span>
+          <span class="lg-card-num inc">¥${_ledgerMoney(incTotal)}</span></div>
+        ${breakdown(incRows, incTotal)}
+      </div>
+      <div class="lg-card">
+        <div class="lg-card-head"><span class="lg-card-title">${_ledgerViewWord()}预算</span>
+          <span class="lg-card-num">${totalBudget > 0 ? '¥' + _ledgerMoney(expTotal) + ' / ¥' + _ledgerMoney(totalBudget) : '未设'}</span></div>
+        ${totalBudget > 0 ? `<div class="lg-budget-track"><span class="lg-budget-fill ${expTotal > totalBudget ? 'over' : ''}" style="width:${Math.min(100, expTotal / totalBudget * 100)}%"></span></div>` : ''}
+        ${expCats.length ? `<div class="lg-cat-lines">${expCats.map(c => {
+          const spent = (expRows.find(r => r.id === c.id) || {}).amt || 0;
+          const bd = (c.monthBudget || 0) * vm;
+          return `<div class="lg-cat-line">
+            <span class="lg-dot" style="background:${esc(c.color)}"></span>
+            <span class="lg-cat-name">${esc(c.name)}</span>
+            <span class="lg-cat-amt">¥${_ledgerMoney(spent)}${bd > 0 ? ' / ¥' + _ledgerMoney(bd) : ''}</span>
+          </div>`;
+        }).join('')}</div>` : ''}
+      </div>
+      <div class="lg-card">
+        <div class="lg-card-head"><span class="lg-card-title">总资产</span>
+          <span class="lg-card-num">¥${_ledgerMoney(assetTotal)}</span></div>
+        ${(lg.accounts || []).length ? `<div class="lg-cat-lines">${(lg.accounts || []).map(a =>
+          `<div class="lg-cat-line"><span class="lg-cat-name">${esc(a.name || '账户')}</span>
+           <span class="lg-cat-amt">¥${_ledgerMoney(a.amount || 0)}</span></div>`).join('')}</div>` : ''}
+      </div>
+      <div class="section-title" style="padding:14px 12px 6px;">流水</div>
+      ${_ledgerTxListHtml(vtx)}
+    </div>`;
+
+  view.querySelectorAll('[data-lg-view]').forEach(b => b.addEventListener('click', () => {
+    ledgerMState.view = b.dataset.lgView;
+    renderAll();
+  }));
+  view.querySelectorAll('[data-lg-nav]').forEach(b => b.addEventListener('click', () => {
+    _ledgerNav(parseInt(b.dataset.lgNav, 10));
+  }));
+}
+
+function _ledgerTxListHtml(txs) {
+  if (!txs.length) return '<div class="lg-empty" style="margin:0 12px;">这段时间还没有账单 — 桌面端导入 CSV 或点右下角记一笔</div>';
+  const sorted = txs.slice().sort((a, b) => b.ts - a.ts);
+  const groups = [];
+  let cur = null;
+  for (const t of sorted) {
+    const d = new Date(t.ts);
+    const key = `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, '0')}`;
+    if (!cur || cur.key !== key) {
+      const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+      cur = { key, label: `${key} 周${wd}`, items: [] };
+      groups.push(cur);
+    }
+    cur.items.push(t);
+  }
+  return groups.map(g => {
+    const exp = g.items.filter(t => t.dir === 'expense').reduce((s, t) => s + t.amount, 0);
+    const rows = g.items.map(t => {
+      const c = t.categoryId ? _ledgerCatById(t.categoryId) : null;
+      const cat = t.dir === 'income' ? '收入' : (c ? c.name : '未分类');
+      const color = t.dir === 'income' ? '#4cae8f' : (c ? c.color : '#9aa0a8');
+      const cp = (t.counterparty || '').trim();
+      return `<div class="lg-tx-row">
+        <span class="lg-tx-ico" style="background:${esc(color)}22;color:${esc(color)}">${esc((cat || '?').slice(0, 1))}</span>
+        <div class="lg-tx-main">
+          <div class="lg-tx-title">${esc(t.title || '')}</div>
+          <div class="lg-tx-cat">${esc(cat)}${cp ? ' · 对方 ' + esc(cp) : ''}</div>
+        </div>
+        <span class="lg-tx-amt ${t.dir}">${t.dir === 'income' ? '+' : '-'}${_ledgerMoney(t.amount)}</span>
+      </div>`;
+    }).join('');
+    return `<div class="lg-tx-group">
+      <div class="lg-tx-day"><span>${esc(g.label)}</span><span class="lg-tx-daysum">支 ¥${_ledgerMoney(exp)}</span></div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+// 手动记一笔 — 底部 sheet
+function openLedgerAddSheet() {
+  if (!state.ledger) state.ledger = { transactions: [], rules: [], categories: [], tags: [], accounts: [], monthBudget: 0 };
+  const lg = state.ledger;
+  if (!Array.isArray(lg.transactions)) lg.transactions = [];
+  let dir = 'expense';
+  const now = new Date();
+  const pd = (n) => String(n).padStart(2, '0');
+  const todayStr = `${now.getFullYear()}-${pd(now.getMonth() + 1)}-${pd(now.getDate())}`;
+  _lgAddDraft = {};
+  const draw = () => {
+    const dcats = (lg.categories || []).filter(c => (c.kind || 'expense') === dir);
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 12px;">手动记一笔</div>
+        <div class="lg-add-dir">
+          <button class="lg-add-dir-btn ${dir === 'expense' ? 'on exp' : ''}" data-lg-dir="expense">支出</button>
+          <button class="lg-add-dir-btn ${dir === 'income' ? 'on inc' : ''}" data-lg-dir="income">收入</button>
+        </div>
+        <div class="form-row" style="margin-top:10px;"><label>金额</label>
+          <input type="number" id="lg-amt" step="0.01" min="0" placeholder="0.00" value="${esc(_lgAddDraft.amount || '')}"></div>
+        <div class="form-row" style="margin-top:8px;"><label>名称</label>
+          <input type="text" id="lg-title" placeholder="这笔是什么" value="${esc(_lgAddDraft.title || '')}"></div>
+        <div class="form-row" style="margin-top:8px;"><label>日期</label>
+          <input type="date" id="lg-date" value="${esc(_lgAddDraft.date || todayStr)}"></div>
+        <div class="form-row" style="margin-top:8px;"><label>分类</label>
+          <select id="lg-cat">
+            <option value="">未分类</option>
+            ${dcats.map(c => `<option value="${esc(c.id)}" ${_lgAddDraft.categoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+          </select></div>
+      </div>
+      <div class="sheet-actions">
+        <button data-action="cancel">取消</button>
+        <button class="primary" data-action="save">保存</button>
+      </div>
+    `, (body) => {
+      const sync = () => {
+        _lgAddDraft.amount = body.querySelector('#lg-amt').value;
+        _lgAddDraft.title = body.querySelector('#lg-title').value;
+        _lgAddDraft.date = body.querySelector('#lg-date').value;
+        _lgAddDraft.categoryId = body.querySelector('#lg-cat').value;
+      };
+      body.querySelectorAll('[data-lg-dir]').forEach(b => b.onclick = () => {
+        sync(); dir = b.dataset.lgDir; _lgAddDraft.categoryId = ''; draw();
+      });
+      body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+      body.querySelector('[data-action="save"]').onclick = () => {
+        sync();
+        const amt = parseFloat(_lgAddDraft.amount);
+        if (!Number.isFinite(amt) || amt <= 0) { showToast('填一个有效金额'); return; }
+        const parts = (_lgAddDraft.date || todayStr).split('-').map(Number);
+        const ts = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1, 12, 0, 0).getTime();
+        const title = (_lgAddDraft.title || '').trim() || (dir === 'income' ? '收入' : '支出');
+        const picked = !!_lgAddDraft.categoryId;
+        lg.transactions.push({
+          id: genId('lt'),
+          tradeNo: 'manual-' + genId('m'),
+          ts, amount: amt, dir, title, counterparty: '',
+          categoryId: _lgAddDraft.categoryId || null,
+          tagIds: [], manual: true,
+          ...(picked ? { manualCat: true } : {}),
+        });
+        _lgAddDraft = {};
+        pushState();
+        closeSheet();
+        renderAll();
+        showToast(dir === 'income' ? '已记一笔收入' : '已记一笔支出');
+      };
+    });
+  };
+  draw();
 }
 
 function renderCalSideDrawer() {
@@ -8646,7 +8914,7 @@ function bindGlobalEvents() {
       longPressed = false;
       clearTimer();
       timer = setTimeout(() => {
-        if (ui.tab === 'summary') return;   // 摘要 tab 的 FAB 只开输入面板,无长按动作
+        if (ui.tab === 'summary' || ui.tab === 'ledger') return;   // 这些 tab 的 FAB 无长按动作
         longPressed = true;
         try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
         if ((state.templates || []).some(t => t.kind === 'task' || t.kind === 'event')) {
@@ -8667,6 +8935,7 @@ function bindGlobalEvents() {
     fab.addEventListener('click', (e) => {
       if (longPressed) { e.preventDefault(); e.stopPropagation(); longPressed = false; return; }
       if (ui.tab === 'summary') openSummaryInputSheet();
+      else if (ui.tab === 'ledger') openLedgerAddSheet();
       else openCreateTaskSheet();
     });
   })();

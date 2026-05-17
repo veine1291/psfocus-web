@@ -3315,6 +3315,15 @@ html, body { overscroll-behavior-y: contain; }
   flex-shrink: 0;
 }
 .sum-input-card:focus-within { border-color: var(--accent); background: var(--bg-input, var(--bg-section)); }
+/* 摘要浮动输入面板:输入卡片融入抽屉,去掉框的边界感(参考 flomo) */
+.sum-input-sheet .sum-input-card,
+.sum-input-sheet .sum-input-card:focus-within {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+}
 .sum-input {
   width: 100%;
   resize: none;

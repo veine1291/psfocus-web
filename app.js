@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0110';
+const _PSFOCUS_BUILD = '20260518-0140';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1301,11 +1301,10 @@ function openSummaryInputSheet() {
           if (actions['summary-submit']) actions['summary-submit']();
         }
       });
-      setTimeout(() => {
-        ta.focus();
-        ta.style.height = 'auto';
-        ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
-      }, 60);
+      // 同步 focus(仍在 FAB 点击手势内)→ iOS 打开面板即自动弹键盘,不用再点一下框
+      ta.focus();
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
     }
     if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(body);
   });

@@ -4480,21 +4480,8 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 }
 
 /* ===== 账本 tab ===== */
-.lg-view { padding: 0 0 24px; }
-.lg-period {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; padding: 10px 12px;
-}
-.lg-period-switch { display: flex; gap: 2px; background: var(--bg-section); border-radius: var(--radius-pill); padding: 2px; }
-.lg-period-btn {
-  border: 0; background: transparent; cursor: pointer;
-  padding: 5px 13px; font-size: 13px; color: var(--text-dim);
-  border-radius: var(--radius-pill);
-}
-.lg-period-btn.on { background: var(--bg-panel); color: var(--accent); font-weight: 600; box-shadow: var(--shadow-sm); }
-.lg-period-nav { display: flex; align-items: center; gap: 2px; }
-.lg-nav-btn { border: 0; background: transparent; cursor: pointer; width: 28px; height: 28px; font-size: 18px; color: var(--text-dim); }
-.lg-period-label { font-size: 13px; color: var(--text); min-width: 92px; text-align: center; }
+/* 期间切换(月/季/年)与前后导航已移到顶栏 — 复用 .cal-nav-* / .cal-view-switch-* 样式 */
+.lg-view { padding: 8px 0 24px; }
 .lg-card {
   margin: 8px 12px;
   background: var(--bg-panel);

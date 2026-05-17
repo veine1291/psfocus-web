@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0630';
+const _PSFOCUS_BUILD = '20260518-0700';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -378,6 +378,7 @@ async function bindCloud() {
     setSync('error', '加载失败,本地暂用空数据 — 已锁定,不会覆盖云端');
     console.error('[bindCloud pull]', e);
   }
+  restoreWorksUiPrefs();
   applyAllAppearance();
   renderAll();
   startWatch();
@@ -1034,9 +1035,28 @@ function renderTopbar() {
       rightBtn.classList.toggle('active', !!summaryState.searchOpen);
     }
   } else if (ui.tab === 'ledger') {
-    $('topbar-title').textContent = '账本';
-    $('topbar-subtitle').textContent = '';
-    leftBtn.classList.add('hidden');
+    // 顶栏对齐日历:中间 = ‹ 期间日期(点击回本期)›,左上 = 月/季/年 切换 pill
+    const lgWord = _ledgerViewWord();
+    const titleEl = $('topbar-title');
+    titleEl.classList.add('cal-nav-row');
+    titleEl.innerHTML = `
+      <button class="cal-nav-btn" data-action="lg-prev" aria-label="上一${lgWord}"><span class="ico-chevron-left"></span></button>
+      <button class="cal-nav-today" data-action="lg-today">${esc(_ledgerViewLabel())}</button>
+      <button class="cal-nav-btn" data-action="lg-next" aria-label="下一${lgWord}"><span class="ico-chevron-right"></span></button>
+    `;
+    titleEl.querySelector('[data-action="lg-prev"]').onclick = (ev) => { ev.stopPropagation(); _ledgerNav(-1); };
+    titleEl.querySelector('[data-action="lg-next"]').onclick = (ev) => { ev.stopPropagation(); _ledgerNav(1); };
+    titleEl.querySelector('[data-action="lg-today"]').onclick = (ev) => {
+      ev.stopPropagation();
+      const d = new Date();
+      ledgerMState.monthTs = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+      renderAll();
+    };
+    $('topbar-subtitle').textContent = lgWord;
+    const lgViewLabel = ledgerMState.view === 'year' ? '年' : (ledgerMState.view === 'quarter' ? '季' : '月');
+    leftBtn.innerHTML = `<span class="cal-view-switch-pill"><span class="cal-view-switch-label">${esc(lgViewLabel)}</span><span class="ico-chevron-down"></span></span>`;
+    leftBtn.setAttribute('aria-label', '账本期间切换');
+    leftBtn.classList.remove('hidden');
     $('topbar-right-btn').classList.add('hidden');
   } else if (ui.tab === 'settings') {
     const subTitles = { appearance: '外观', system: '系统', templates: '模板', account: '账号', about: '关于' };
@@ -3297,9 +3317,27 @@ function closeCalSideDrawer() {
 // ============================================================
 let worksState = {
   filter: { kind: 'all' },   // all | category{id} | uncategorized | tag{path} | rating{stars} | untagged | time{year}
-  sort: 'time',              // 'time' | 'custom'
+  sort: 'time',              // 'time' | 'custom' | 'updated'
   view: 'list',              // 'list' | 'gallery'(相册模式)
 };
+// 从 state.settings 还原项目 tab 的视图/排序偏好 — 重开 / 重新登录后保留上次设置
+function restoreWorksUiPrefs() {
+  const s = (state && state.settings) || {};
+  if (s.worksViewMode === 'list' || s.worksViewMode === 'gallery') worksState.view = s.worksViewMode;
+  if (['custom', 'time', 'updated'].includes(s.worksSortMode)) worksState.sort = s.worksSortMode;
+}
+// 改项目 tab 视图/排序时:更新运行态 + 持久化进 state.settings + 推云端
+function setWorksUiPref(patch) {
+  Object.assign(worksState, patch);
+  if (state) {
+    if (!state.settings) state.settings = {};
+    if (patch.view !== undefined) state.settings.worksViewMode = patch.view;
+    if (patch.sort !== undefined) state.settings.worksSortMode = patch.sort;
+    pushState();
+  }
+  closePopover();
+  renderAll();
+}
 
 function worksProjects() {
   return (state.projects || []).filter(p => (p.kind || 'project') === 'project');
@@ -3793,17 +3831,6 @@ function renderLedgerTab(view) {
 
   view.innerHTML = `
     <div class="lg-view">
-      <div class="lg-period">
-        <div class="lg-period-switch">
-          ${[['month', '月'], ['quarter', '季'], ['year', '年']].map(([v, l]) =>
-            `<button class="lg-period-btn ${ledgerMState.view === v ? 'on' : ''}" data-lg-view="${v}">${l}</button>`).join('')}
-        </div>
-        <div class="lg-period-nav">
-          <button class="lg-nav-btn" data-lg-nav="-1">‹</button>
-          <span class="lg-period-label">${esc(_ledgerViewLabel())}</span>
-          <button class="lg-nav-btn" data-lg-nav="1">›</button>
-        </div>
-      </div>
       <div class="lg-card">
         <div class="lg-card-head"><span class="lg-card-title">${_ledgerViewWord()}支出</span>
           <span class="lg-card-num exp">¥${_ledgerMoney(expTotal)}</span></div>
@@ -3839,13 +3866,7 @@ function renderLedgerTab(view) {
       ${_ledgerTxListHtml(vtx)}
     </div>`;
 
-  view.querySelectorAll('[data-lg-view]').forEach(b => b.addEventListener('click', () => {
-    ledgerMState.view = b.dataset.lgView;
-    renderAll();
-  }));
-  view.querySelectorAll('[data-lg-nav]').forEach(b => b.addEventListener('click', () => {
-    _ledgerNav(parseInt(b.dataset.lgNav, 10));
-  }));
+  // 期间切换(月/季/年)与前后导航已移到顶栏 — 见 renderTopbar 的 ledger 分支
 }
 
 function _ledgerTxListHtml(txs) {
@@ -6043,17 +6064,17 @@ function openWorksSortMenu(anchor) {
   showPopover([
     { sectionTitle: '视图' },
     { label: '列表', icon: 'ico-list', stateText: worksState.view !== 'gallery' ? '当前' : '',
-      action: () => { worksState.view = 'list'; closePopover(); renderAll(); } },
+      action: () => setWorksUiPref({ view: 'list' }) },
     { label: '相册', icon: 'ico-grid', stateText: worksState.view === 'gallery' ? '当前' : '',
-      action: () => { worksState.view = 'gallery'; closePopover(); renderAll(); } },
+      action: () => setWorksUiPref({ view: 'gallery' }) },
     { divider: true },
     { sectionTitle: '排序' },
     { label: '按时间', icon: 'ico-history', stateText: worksState.sort === 'time' ? '当前' : '',
-      action: () => { worksState.sort = 'time'; closePopover(); renderAll(); } },
+      action: () => setWorksUiPref({ sort: 'time' }) },
     { label: '最近更新', icon: 'ico-clock', stateText: worksState.sort === 'updated' ? '当前' : '',
-      action: () => { worksState.sort = 'updated'; closePopover(); renderAll(); } },
+      action: () => setWorksUiPref({ sort: 'updated' }) },
     { label: '自定义顺序', icon: 'ico-template', stateText: worksState.sort === 'custom' ? '当前' : '',
-      action: () => { worksState.sort = 'custom'; closePopover(); renderAll(); } },
+      action: () => setWorksUiPref({ sort: 'custom' }) },
   ], { anchor });
 }
 
@@ -7890,6 +7911,15 @@ function openCalendarModeSwitcher() {
   ], { side: 'left' });
 }
 
+// 账本期间切换(月/季/年)— 顶栏左上 pill 点出,样式对齐日历视图切换
+function openLedgerViewSwitcher() {
+  showPopover([
+    { toggle: true, label: '月', icon: 'ico-calendar', stateText: ledgerMState.view==='month'?'已选':'',   action: () => { ledgerMState.view = 'month';   closePopover(); renderAll(); } },
+    { toggle: true, label: '季', icon: 'ico-calendar', stateText: ledgerMState.view==='quarter'?'已选':'', action: () => { ledgerMState.view = 'quarter'; closePopover(); renderAll(); } },
+    { toggle: true, label: '年', icon: 'ico-calendar', stateText: ledgerMState.view==='year'?'已选':'',    action: () => { ledgerMState.view = 'year';    closePopover(); renderAll(); } },
+  ], { side: 'left' });
+}
+
 function openCalendarMoreMenu() {
   const s = state.settings;
   const showDone   = s.calShowDone      !== false;
@@ -8907,6 +8937,7 @@ function openQuickTimePickerSheet(currentSched, onSave) {
 function bindGlobalEvents() {
   $('topbar-left-btn').addEventListener('click', () => {
     if (ui.tab === 'calendar') openCalendarModeSwitcher();
+    else if (ui.tab === 'ledger') openLedgerViewSwitcher();
     else if (ui.tab === 'settings' && ui.settingsPage) { ui.settingsPage = null; renderAll(); }
     else openDrawerNav();
   });

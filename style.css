@@ -3163,10 +3163,15 @@ html, body { overscroll-behavior-y: contain; }
   text-align: left;
   font-weight: 500;
 }
-.works-nav-row .ico-folder { width: 14px; height: 14px; flex-shrink: 0; }
 .works-nav-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .works-nav-count { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); }
 .works-nav-row.active .works-nav-count { color: var(--accent); }
+.works-nav-section {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  padding: 13px 14px 3px;
+}
 
 /* 摘要 drawer 内的 tag 列表 — 跟桌面 sidebar 同款 */
 .sum-nav-row {

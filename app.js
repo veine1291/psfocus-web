@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0010';
+const _PSFOCUS_BUILD = '20260518-0040';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -3273,6 +3273,7 @@ function filterWorksList(list) {
     return all.some(t => t === f.path || t.startsWith(f.path + '/'));
   });
   if (f.kind === 'rating') return list.filter(p => (p.rating || 0) === f.stars);
+  if (f.kind === 'time') return list.filter(p => p.completedAt && new Date(p.completedAt).getFullYear() === f.year);
   return list;
 }
 function sortWorksList(list) {
@@ -5484,33 +5485,85 @@ function _renderSummaryDrawerNav() {
   });
 }
 
-// 项目 tab 的左侧 drawer — 桌面端同款的分类列表(全部 / 各分类 / 未分类)
+// 项目 tab 的左侧 drawer — 桌面端同款:全部 + 分类 / 标签 / 评分 / 完成时间 分区
 function _renderWorksDrawerNav() {
   const body = $('drawer-nav-body');
   const all = worksProjects();
   const cats = (state.workCategories || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
   const f = worksState.filter || { kind: 'all' };
-  const allActive = ['all', 'tag', 'rating', 'untagged'].includes(f.kind);
   const row = (active, label, count, attrs) =>
     `<button class="sum-nav-row works-nav-row ${active ? 'active' : ''}" ${attrs}>
-       <span class="ico-folder"></span>
        <span class="works-nav-label">${esc(label)}</span>
        <span class="works-nav-count">${count}</span>
      </button>`;
-  let html = row(allActive, '全部项目', all.length, 'data-wf="all"');
-  for (const c of cats.filter(x => !x.parentId)) {
-    const ids = worksCategoryDescendants(c.id);
-    const n = all.filter(p => p.categoryId && ids.has(p.categoryId)).length;
-    html += row(f.kind === 'category' && f.id === c.id, c.name || '未命名', n, `data-wf="cat" data-wf-id="${esc(c.id)}"`);
-  }
+  const sectionHead = (label) => `<div class="works-nav-section">${esc(label)}</div>`;
+
+  let html = row(f.kind === 'all', '全部项目', all.length, 'data-wf="all"');
+
+  // 分类
+  const topCats = cats.filter(x => !x.parentId);
   const uncat = all.filter(p => !p.categoryId).length;
-  if (uncat) html += row(f.kind === 'uncategorized', '未分类', uncat, 'data-wf="uncat"');
+  if (topCats.length || uncat) {
+    html += sectionHead('分类');
+    for (const c of topCats) {
+      const ids = worksCategoryDescendants(c.id);
+      const n = all.filter(p => p.categoryId && ids.has(p.categoryId)).length;
+      html += row(f.kind === 'category' && f.id === c.id, c.name || '未命名', n, `data-wf="cat" data-wf-id="${esc(c.id)}"`);
+    }
+    if (uncat) html += row(f.kind === 'uncategorized', '未分类', uncat, 'data-wf="uncat"');
+  }
+
+  // 标签
+  const tagCount = new Map();
+  for (const p of all) {
+    for (const t of new Set([...(p.tags || []), ...(p.workTags || [])])) {
+      if (t) tagCount.set(t, (tagCount.get(t) || 0) + 1);
+    }
+  }
+  const tagNames = Array.from(tagCount.keys()).sort();
+  const untaggedN = all.filter(p => !(p.tags || []).length && !(p.workTags || []).length).length;
+  if (tagNames.length || untaggedN) {
+    html += sectionHead('标签');
+    for (const t of tagNames) {
+      html += row(f.kind === 'tag' && f.path === t, '#' + t, tagCount.get(t), `data-wf="tag" data-wf-path="${esc(t)}"`);
+    }
+    if (untaggedN) html += row(f.kind === 'untagged', '无标签', untaggedN, 'data-wf="untagged"');
+  }
+
+  // 评分
+  if (all.some(p => (p.rating || 0) > 0)) {
+    html += sectionHead('评分');
+    for (let s = 5; s >= 1; s--) {
+      const n = all.filter(p => (p.rating || 0) === s).length;
+      if (n) html += row(f.kind === 'rating' && f.stars === s, '★'.repeat(s), n, `data-wf="rating" data-wf-stars="${s}"`);
+    }
+  }
+
+  // 完成时间(按年)
+  const yearCount = new Map();
+  for (const p of all) {
+    if (!p.completedAt) continue;
+    const y = new Date(p.completedAt).getFullYear();
+    yearCount.set(y, (yearCount.get(y) || 0) + 1);
+  }
+  const years = Array.from(yearCount.keys()).sort((a, b) => b - a);
+  if (years.length) {
+    html += sectionHead('完成时间');
+    for (const y of years) {
+      html += row(f.kind === 'time' && f.year === y, y + ' 年', yearCount.get(y), `data-wf="time" data-wf-year="${y}"`);
+    }
+  }
+
   body.innerHTML = html;
   body.querySelectorAll('[data-wf]').forEach(b => b.addEventListener('click', () => {
     const k = b.dataset.wf;
-    if (k === 'cat')        worksState.filter = { kind: 'category', id: b.dataset.wfId };
-    else if (k === 'uncat') worksState.filter = { kind: 'uncategorized' };
-    else                    worksState.filter = { kind: 'all' };
+    if (k === 'cat')          worksState.filter = { kind: 'category', id: b.dataset.wfId };
+    else if (k === 'uncat')   worksState.filter = { kind: 'uncategorized' };
+    else if (k === 'tag')     worksState.filter = { kind: 'tag', path: b.dataset.wfPath };
+    else if (k === 'untagged')worksState.filter = { kind: 'untagged' };
+    else if (k === 'rating')  worksState.filter = { kind: 'rating', stars: parseInt(b.dataset.wfStars, 10) };
+    else if (k === 'time')    worksState.filter = { kind: 'time', year: parseInt(b.dataset.wfYear, 10) };
+    else                      worksState.filter = { kind: 'all' };
     closeDrawerNav();
     renderAll();
   }));

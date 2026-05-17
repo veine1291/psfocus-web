@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0450';
+const _PSFOCUS_BUILD = '20260518-0510';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -3300,10 +3300,18 @@ function filterWorksList(list) {
   if (f.kind === 'time') return list.filter(p => p.completedAt && new Date(p.completedAt).getFullYear() === f.year);
   return list;
 }
+// 项目「最近更新」时间 = max(updatedAt, createdAt, 最新时间轴节点 ts)
+function _worksUpdatedTs(p) {
+  let t = Math.max(p.updatedAt || 0, p.createdAt || 0);
+  if (Array.isArray(p.timeline)) {
+    for (const n of p.timeline) { if (n && n.ts > t) t = n.ts; }
+  }
+  return t;
+}
 function sortWorksList(list) {
   return list.slice().sort((a, b) => {
     if (worksState.sort === 'custom') return (a.order || 0) - (b.order || 0);
-    if (worksState.sort === 'updated') return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+    if (worksState.sort === 'updated') return _worksUpdatedTs(b) - _worksUpdatedTs(a);
     const ta = a.completedAt || a.dueEnd || a.dueStart || a.createdAt || 0;
     const tb = b.completedAt || b.dueEnd || b.dueStart || b.createdAt || 0;
     return tb - ta;

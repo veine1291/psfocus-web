@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0420';
+const _PSFOCUS_BUILD = '20260518-0450';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -4032,6 +4032,7 @@ function openTimelineNodeAddSheet(projId) {
       if (newNote) node.note = newNote;
       if (pendingImg) { node.image = pendingImg.name; node.cloudFileID = pendingImg.cloudFileID; }
       ensureProjectTimeline(p).push(node);
+      p.updatedAt = Date.now();   // 时间轴节点变动算作项目更新
       pushState();
       closeSheet();
       renderAll();
@@ -4137,6 +4138,7 @@ function openTimelineNodeEditSheet(projId, nodeId) {
         delete n.image;
         delete n.cloudFileID;
       }
+      p.updatedAt = Date.now();   // 时间轴节点变动算作项目更新
       pushState();
       closeSheet();
       renderAll();
@@ -4145,6 +4147,7 @@ function openTimelineNodeEditSheet(projId, nodeId) {
     body.querySelector('[data-action="del"]').onclick = () => {
       if (!confirm('删除这个节点?')) return;
       p.timeline = (p.timeline || []).filter(x => x.id !== nodeId);
+      p.updatedAt = Date.now();   // 时间轴节点变动算作项目更新
       pushState();
       closeSheet();
       renderAll();

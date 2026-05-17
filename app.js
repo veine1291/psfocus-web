@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260517-2330';
+const _PSFOCUS_BUILD = '20260518-0010';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -974,15 +974,38 @@ function renderTopbar() {
     const total = worksProjects().length;
     $('topbar-title').textContent = '项目';
     $('topbar-subtitle').textContent = total ? `${total} 个项目` : '';
-    $('topbar-left-btn').classList.add('hidden');
-    $('topbar-right-btn').classList.add('hidden');
-  } else if (ui.tab === 'summary') {
-    $('topbar-title').textContent = '摘要';
-    $('topbar-subtitle').textContent = '';
     leftBtn.innerHTML = `<span class="ico-list"></span>`;
-    leftBtn.setAttribute('aria-label', '标签');
+    leftBtn.setAttribute('aria-label', '分类');
     leftBtn.classList.remove('hidden');
-    $('topbar-right-btn').classList.add('hidden');
+    const rightBtn = $('topbar-right-btn');
+    rightBtn.innerHTML = `<span class="ico-history"></span>`;
+    rightBtn.setAttribute('aria-label', '排序');
+    rightBtn.classList.remove('hidden');
+  } else if (ui.tab === 'summary') {
+    const sumIsData = summaryState.tab === 'data';
+    const titleEl = $('topbar-title');
+    // 标题可点 → 切换 摘要 / 数据
+    titleEl.innerHTML = `<button class="topbar-title-switch" data-action="summary-toggle-mode">${sumIsData ? '数据' : '摘要'}<span class="ico-chevron-down topbar-title-chev"></span></button>`;
+    const tsw = titleEl.querySelector('[data-action="summary-toggle-mode"]');
+    if (tsw) tsw.onclick = (ev) => {
+      ev.stopPropagation();
+      summaryState.tab = sumIsData ? 'summary' : 'data';
+      renderAll();
+    };
+    $('topbar-subtitle').textContent = '';
+    if (sumIsData) {
+      leftBtn.classList.add('hidden');
+      $('topbar-right-btn').classList.add('hidden');
+    } else {
+      leftBtn.innerHTML = `<span class="ico-list"></span>`;
+      leftBtn.setAttribute('aria-label', '标签');
+      leftBtn.classList.remove('hidden');
+      const rightBtn = $('topbar-right-btn');
+      rightBtn.innerHTML = `<span class="ico-search"></span>`;
+      rightBtn.setAttribute('aria-label', '搜索');
+      rightBtn.classList.remove('hidden');
+      rightBtn.classList.toggle('active', !!summaryState.searchOpen);
+    }
   } else if (ui.tab === 'settings') {
     const subTitles = { appearance: '外观', system: '系统', templates: '模板', account: '账号', about: '关于' };
     if (ui.settingsPage && subTitles[ui.settingsPage]) {
@@ -1036,6 +1059,7 @@ let summaryState = {
   tab: 'summary',              // 'summary' | 'data'
   filter: 'all',               // 'all' | 'tag:<name>'
   searchQuery: '',
+  searchOpen: false,           // 顶栏搜索按钮控制的搜索框开关
   // 日期折叠状态 — 跨刷新保留(per-device UI 偏好,不走云端)
   collapsedDays: (() => {
     try { return new Set(JSON.parse(localStorage.getItem('psfocus_collapsedDays') || '[]')); }
@@ -1235,13 +1259,12 @@ function renderSummaryTab(view) {
   _summaryEnsureTodayHasTemplates();
   const isData = summaryState.tab === 'data';
   view.innerHTML = `<div class="sum-view">
-    <div class="sum-tabs-row">
-      <div class="sum-tabs">
-        <button class="sum-tab ${!isData?'active':''}" data-action="summary-set-tab" data-tab="summary">摘要</button>
-        <button class="sum-tab ${isData?'active':''}" data-action="summary-set-tab" data-tab="data">数据</button>
-      </div>
-      ${!isData ? `<input type="text" class="sum-search" placeholder="搜索…" value="${esc(summaryState.searchQuery)}" data-action-input="summary-search-input">` : ''}
-    </div>
+    ${(!isData && summaryState.searchOpen)
+      ? `<div class="sum-search-row">
+           <span class="ico-search sum-search-ico"></span>
+           <input type="text" class="sum-search" placeholder="搜索摘要…" value="${esc(summaryState.searchQuery)}" data-action-input="summary-search-input">
+         </div>`
+      : ''}
     ${isData
       ? `<div class="sum-data-empty">
           <div class="sum-data-empty-title">数据</div>
@@ -1253,6 +1276,10 @@ function renderSummaryTab(view) {
          </div>`
     }
   </div>`;
+  if (!isData && summaryState.searchOpen) {
+    const si = view.querySelector('.sum-search');
+    if (si) setTimeout(() => si.focus(), 60);
+  }
 
   // 输入框 paste 图片直接上传 + Ctrl/⌘+Enter 提交
   const ta = view.querySelector('.sum-input');
@@ -3315,47 +3342,12 @@ function worksCardHtml(p) {
 function renderWorksTab(view) {
   const all = worksProjects();
   const filtered = sortWorksList(filterWorksList(all));
-  const cats = (state.workCategories || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
-  const f = worksState.filter;
-  const chip = (active, label, attrs) =>
-    `<button class="works-fchip ${active ? 'active' : ''}" ${attrs}>${esc(label)}</button>`;
-  let chips = chip(f.kind === 'all', `全部 ${all.length}`, 'data-wf="all"');
-  for (const c of cats.filter(x => !x.parentId)) {
-    const ids = worksCategoryDescendants(c.id);
-    const n = all.filter(p => p.categoryId && ids.has(p.categoryId)).length;
-    chips += chip(f.kind === 'category' && f.id === c.id, `${c.name} ${n}`,
-      `data-wf="cat" data-wf-id="${esc(c.id)}"`);
-  }
-  const uncat = all.filter(p => !p.categoryId).length;
-  if (uncat) chips += chip(f.kind === 'uncategorized', `未分类 ${uncat}`, 'data-wf="uncat"');
-  // 标签 / 评分 临时筛选时也给个 chip(让用户能取消)
-  if (f.kind === 'tag')    chips += chip(true, `#${f.path}`, 'data-wf="all"');
-  if (f.kind === 'rating') chips += chip(true, `${'★'.repeat(f.stars)} ${f.stars}星`, 'data-wf="all"');
-  if (f.kind === 'untagged') chips += chip(true, '无标签', 'data-wf="all"');
-
-  const sortLabel = worksState.sort === 'time' ? '按时间' : '自定义';
   view.innerHTML = `
     <div class="works-wrap">
-      <div class="works-toolbar">
-        <div class="works-fchips">${chips}</div>
-        <button class="works-sort-btn" data-works-sort><span class="ico-history"></span>${esc(sortLabel)}</button>
-      </div>
       ${filtered.length
         ? `<div class="works-list">${filtered.map(worksCardHtml).join('')}</div>`
         : `<div class="empty" style="padding:32px 18px;">没有符合条件的项目</div>`}
     </div>`;
-  view.querySelectorAll('[data-wf]').forEach(b => b.addEventListener('click', () => {
-    const k = b.dataset.wf;
-    if (k === 'cat')        worksState.filter = { kind: 'category', id: b.dataset.wfId };
-    else if (k === 'uncat') worksState.filter = { kind: 'uncategorized' };
-    else                    worksState.filter = { kind: 'all' };
-    renderAll();
-  }));
-  const sb = view.querySelector('[data-works-sort]');
-  if (sb) sb.addEventListener('click', () => {
-    worksState.sort = worksState.sort === 'time' ? 'custom' : 'time';
-    renderAll();
-  });
   view.querySelectorAll('[data-works-card]').forEach(c => c.addEventListener('click', (ev) => {
     if (ev.target.closest('[data-works-tag]')) return;
     // 点缩略图 → 看项目大图;点右侧文字区 → 进项目详情
@@ -5492,6 +5484,48 @@ function _renderSummaryDrawerNav() {
   });
 }
 
+// 项目 tab 的左侧 drawer — 桌面端同款的分类列表(全部 / 各分类 / 未分类)
+function _renderWorksDrawerNav() {
+  const body = $('drawer-nav-body');
+  const all = worksProjects();
+  const cats = (state.workCategories || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+  const f = worksState.filter || { kind: 'all' };
+  const allActive = ['all', 'tag', 'rating', 'untagged'].includes(f.kind);
+  const row = (active, label, count, attrs) =>
+    `<button class="sum-nav-row works-nav-row ${active ? 'active' : ''}" ${attrs}>
+       <span class="ico-folder"></span>
+       <span class="works-nav-label">${esc(label)}</span>
+       <span class="works-nav-count">${count}</span>
+     </button>`;
+  let html = row(allActive, '全部项目', all.length, 'data-wf="all"');
+  for (const c of cats.filter(x => !x.parentId)) {
+    const ids = worksCategoryDescendants(c.id);
+    const n = all.filter(p => p.categoryId && ids.has(p.categoryId)).length;
+    html += row(f.kind === 'category' && f.id === c.id, c.name || '未命名', n, `data-wf="cat" data-wf-id="${esc(c.id)}"`);
+  }
+  const uncat = all.filter(p => !p.categoryId).length;
+  if (uncat) html += row(f.kind === 'uncategorized', '未分类', uncat, 'data-wf="uncat"');
+  body.innerHTML = html;
+  body.querySelectorAll('[data-wf]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.wf;
+    if (k === 'cat')        worksState.filter = { kind: 'category', id: b.dataset.wfId };
+    else if (k === 'uncat') worksState.filter = { kind: 'uncategorized' };
+    else                    worksState.filter = { kind: 'all' };
+    closeDrawerNav();
+    renderAll();
+  }));
+}
+
+// 项目 tab 排序菜单(顶栏右上角)
+function openWorksSortMenu(anchor) {
+  showPopover([
+    { label: '按时间', icon: 'ico-history', stateText: worksState.sort === 'time' ? '当前' : '',
+      action: () => { worksState.sort = 'time'; closePopover(); renderAll(); } },
+    { label: '自定义顺序', icon: 'ico-list', stateText: worksState.sort === 'custom' ? '当前' : '',
+      action: () => { worksState.sort = 'custom'; closePopover(); renderAll(); } },
+  ], { anchor });
+}
+
 function renderDrawerNav() {
   $('drawer-user-name').textContent = uid || '未登录';
   // 在 drawer header 区放一个 + 按钮 — 任务 tab 用于"新建清单/项目/文件夹",摘要 tab 隐藏
@@ -5519,8 +5553,9 @@ function renderDrawerNav() {
       createBtn.title = '新建清单 / 项目 / 文件夹';
     }
   }
-  // 根据当前 tab 决定渲染什么 — 摘要 tab 用 tag 侧栏,其它用任务清单导航
+  // 根据当前 tab 决定渲染什么 — 摘要 tab 用 tag 侧栏,项目 tab 用分类列表,其它用任务清单导航
   if (ui.tab === 'summary') { _renderSummaryDrawerNav(); return; }
+  if (ui.tab === 'works')   { _renderWorksDrawerNav();   return; }
   const body = $('drawer-nav-body');
   const smartLists = (state.smartLists || []);
   let html = '';
@@ -8347,6 +8382,12 @@ function bindGlobalEvents() {
   $('topbar-right-btn').addEventListener('click', () => {
     if (ui.tab === 'tasks') openListMoreMenu();
     else if (ui.tab === 'calendar') openCalendarMoreMenu();
+    else if (ui.tab === 'works') openWorksSortMenu($('topbar-right-btn'));
+    else if (ui.tab === 'summary') {
+      summaryState.searchOpen = !summaryState.searchOpen;
+      if (!summaryState.searchOpen) summaryState.searchQuery = '';
+      renderAll();
+    }
   });
   document.addEventListener('click', (e) => {
     const t = e.target;

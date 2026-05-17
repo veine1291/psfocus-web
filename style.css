@@ -3127,6 +3127,47 @@ html, body { overscroll-behavior-y: contain; }
 }
 .sum-search:focus { border-color: var(--accent); }
 
+/* 摘要顶栏搜索行(由右上角搜索按钮开关) */
+.sum-search-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+.sum-search-ico { width: 14px; height: 14px; flex-shrink: 0; color: var(--text-faint); }
+.sum-search-row .sum-search { margin-bottom: 0; height: 32px; }
+
+/* 顶栏标题可点切换(摘要 / 数据) */
+.topbar-title-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.topbar-title-chev { width: 13px; height: 13px; opacity: .55; }
+.topbar-btn.active { color: var(--accent); }
+
+/* 项目 tab 左侧 drawer 分类行 */
+.works-nav-row {
+  width: calc(100% - 12px);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
+}
+.works-nav-row .ico-folder { width: 14px; height: 14px; flex-shrink: 0; }
+.works-nav-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.works-nav-count { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); }
+.works-nav-row.active .works-nav-count { color: var(--accent); }
+
 /* 摘要 drawer 内的 tag 列表 — 跟桌面 sidebar 同款 */
 .sum-nav-row {
   display: flex;

@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260517-2230';
+const _PSFOCUS_BUILD = '20260517-2300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -8376,8 +8376,15 @@ function bindGlobalEvents() {
 
 // iOS / Android 软键盘弹起时把 sheet 上移,避免输入框被遮
 // visualViewport.height 在键盘弹起时会变小(键盘占用部分);用 window.innerHeight - vv.height 算键盘高度
-// ===== 任务页左边缘右拉 → 呼出 drawer-nav =====
+// 是否独立 PWA(加到主屏)运行 — 此时没有浏览器返回手势
+const _PSF_STANDALONE = window.navigator.standalone === true
+  || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
+// ===== 任务页左边缘右拉 → 呼出 drawer-nav(仅独立 PWA;浏览器内交给下面的历史守卫)=====
 (function bindEdgeSwipeDrawer() {
+  // 浏览器内 iOS Safari 的「边缘返回」拦不干净 — 改由 bindHistoryGuard 的 popstate 兜底。
+  // 这套拖拽手势只在独立 PWA(无浏览器返回)里用,避免和系统返回打架导致抽屉一闪就关。
+  if (!_PSF_STANDALONE) return;
   let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, locked = null;
   let panel = null, drawer = null, mask = null;
   const EDGE_SIZE = 24;
@@ -8448,6 +8455,34 @@ function bindGlobalEvents() {
     }
   });
   document.body.addEventListener('touchcancel', () => reset(false));
+})();
+
+// ===== 历史守卫:浏览器内吃掉「边缘返回」,改成关浮层 / 任务页呼出左侧栏 =====
+// iOS Safari 的边缘返回是系统手势,preventDefault 拦不住;改用 pushState 守卫:
+// 任何「返回」都先弹到守卫条目(不离开 app),由 popstate 接管处理。
+(function bindHistoryGuard() {
+  if (_PSF_STANDALONE) return;   // 独立 PWA 没有浏览器返回,不需要守卫
+  const _t0 = Date.now();
+  try { history.pushState({ _psfGuard: 1 }, ''); } catch (_) {}
+  window.addEventListener('popstate', () => {
+    // 立刻补一个守卫,保证下次返回还被接住,不会真的退出 app
+    try { history.pushState({ _psfGuard: 1 }, ''); } catch (_) {}
+    if (Date.now() - _t0 < 600) return;   // 忽略加载初期可能的 popstate
+    const shown = (id, cls) => {
+      const el = document.getElementById(id);
+      return el && (cls ? el.classList.contains(cls) : !el.classList.contains('hidden'));
+    };
+    // 返回 = 先收起最上层浮层
+    if (shown('img-lightbox') && typeof closeImageLightbox === 'function') { try { closeImageLightbox(); } catch (_) {} return; }
+    if (shown('sheet') && typeof closeSheet === 'function') { try { closeSheet(); } catch (_) {} return; }
+    if (shown('popover') && typeof closePopover === 'function') { try { closePopover(); } catch (_) {} return; }
+    if (shown('cal-side-drawer', 'open') && typeof closeCalSideDrawer === 'function') { try { closeCalSideDrawer(); } catch (_) {} return; }
+    if (shown('drawer-nav', 'open')) { try { closeDrawerNav(); } catch (_) {} return; }
+    // 没有浮层:任务页 → 呼出左侧清单栏
+    if (typeof ui !== 'undefined' && ui.tab === 'tasks' && typeof openDrawerNav === 'function') {
+      try { openDrawerNav(); } catch (_) {}
+    }
+  });
 })();
 
 // ===== 下拉刷新 — 在主 view 顶部下拉超过阈值触发 manualPullState =====

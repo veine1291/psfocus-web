@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0320';
+const _PSFOCUS_BUILD = '20260518-0350';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -3264,8 +3264,9 @@ function closeCalSideDrawer() {
 // ===== 项目(作品)tab — 移动端项目画廊,对齐桌面 works 模块
 // ============================================================
 let worksState = {
-  filter: { kind: 'all' },   // all | category{id} | uncategorized | tag{path} | rating{stars} | untagged
+  filter: { kind: 'all' },   // all | category{id} | uncategorized | tag{path} | rating{stars} | untagged | time{year}
   sort: 'time',              // 'time' | 'custom'
+  view: 'list',              // 'list' | 'gallery'(相册模式)
 };
 
 function worksProjects() {
@@ -3363,13 +3364,26 @@ function worksCardHtml(p) {
   </div>`;
 }
 
+// 相册模式的封面格子
+function worksGalleryCellHtml(p) {
+  const coverID = worksCoverCloudID(p);
+  const _ph = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const inner = coverID
+    ? `<img class="works-gallery-img" loading="lazy" data-cloud-file-id="${esc(coverID)}" alt="${esc(p.name || '')}" src="${_ph}">`
+    : `<div class="works-gallery-noimg" style="background:${esc(p.color || '#8b8f96')}">${esc((p.name || '?').slice(0, 1))}</div>`;
+  return `<div class="works-gallery-cell" data-works-cell="${esc(p.id)}" title="${esc(p.name || '')}">${inner}</div>`;
+}
+
 function renderWorksTab(view) {
   const all = worksProjects();
   const filtered = sortWorksList(filterWorksList(all));
+  const isGallery = worksState.view === 'gallery';
   view.innerHTML = `
     <div class="works-wrap">
       ${filtered.length
-        ? `<div class="works-list">${filtered.map(worksCardHtml).join('')}</div>`
+        ? (isGallery
+            ? `<div class="works-gallery">${filtered.map(worksGalleryCellHtml).join('')}</div>`
+            : `<div class="works-list">${filtered.map(worksCardHtml).join('')}</div>`)
         : `<div class="empty" style="padding:32px 18px;">没有符合条件的项目</div>`}
     </div>`;
   view.querySelectorAll('[data-works-card]').forEach(c => c.addEventListener('click', (ev) => {
@@ -3377,6 +3391,10 @@ function renderWorksTab(view) {
     // 点缩略图 → 看项目大图;点右侧文字区 → 进项目详情
     if (ev.target.closest('.works-card-thumb')) openWorksImages(c.dataset.worksCard);
     else openWorksDetailSheet(c.dataset.worksCard);
+  }));
+  // 相册格子 → 点开看大图
+  view.querySelectorAll('[data-works-cell]').forEach(c => c.addEventListener('click', () => {
+    openWorksImages(c.dataset.worksCell);
   }));
   view.querySelectorAll('[data-works-tag]').forEach(t => t.addEventListener('click', (ev) => {
     ev.stopPropagation();
@@ -5716,12 +5734,19 @@ function _renderWorksDrawerNav() {
   }));
 }
 
-// 项目 tab 排序菜单(顶栏右上角)
+// 项目 tab 视图 / 排序菜单(顶栏右上角)
 function openWorksSortMenu(anchor) {
   showPopover([
+    { sectionTitle: '视图' },
+    { label: '列表', icon: 'ico-list', stateText: worksState.view !== 'gallery' ? '当前' : '',
+      action: () => { worksState.view = 'list'; closePopover(); renderAll(); } },
+    { label: '相册', icon: 'ico-grid', stateText: worksState.view === 'gallery' ? '当前' : '',
+      action: () => { worksState.view = 'gallery'; closePopover(); renderAll(); } },
+    { divider: true },
+    { sectionTitle: '排序' },
     { label: '按时间', icon: 'ico-history', stateText: worksState.sort === 'time' ? '当前' : '',
       action: () => { worksState.sort = 'time'; closePopover(); renderAll(); } },
-    { label: '自定义顺序', icon: 'ico-list', stateText: worksState.sort === 'custom' ? '当前' : '',
+    { label: '自定义顺序', icon: 'ico-template', stateText: worksState.sort === 'custom' ? '当前' : '',
       action: () => { worksState.sort = 'custom'; closePopover(); renderAll(); } },
   ], { anchor });
 }

@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0730';
+const _PSFOCUS_BUILD = '20260518-0800';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -6301,11 +6301,7 @@ function renderDrawerNav() {
       html += `<div class="nav-section-title" style="text-transform:none;font-weight:500;">未分组</div>`;
       html += ungroupedProjects.map(p => projectRowHtml(p)).join('');
     }
-    const archived = state.projects.filter(p => p.archived && (p.kind || 'project') === 'project');
-    if (archived.length) {
-      html += `<div class="nav-section-title">已归档 (${archived.length})</div>`;
-      html += archived.map(p => projectRowHtml(p)).join('');
-    }
+    // 已归档项目不在任务视图列出 — 归档后就从清单导航里隐藏(项目 tab 仍可查看)
   }
   body.innerHTML = html;
   body.querySelectorAll('[data-folder-toggle]').forEach(el => el.addEventListener('click', (e) => {
@@ -6377,20 +6373,27 @@ function renderCalendarTab(view) {
 
 function tasksOnDay(dayMs) {
   const a = startOfDay(new Date(dayMs)).getTime();
-  const b = endOfDay(new Date(dayMs)).getTime();
-  return calFilterTasks(state.tasks.filter(t => taskHitDate(t, a, b)), a);
-}
-// 按 calShowDone / calShowAllRepeat 过滤(repeat 占位:重复任务暂未在移动端展开,只过滤 done)
-function calFilterTasks(arr, dayStart) {
-  const showDone = !state || !state.settings || state.settings.calShowDone !== false;
+  const b = a + 86400000;
+  const showDone   = !state || !state.settings || state.settings.calShowDone   !== false;
   const showRepeat = !state || !state.settings || state.settings.calShowAllRepeat !== false;
   const today0 = startOfDay(new Date()).getTime();
-  return arr.filter(t => {
-    if (!showDone && t.done) return false;
-    // 重复任务未来实例:移动端目前没有重复展开,占位只在 calShowAllRepeat=false 时把"未来日期"的重复任务挡掉
-    if (!showRepeat && t.repeat && dayStart != null && dayStart > today0) return false;
-    return true;
-  });
+  const out = [];
+  for (const t of (state.tasks || [])) {
+    if (t.archived) continue;
+    // 按 occurrence 展开(覆盖重复任务的后续重复天)
+    const occs = expandItemOccurrencesInDay(t, a, b);
+    let occ = occs[0] || null;
+    if (!occ && !t.start && t.dueAt != null && t.dueAt >= a && t.dueAt < b) {
+      occ = { start: t.dueAt, schedule: null };
+    }
+    if (!occ) continue;
+    const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
+    const occDone = occ.schedule ? isOccDone(t, occ.schedule, occ.start) : !!t.done;
+    if (!showDone && occDone) continue;
+    if (!showRepeat && isRepeat && a > today0) continue;
+    out.push(t);
+  }
+  return out;
 }
 
 function renderMonthView(view) {
@@ -6961,6 +6964,20 @@ function expandItemOccurrencesInDay(item, dayStart, dayEnd) {
     addOcc(sched.start);
   }
   return out;
+}
+// 全天任务是否落在某天 — 支持重复展开 / 多天 range / dueAt-only;命中返回 {done},否则 null
+// 修复:旧版用 taskHitDate 只看原始 start,重复的全天任务在后续重复天不显示
+function allDayTaskOnDay(t, dStart) {
+  if (!t || t.archived) return null;
+  const dEnd = dStart + 86400000;
+  const occs = expandItemOccurrencesInDay(t, dStart, dEnd);
+  for (const o of occs) {
+    if (o.allDay) return { done: isOccDone(t, o.schedule, o.start) };
+  }
+  if (!t.start && t.dueAt != null && t.dueAt >= dStart && t.dueAt < dEnd) {
+    return { done: !!t.done };
+  }
+  return null;
 }
 function _isRecurringTask(t) {
   return Array.isArray(t.schedules) && t.schedules.some(s => s && s.repeat && s.repeat !== 'none');
@@ -7836,10 +7853,11 @@ function renderDayView(view) {
   const allDayItems = [];
   for (const t of (state.tasks || [])) {
     if (t.archived) continue;
-    if (!showDone && t.done) continue;
-    if (!taskHitDate(t, dayStart, dayStart + 86400000 - 1)) continue;
     if (t.start && !t.allDay) continue;
-    allDayItems.push({ kind: 'task', id: t.id, title: t.title || '(无标题)', color: colorOfCalItem(t) || 'var(--accent)', done: t.done });
+    const r = allDayTaskOnDay(t, dayStart);
+    if (!r) continue;
+    if (!showDone && r.done) continue;
+    allDayItems.push({ kind: 'task', id: t.id, title: t.title || '(无标题)', color: colorOfCalItem(t) || 'var(--accent)', done: r.done });
   }
   for (const ev of (state.events || [])) {
     if (!ev.start) continue;
@@ -7901,13 +7919,13 @@ function renderWeekView(view) {
   const allDayPerDay = days.map(() => []);
   for (const t of (state.tasks || [])) {
     if (t.archived) continue;
-    if (!showDone && t.done) continue;
     if (t.start && !t.allDay) continue;
     for (let i = 0; i < 7; i++) {
       const dStart = startOfDay(days[i]).getTime();
-      if (taskHitDate(t, dStart, dStart + 86400000 - 1)) {
-        allDayPerDay[i].push({ kind: 'task', id: t.id, title: t.title || '(无标题)', color: colorOfCalItem(t) || 'var(--accent)', done: t.done });
-      }
+      const r = allDayTaskOnDay(t, dStart);
+      if (!r) continue;
+      if (!showDone && r.done) continue;
+      allDayPerDay[i].push({ kind: 'task', id: t.id, title: t.title || '(无标题)', color: colorOfCalItem(t) || 'var(--accent)', done: r.done });
     }
   }
   for (const ev of (state.events || [])) {
@@ -8792,7 +8810,8 @@ function openCreateTaskSheet(opts) {
       e.target.value = '';
       refreshImgs();
     });
-    setTimeout(() => titleEl.focus(), 80);
+    // 同步 focus(仍在 FAB / 拖拽点击手势内)→ iOS 打开抽屉即自动弹键盘,不用再点一下标题框
+    titleEl.focus();
 
     // 标题勾选框 — 点一下 = 创建为已完成
     const checkBtn = body.querySelector('#qe-check');

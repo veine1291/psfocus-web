@@ -4216,32 +4216,37 @@ html, body { overscroll-behavior-y: contain; }
 /* ===== 时间块编辑模式 ===== */
 .cal-block.editing {
   z-index: 5;
+  /* 允许把手柄旋钮探出块外 — 不再用白条盖住内容 */
+  overflow: visible;
   box-shadow: 0 4px 16px rgba(0,0,0,0.22), 0 0 0 2px var(--accent);
   outline: none;
 }
+/* 手柄:透明大热区,视觉只剩一颗居中圆头旋钮,跨在块上下边缘 */
 .cal-block-handle {
   position: absolute;
   left: 0; right: 0;
-  height: 18px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2;
-  background: rgba(255,255,255,0.85);
+  z-index: 6;
+  background: transparent;
   touch-action: none;
   cursor: ns-resize;
   -webkit-user-select: none;
   user-select: none;
 }
-.cal-block-handle.top    { top: 0; border-top-left-radius: inherit; border-top-right-radius: inherit; }
-.cal-block-handle.bottom { bottom: 0; border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
+.cal-block-handle.top    { top: -13px; }
+.cal-block-handle.bottom { bottom: -13px; }
 .cal-block-handle::after {
   content: '';
-  width: 28px; height: 3px;
-  border-radius: 2px;
+  width: 24px; height: 11px;
+  border-radius: 6px;
   background: var(--accent);
+  border: 2px solid var(--bg-page);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
 }
-[data-theme="dark"] .cal-block-handle { background: rgba(0,0,0,0.5); }
+.cal-block-handle:active::after { transform: scale(1.12); }
 
 /* 编辑期间锁住 sheet 滚动(防误滚)— cal 内部仍可由 autoScroll 主动滚 */
 body.cal-block-editing .sheet-body { touch-action: none; }

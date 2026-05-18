@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0830';
+const _PSFOCUS_BUILD = '20260518-0900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2826,59 +2826,84 @@ async function getCloudImageUrl(fileID) {
     return null;
   }
 }
-// 云图持久缓存(Cache Storage)— 按 fileID 存图片 blob,跨会话保留,重开秒出图
-const _IMG_CACHE_NAME = 'psfocus-cloud-img-v1';
-function _imgCacheKey(fid) { return 'https://psfocus-img-cache.local/' + encodeURIComponent(fid); }
-// 批量换 src:① 持久缓存命中 → 本地 blob 立刻出图(无网络) ② 未命中 → 批量解析临时 URL
-// 显示(保持 loading=lazy),图片加载完成后顺手把它存进持久缓存,下次重开就秒出。
+// 1×1 透明占位图 — 卸载离屏图时回填,释放解码内存
+const _IMG_PH = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+// 云图持久缓存(Cache Storage)— 按 fileID + 缩略尺寸 存图片 blob,跨会话保留
+const _IMG_CACHE_NAME = 'psfocus-cloud-img-v2';
+function _imgCacheKey(fid, thumb) {
+  return 'https://psfocus-img-cache.local/' + encodeURIComponent(fid) + (thumb ? '@' + thumb : '');
+}
+// 清掉旧版缓存(v1 存的是未缩略原图,白占磁盘)
+try { if (window.caches) caches.delete('psfocus-cloud-img-v1'); } catch (_) {}
+// COS 服务端缩略 — 项目图常 4000px+,原图一张解码就吃几十 MB,画廊几十张一起 decode
+// 直接撑爆内存掉线。改成服务端缩到合适尺寸再下发(只减像素 → 解码内存暴降)。
+// CloudBase 临时 URL 的 q-url-param-list 为空,签名不覆盖额外 query,可安全追加 imageMogr2。
+// ignore-error/1:COS 处理不了(非图片等)时回退原图,不报错。
+function _thumbifyUrl(url, thumb) {
+  if (!url || !thumb) return url;
+  if (/imageMogr2/.test(url)) return url;
+  return url + (url.includes('?') ? '&' : '?')
+    + 'imageMogr2/thumbnail/!' + thumb + 'x' + thumb + 'r/quality/80/ignore-error/1';
+}
+function _cloudImgFailDiv() {
+  return Object.assign(document.createElement('div'), {
+    className: 'proj-tl-img-placeholder',
+    innerHTML: '<span class="ico-eye"></span><span>附图加载失败</span>',
+  });
+}
+// 一张图要的缩略尺寸:data-cloud-thumb 显式指定;否则默认 900(够手机内联清晰显示,
+// 又远小于原图);data-cloud-thumb="0" = 不缩略(放大查看走 lightbox 单独取原图)。
+function _imgThumbSize(img) {
+  const v = img.dataset.cloudThumb;
+  if (v == null || v === '') return 900;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+// 批量换 src:① 持久缓存命中 → 本地 blob 立刻出图 ② 未命中 → 解析临时 URL + 服务端缩略
 async function _loadCloudImages(imgs) {
-  const byFid = new Map();   // fileID -> [img,...](同 fileID 复用)
+  // 按 fileID + 缩略尺寸分组(同组共用最终 URL)
+  const byKey = new Map();
   for (const img of imgs) {
     const fid = img.dataset.cloudFileId;
-    if (!fid) continue;
-    if (!byFid.has(fid)) byFid.set(fid, []);
-    byFid.get(fid).push(img);
+    if (!fid || img.dataset.cloudLoaded === '1') continue;
+    const thumb = _imgThumbSize(img);
+    const key = fid + '@' + thumb;
+    if (!byKey.has(key)) byKey.set(key, { fid, thumb, imgs: [] });
+    byKey.get(key).imgs.push(img);
   }
-  const fids = Array.from(byFid.keys());
-  if (!fids.length) return;
-  const setSrc = (fid, url) => { for (const im of (byFid.get(fid) || [])) im.src = url; };
+  if (!byKey.size) return;
 
   let cache = null;
   try { cache = window.caches ? await caches.open(_IMG_CACHE_NAME) : null; } catch (_) { cache = null; }
 
-  // ① 持久缓存命中 → 直接用本地 blob,零网络
-  // objectURL 在图片 load 完成后立即 revoke — 否则几百张图的 blob URL 句柄堆积,撑爆内存掉线
+  // ① 持久缓存命中 → 本地 blob;objectURL 在 load 后立即 revoke,防句柄堆积
   const need = [];
-  if (cache) {
-    await Promise.all(fids.map(async (fid) => {
+  await Promise.all(Array.from(byKey.values()).map(async (entry) => {
+    if (cache) {
       try {
-        const hit = await cache.match(_imgCacheKey(fid));
+        const hit = await cache.match(_imgCacheKey(entry.fid, entry.thumb));
         if (hit) {
           const blob = await hit.blob();
           if (blob && blob.size > 0) {
             const objUrl = URL.createObjectURL(blob);
-            const t0 = (byFid.get(fid) || [])[0];
+            const t0 = entry.imgs[0];
             if (t0) t0.addEventListener('load', () => { try { URL.revokeObjectURL(objUrl); } catch (_) {} }, { once: true });
-            setSrc(fid, objUrl);
+            for (const im of entry.imgs) { if (im.isConnected) { im.src = objUrl; im.dataset.cloudLoaded = '1'; } }
             return;
           }
         }
       } catch (_) {}
-      need.push(fid);
-    }));
-  } else {
-    need.push(...fids);
-  }
+    }
+    need.push(entry);
+  }));
   if (!need.length) return;
 
-  // ② 未命中 → 批量解析临时 URL(50 个一批)
+  // ② 解析临时 URL(按 fid 去重,50 个一批)
   const now = Date.now();
-  const toResolve = need.filter(fid => {
-    const c = _cloudImageCache.get(fid);
-    return !(c && c.expiry > now);
-  });
-  for (let i = 0; i < toResolve.length; i += 50) {
-    const chunk = toResolve.slice(i, i + 50);
+  const fidsToResolve = Array.from(new Set(need.map(e => e.fid)))
+    .filter(fid => { const c = _cloudImageCache.get(fid); return !(c && c.expiry > now); });
+  for (let i = 0; i < fidsToResolve.length; i += 50) {
+    const chunk = fidsToResolve.slice(i, i + 50);
     try {
       const res = await tcbApp.getTempFileURL({ fileList: chunk });
       for (const item of ((res && res.fileList) || [])) {
@@ -2889,64 +2914,79 @@ async function _loadCloudImages(imgs) {
     } catch (e) { console.warn('[cloud images batch]', e && e.message); }
   }
 
-  // ③ 用临时 URL 显示;图片 load 完成后 fetch 同 URL(基本走浏览器缓存)存进持久缓存
-  for (const fid of need) {
-    const c = _cloudImageCache.get(fid);
-    if (!c || !c.url) {
-      for (const im of (byFid.get(fid) || [])) {
-        if (im.isConnected) im.replaceWith(Object.assign(document.createElement('div'), {
-          className: 'proj-tl-img-placeholder',
-          innerHTML: '<span class="ico-eye"></span><span>附图加载失败</span>',
-        }));
+  // ③ 上图 — 缩略 URL 优先;失败自动回退原图;load 后存进持久缓存
+  for (const entry of need) {
+    const c = _cloudImageCache.get(entry.fid);
+    const imgs = entry.imgs.filter(im => im.isConnected);
+    if (!imgs.length) continue;
+    if (!c || !c.url) { for (const im of imgs) im.replaceWith(_cloudImgFailDiv()); continue; }
+    const thumbUrl = _thumbifyUrl(c.url, entry.thumb);
+    const t0 = imgs[0];
+    let triedFallback = false;
+    const onLoad = () => {
+      t0.removeEventListener('error', onError);
+      if (cache) {
+        const u = t0.currentSrc || t0.src;
+        if (u && /^https?:/.test(u)) {
+          fetch(u).then(r => { if (r && r.ok) cache.put(_imgCacheKey(entry.fid, entry.thumb), r); }).catch(() => {});
+        }
       }
-      continue;
-    }
-    setSrc(fid, c.url);
-    if (cache) {
-      const first = (byFid.get(fid) || [])[0];
-      if (first) first.addEventListener('load', () => {
-        fetch(c.url).then(r => { if (r && r.ok) cache.put(_imgCacheKey(fid), r); }).catch(() => {});
-      }, { once: true });
-    }
+    };
+    const onError = () => {
+      if (!triedFallback && thumbUrl !== c.url) {
+        triedFallback = true;   // 缩略 URL 失败 → 整组退回原图重试一次
+        for (const im of imgs) { if (im.isConnected) im.src = c.url; }
+        return;
+      }
+      t0.removeEventListener('load', onLoad);
+      for (const im of imgs) { if (im.isConnected) im.replaceWith(_cloudImgFailDiv()); }
+    };
+    t0.addEventListener('load', onLoad, { once: true });
+    t0.addEventListener('error', onError);
+    for (const im of imgs) { im.src = thumbUrl; im.dataset.cloudLoaded = '1'; }
   }
 }
-// 云图懒加载 — 用 IntersectionObserver 只加载视口附近的图。
-// 否则项目画廊几百张图一次性全部解析 URL + 读 blob + decode,内存瞬间爆掉,
-// 页面被系统杀掉 / sync 心跳超时 → 表现为「掉线」。
+// 云图懒加载 — IntersectionObserver 双向管控:
+//  · 进视口 → 加载  · 离视口 → 卸载(src 回填占位图,释放解码内存)
+// 只「加载」不「卸载」时,滚过几百张图后所有图仍占着解码内存,累计一样爆。
+// 卸载后内存始终只占当前视口附近的一屏,滚回来会自动重载(URL/blob 有缓存,秒出)。
 let _cloudImgObserver = null;
 const _cloudImgObserved = new Set();
 function _ensureCloudImgObserver() {
   if (_cloudImgObserver) return _cloudImgObserver;
   if (typeof IntersectionObserver === 'undefined') return null;
-  const pending = new Set();
+  const visible = new Set();
   let flushTimer = null;
   const flush = () => {
     flushTimer = null;
-    const vh = window.innerHeight || 800;
-    const batch = [];
-    for (const img of pending) {
-      if (!img || !img.isConnected) continue;
-      const r = img.getBoundingClientRect();
-      // 仍在视口附近(±500px)→ 加载;已被快速滚过 → 放回 observer 等下次,不白加载
-      if (r.bottom > -500 && r.top < vh + 500) {
-        batch.push(img);
-      } else {
-        try { _cloudImgObserver.observe(img); _cloudImgObserved.add(img); } catch (_) {}
-      }
+    const toLoad = [];
+    for (const img of Array.from(visible)) {
+      if (!img.isConnected) { visible.delete(img); continue; }
+      if (img.dataset.cloudLoaded === '1') continue;
+      toLoad.push(img);
     }
-    pending.clear();
-    if (batch.length) _loadCloudImages(batch);
+    if (toLoad.length) _loadCloudImages(toLoad);
   };
   _cloudImgObserver = new IntersectionObserver((entries) => {
+    let dirty = false;
     for (const e of entries) {
-      if (!e.isIntersecting) continue;
       const img = e.target;
-      try { _cloudImgObserver.unobserve(img); } catch (_) {}
-      _cloudImgObserved.delete(img);
-      pending.add(img);
+      if (e.isIntersecting) {
+        visible.add(img);
+        dirty = true;
+      } else {
+        visible.delete(img);
+        // 离开视口且已加载 → 卸载,释放解码内存(滚回来时 flush 会自动重载)
+        if (img.dataset.cloudLoaded === '1') {
+          const prev = img.src;
+          img.dataset.cloudLoaded = '';
+          try { img.src = _IMG_PH; } catch (_) {}
+          if (prev && prev.indexOf('blob:') === 0) { try { URL.revokeObjectURL(prev); } catch (_) {} }
+        }
+      }
     }
-    if (pending.size && !flushTimer) flushTimer = setTimeout(flush, 90);
-  }, { rootMargin: '300px 0px' });
+    if (dirty && !flushTimer) flushTimer = setTimeout(flush, 120);
+  }, { rootMargin: '250px 0px' });
   return _cloudImgObserver;
 }
 function bindCloudTimelineImages(root) {
@@ -3493,7 +3533,7 @@ function worksCardHtml(p) {
   const initial = esc((p.name || '?').slice(0, 1));
   const coverCloudID = worksCoverCloudID(p);
   const thumbHtml = coverCloudID
-    ? `<div class="works-card-thumb works-card-thumb-img"><img class="works-card-cover" loading="lazy" data-cloud-file-id="${esc(coverCloudID)}" alt="${esc(p.name || '')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="></div>`
+    ? `<div class="works-card-thumb works-card-thumb-img"><img class="works-card-cover" loading="lazy" data-cloud-file-id="${esc(coverCloudID)}" data-cloud-thumb="320" alt="${esc(p.name || '')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="></div>`
     : `<div class="works-card-thumb" style="background:${esc(color)}">${initial}</div>`;
   return `<div class="works-card" data-works-card="${esc(p.id)}">
     ${thumbHtml}
@@ -3514,7 +3554,7 @@ function worksGalleryCellHtml(p) {
   const coverID = worksCoverCloudID(p);
   const _ph = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
   const inner = coverID
-    ? `<img class="works-gallery-img" loading="lazy" data-cloud-file-id="${esc(coverID)}" alt="${esc(p.name || '')}" src="${_ph}">`
+    ? `<img class="works-gallery-img" loading="lazy" data-cloud-file-id="${esc(coverID)}" data-cloud-thumb="480" alt="${esc(p.name || '')}" src="${_ph}">`
     : `<div class="works-gallery-noimg" style="background:${esc(p.color || '#8b8f96')}">${esc((p.name || '?').slice(0, 1))}</div>`;
   return `<div class="works-gallery-cell" data-works-cell="${esc(p.id)}" title="${esc(p.name || '')}">${inner}</div>`;
 }

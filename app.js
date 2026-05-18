@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0800';
+const _PSFOCUS_BUILD = '20260518-0830';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -2847,6 +2847,7 @@ async function _loadCloudImages(imgs) {
   try { cache = window.caches ? await caches.open(_IMG_CACHE_NAME) : null; } catch (_) { cache = null; }
 
   // ① 持久缓存命中 → 直接用本地 blob,零网络
+  // objectURL 在图片 load 完成后立即 revoke — 否则几百张图的 blob URL 句柄堆积,撑爆内存掉线
   const need = [];
   if (cache) {
     await Promise.all(fids.map(async (fid) => {
@@ -2854,7 +2855,13 @@ async function _loadCloudImages(imgs) {
         const hit = await cache.match(_imgCacheKey(fid));
         if (hit) {
           const blob = await hit.blob();
-          if (blob && blob.size > 0) { setSrc(fid, URL.createObjectURL(blob)); return; }
+          if (blob && blob.size > 0) {
+            const objUrl = URL.createObjectURL(blob);
+            const t0 = (byFid.get(fid) || [])[0];
+            if (t0) t0.addEventListener('load', () => { try { URL.revokeObjectURL(objUrl); } catch (_) {} }, { once: true });
+            setSrc(fid, objUrl);
+            return;
+          }
         }
       } catch (_) {}
       need.push(fid);
@@ -2903,10 +2910,63 @@ async function _loadCloudImages(imgs) {
     }
   }
 }
+// 云图懒加载 — 用 IntersectionObserver 只加载视口附近的图。
+// 否则项目画廊几百张图一次性全部解析 URL + 读 blob + decode,内存瞬间爆掉,
+// 页面被系统杀掉 / sync 心跳超时 → 表现为「掉线」。
+let _cloudImgObserver = null;
+const _cloudImgObserved = new Set();
+function _ensureCloudImgObserver() {
+  if (_cloudImgObserver) return _cloudImgObserver;
+  if (typeof IntersectionObserver === 'undefined') return null;
+  const pending = new Set();
+  let flushTimer = null;
+  const flush = () => {
+    flushTimer = null;
+    const vh = window.innerHeight || 800;
+    const batch = [];
+    for (const img of pending) {
+      if (!img || !img.isConnected) continue;
+      const r = img.getBoundingClientRect();
+      // 仍在视口附近(±500px)→ 加载;已被快速滚过 → 放回 observer 等下次,不白加载
+      if (r.bottom > -500 && r.top < vh + 500) {
+        batch.push(img);
+      } else {
+        try { _cloudImgObserver.observe(img); _cloudImgObserved.add(img); } catch (_) {}
+      }
+    }
+    pending.clear();
+    if (batch.length) _loadCloudImages(batch);
+  };
+  _cloudImgObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const img = e.target;
+      try { _cloudImgObserver.unobserve(img); } catch (_) {}
+      _cloudImgObserved.delete(img);
+      pending.add(img);
+    }
+    if (pending.size && !flushTimer) flushTimer = setTimeout(flush, 90);
+  }, { rootMargin: '300px 0px' });
+  return _cloudImgObserver;
+}
 function bindCloudTimelineImages(root) {
-  // (1) 批量异步换 src
+  // (1) 云图:用 IntersectionObserver 懒加载,只加载视口附近的图
   const imgs = Array.from(root.querySelectorAll('img[data-cloud-file-id]'));
-  if (imgs.length) _loadCloudImages(imgs);
+  if (imgs.length) {
+    const obs = _ensureCloudImgObserver();
+    if (obs) {
+      // 清掉上次 render 留下、已脱离 DOM 的观察对象,防 observer 集合只增不减
+      for (const old of Array.from(_cloudImgObserved)) {
+        if (!old.isConnected) { try { obs.unobserve(old); } catch (_) {} _cloudImgObserved.delete(old); }
+      }
+      for (const img of imgs) {
+        if (_cloudImgObserved.has(img)) continue;
+        try { obs.observe(img); _cloudImgObserved.add(img); } catch (_) {}
+      }
+    } else {
+      _loadCloudImages(imgs);   // 不支持 IntersectionObserver → 回退到一次性加载
+    }
+  }
   // (2) 时间轴节点大图 click → lightbox(同一 .proj-tl-line 容器内为一组)
   root.querySelectorAll('.proj-tl-line').forEach(line => {
     const tlImgs = Array.from(line.querySelectorAll('.proj-tl-img'));

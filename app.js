@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260518-0900';
+const _PSFOCUS_BUILD = '20260519-0100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -388,6 +388,8 @@ async function bindCloud() {
     _stateNeedsBackfillPush = false;
     setTimeout(() => { try { pushState(); } catch (_) {} }, 1500);
   }
+  // 加载稳定后,后台慢慢把所有项目封面图预缓存到本地 — 之后进项目 tab 不再走网络
+  setTimeout(() => { try { prefetchWorksCovers(); } catch (_) {} }, 6000);
 }
 function stopWatch() { if (watcher) { try { watcher.close(); } catch(_) {} watcher = null; } }
 let _watchReconnectTimer = null;
@@ -952,6 +954,8 @@ function renderTopbar() {
   $('topbar-title').classList.remove('cal-nav-row');
   // 重置右上按钮的占位态(账本 tab 用它占位以保证标题居中)
   $('topbar-right-btn').classList.remove('topbar-btn-spacer');
+  // 第二个右上按钮默认隐藏 — 只有项目 tab 用(视图切换)
+  $('topbar-right-btn2').classList.add('hidden');
   if (ui.tab === 'tasks') {
     const cl = getCurrentList();
     const titleEl = $('topbar-title');
@@ -1001,12 +1005,17 @@ function renderTopbar() {
     $('topbar-title').textContent = '统计'; $('topbar-subtitle').textContent = '';
     $('topbar-left-btn').classList.add('hidden'); $('topbar-right-btn').classList.add('hidden');
   } else if (ui.tab === 'works') {
-    const total = worksProjects().length;
     $('topbar-title').textContent = '项目';
-    $('topbar-subtitle').textContent = total ? `${total} 个项目` : '';
+    $('topbar-subtitle').textContent = _worksTabSubtitle();
     leftBtn.innerHTML = `<span class="ico-list"></span>`;
     leftBtn.setAttribute('aria-label', '分类');
     leftBtn.classList.remove('hidden');
+    // 右上两个按钮:① 视图切换(点击直接在列表/相册间切,无菜单)② 排序(菜单)
+    const isGallery = worksState.view === 'gallery';
+    const viewBtn = $('topbar-right-btn2');
+    viewBtn.innerHTML = `<span class="${isGallery ? 'ico-grid' : 'ico-list'}"></span>`;
+    viewBtn.setAttribute('aria-label', isGallery ? '当前相册视图,点击切列表' : '当前列表视图,点击切相册');
+    viewBtn.classList.remove('hidden');
     const rightBtn = $('topbar-right-btn');
     rightBtn.innerHTML = `<span class="ico-history"></span>`;
     rightBtn.setAttribute('aria-label', '排序');
@@ -3512,6 +3521,77 @@ function worksCoverCloudID(p) {
     return tlImgs[0].cloudFileID;
   }
   return null;
+}
+
+// ── 项目封面图后台预缓存 ───────────────────────────────────────────
+// 一劳永逸方案:把所有项目封面缩略图「慢慢地」逐个抓下来存进 Cache Storage。
+// · 后台串行下载,每张间隔一下 → 不会一次性涌入大量请求把页面压垮/掉线
+// · 存进持久缓存后,以后每次进项目 tab 都直接本地出图,零网络请求
+// · 已缓存的自动跳过 → 只有第一次会真正下载,以后几乎瞬间完成
+let _prefetchState = { running: false, done: 0, total: 0 };
+function _worksTabSubtitle() {
+  const total = worksProjects().length;
+  if (_prefetchState.running) return `${total} 个项目 · 预缓存 ${_prefetchState.done}/${_prefetchState.total}`;
+  return total ? `${total} 个项目` : '';
+}
+function _refreshWorksSubtitle() {
+  if (ui.tab === 'works') { const el = $('topbar-subtitle'); if (el) el.textContent = _worksTabSubtitle(); }
+}
+async function prefetchWorksCovers() {
+  if (_prefetchState.running || !tcbApp || !uid) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  let cache = null;
+  try { cache = window.caches ? await caches.open(_IMG_CACHE_NAME) : null; } catch (_) {}
+  if (!cache) return;
+  // 收集所有项目封面 — 列表(320)+ 相册(480)两种尺寸都缓上,两个视图都能秒出
+  const SIZES = [480, 320];
+  const want = [];
+  const seen = new Set();
+  for (const p of worksProjects()) {
+    const fid = worksCoverCloudID(p);
+    if (!fid) continue;
+    for (const thumb of SIZES) {
+      const k = fid + '@' + thumb;
+      if (!seen.has(k)) { seen.add(k); want.push({ fid, thumb }); }
+    }
+  }
+  // 过滤掉已缓存的
+  const todo = [];
+  for (const t of want) {
+    try { if (!(await cache.match(_imgCacheKey(t.fid, t.thumb)))) todo.push(t); }
+    catch (_) { todo.push(t); }
+  }
+  if (!todo.length) return;   // 全缓存好了
+  _prefetchState = { running: true, done: 0, total: todo.length };
+  _refreshWorksSubtitle();
+  // 批量解析临时 URL(只是拿 URL 字符串,很轻)
+  const fids = Array.from(new Set(todo.map(t => t.fid)))
+    .filter(fid => { const c = _cloudImageCache.get(fid); return !(c && c.expiry > Date.now()); });
+  for (let i = 0; i < fids.length; i += 50) {
+    try {
+      const res = await tcbApp.getTempFileURL({ fileList: fids.slice(i, i + 50) });
+      for (const item of ((res && res.fileList) || [])) {
+        if (item && item.code === 'SUCCESS' && item.tempFileURL && item.fileID) {
+          _cloudImageCache.set(item.fileID, { url: item.tempFileURL, expiry: Date.now() + 110 * 60 * 1000 });
+        }
+      }
+    } catch (_) {}
+  }
+  // 逐个慢抓 — 每张之间歇 200ms,温和不压垮
+  for (const t of todo) {
+    const c = _cloudImageCache.get(t.fid);
+    if (c && c.url) {
+      try {
+        const r = await fetch(_thumbifyUrl(c.url, t.thumb));
+        if (r && r.ok) await cache.put(_imgCacheKey(t.fid, t.thumb), r);
+      } catch (_) {}
+    }
+    _prefetchState.done++;
+    _refreshWorksSubtitle();
+    await new Promise(res => setTimeout(res, 200));
+  }
+  _prefetchState.running = false;
+  _refreshWorksSubtitle();
 }
 
 function worksCardHtml(p) {
@@ -6253,15 +6333,9 @@ function _renderWorksDrawerNav() {
   }));
 }
 
-// 项目 tab 视图 / 排序菜单(顶栏右上角)
+// 项目 tab 排序菜单(顶栏右上角;视图切换已独立成左边那个按钮)
 function openWorksSortMenu(anchor) {
   showPopover([
-    { sectionTitle: '视图' },
-    { label: '列表', icon: 'ico-list', stateText: worksState.view !== 'gallery' ? '当前' : '',
-      action: () => setWorksUiPref({ view: 'list' }) },
-    { label: '相册', icon: 'ico-grid', stateText: worksState.view === 'gallery' ? '当前' : '',
-      action: () => setWorksUiPref({ view: 'gallery' }) },
-    { divider: true },
     { sectionTitle: '排序' },
     { label: '按时间', icon: 'ico-history', stateText: worksState.sort === 'time' ? '当前' : '',
       action: () => setWorksUiPref({ sort: 'time' }) },
@@ -9162,6 +9236,12 @@ function bindGlobalEvents() {
       summaryState.searchOpen = !summaryState.searchOpen;
       if (!summaryState.searchOpen) summaryState.searchQuery = '';
       renderAll();
+    }
+  });
+  // 第二个右上按钮 — 项目 tab:点击直接切换列表/相册视图(无菜单)
+  $('topbar-right-btn2').addEventListener('click', () => {
+    if (ui.tab === 'works') {
+      setWorksUiPref({ view: worksState.view === 'gallery' ? 'list' : 'gallery' });
     }
   });
   document.addEventListener('click', (e) => {

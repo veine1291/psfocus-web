@@ -237,6 +237,58 @@ function applyAllAppearance() {
     applyContrast(state.settings.contrastColor);
     applyBgPage(state.settings.bgPage);
   }
+  applySkin();
+}
+// 毛玻璃皮肤(跟桌面共用同一份 state.settings.uiSkin / glassBg)
+function applySkin() {
+  const s = (state && state.settings && state.settings.uiSkin) || 'flat';
+  document.body.classList.toggle('skin-glass', s === 'glass');
+  const body = document.body;
+  body.style.removeProperty('background');
+  body.style.removeProperty('background-color');
+  body.style.removeProperty('background-image');
+  body.style.removeProperty('background-size');
+  body.style.removeProperty('background-position');
+  body.style.removeProperty('background-repeat');
+  body.style.removeProperty('background-attachment');
+  if (s !== 'glass') return;
+  const g = (state.settings && state.settings.glassBg) || {};
+  if (g.type === 'solid' && g.solidColor) {
+    body.style.background = g.solidColor;
+  } else if (g.type === 'gradient' && g.gradient) {
+    const a = g.gradient.angle != null ? +g.gradient.angle : 135;
+    const from = g.gradient.from || '#e8eef5';
+    const to   = g.gradient.to   || '#d6dde7';
+    body.style.background = `linear-gradient(${a}deg, ${from}, ${to})`;
+  } else if (g.type === 'image' && g.imageDataUrl) {
+    body.style.background = `url("${g.imageDataUrl}") center/cover no-repeat fixed`;
+  }
+  const blur = (g.blur != null) ? +g.blur : 24;
+  document.documentElement.style.setProperty('--glass-blur-px', blur + 'px');
+}
+async function _downscaleImageToDataUrl(file, maxDim, quality) {
+  maxDim = maxDim || 1600; quality = quality || 0.85;
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = (e) => rej(e);
+      i.src = url;
+    });
+    let w = img.naturalWidth, h = img.naturalHeight;
+    if (w > maxDim || h > maxDim) {
+      const r = Math.min(maxDim / w, maxDim / h);
+      w = Math.round(w * r); h = Math.round(h * r);
+    }
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', quality);
+  } finally {
+    try { URL.revokeObjectURL(url); } catch (_) {}
+  }
 }
 // 系统配色变化时,如果是 auto 模式,跟随刷新
 try {
@@ -331,7 +383,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260520-0400';
+const _PSFOCUS_BUILD = '20260520-0500';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -8456,6 +8508,54 @@ function renderSettingsRoot(view) {
   });
 }
 
+function _renderMobileGlassBgSettings(s) {
+  const g = s.glassBg || {};
+  const type = g.type || 'gradient';
+  const typeSeg = ['solid','gradient','image'].map(t => {
+    const labelMap = { solid:'纯色', gradient:'渐变', image:'图片' };
+    return `<button class="${type===t?'on':''}" data-action="glass-bg-type" data-type="${t}">${labelMap[t]}</button>`;
+  }).join('');
+  let detail = '';
+  if (type === 'solid') {
+    const c = g.solidColor || '#eef1f5';
+    detail = `<label class="color-input-wrap"><input type="color" class="color-input" data-glass-field="solidColor" value="${esc(c)}"><span class="color-input-hex">${esc(c)}</span></label>`;
+  } else if (type === 'gradient') {
+    const f = (g.gradient && g.gradient.from) || '#e8eef5';
+    const tCol = (g.gradient && g.gradient.to)   || '#c9d4e3';
+    const a = (g.gradient && g.gradient.angle != null) ? +g.gradient.angle : 135;
+    detail = `
+      <label class="color-input-wrap"><span class="color-input-label">起</span><input type="color" class="color-input" data-glass-field="gradFrom" value="${esc(f)}"></label>
+      <label class="color-input-wrap"><span class="color-input-label">止</span><input type="color" class="color-input" data-glass-field="gradTo" value="${esc(tCol)}"></label>
+      <div class="settings-glass-angle">
+        <input type="range" min="0" max="360" step="5" value="${a}" data-glass-field="gradAngle">
+        <span class="settings-glass-angle-val">${a}°</span>
+      </div>`;
+  } else if (type === 'image') {
+    const has = !!g.imageDataUrl;
+    detail = `
+      <button class="settings-mini-btn" data-action="glass-image-pick">${has ? '换图' : '选图'}</button>
+      ${has ? `<button class="settings-mini-btn" data-action="glass-image-clear">清除</button>` : ''}
+      ${has ? `<img class="settings-glass-img-preview" src="${esc(g.imageDataUrl)}" alt="">` : '<div class="settings-hint">建议横版,会自动压到 1600px JPEG</div>'}
+    `;
+  }
+  const blur = (g.blur != null) ? +g.blur : 24;
+  return `
+    <div class="settings-row">
+      <div class="settings-row-label">背景类型</div>
+      <div class="settings-segment">${typeSeg}</div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-row-label">背景内容</div>
+      <div class="settings-glass-detail">${detail}</div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-row-label">玻璃模糊</div>
+      <div class="settings-glass-blur">
+        <input type="range" min="0" max="60" step="2" value="${blur}" data-glass-field="blur">
+        <span class="settings-glass-blur-val">${blur}px</span>
+      </div>
+    </div>`;
+}
 function renderSettingsAppearance(view) {
   const s = state.settings = state.settings || {};
   const themeMode  = s.theme || 'auto';
@@ -8519,6 +8619,17 @@ function renderSettingsAppearance(view) {
       ${bgPage ? `<button class="color-input-clear" data-action="clear-color" data-color-key="bgPage">恢复默认</button>` : ''}
     </div>
 
+    <div class="settings-sub-title">界面风格</div>
+    <div class="settings-hint">默认扁平 / 毛玻璃(半透明 + 模糊)</div>
+    <div class="settings-row">
+      <div class="settings-row-label">风格</div>
+      <div class="settings-segment">
+        <button class="${(s.uiSkin || 'flat')==='flat'?'on':''}" data-action="set-skin" data-skin="flat">默认</button>
+        <button class="${s.uiSkin==='glass'?'on':''}" data-action="set-skin" data-skin="glass">毛玻璃</button>
+      </div>
+    </div>
+    ${s.uiSkin === 'glass' ? _renderMobileGlassBgSettings(s) : ''}
+
     <div class="settings-sub-title">默认色板</div>
     <div class="settings-hint">编辑项目 / 事件颜色时从默认色板取色</div>
     <div class="palette-card-grid">
@@ -8565,6 +8676,80 @@ function renderSettingsAppearance(view) {
     s[key] = '';
     if (key === 'contrastColor') applyContrast('');
     if (key === 'bgPage')        applyBgPage('');
+    pushState();
+    renderSettingsAppearance(view);
+  });
+  // ===== 毛玻璃皮肤 =====
+  view.querySelectorAll('[data-action="set-skin"]').forEach(b => b.onclick = () => {
+    const v = b.dataset.skin;
+    if (v !== 'flat' && v !== 'glass') return;
+    s.uiSkin = v;
+    if (v === 'glass' && !s.glassBg) {
+      s.glassBg = { type: 'gradient', gradient: { from: '#e8eef5', to: '#c9d4e3', angle: 135 }, blur: 24 };
+    }
+    applySkin();
+    pushState();
+    renderSettingsAppearance(view);
+  });
+  view.querySelectorAll('[data-action="glass-bg-type"]').forEach(b => b.onclick = () => {
+    if (!s.glassBg) s.glassBg = {};
+    s.glassBg.type = b.dataset.type;
+    applySkin();
+    pushState();
+    renderSettingsAppearance(view);
+  });
+  view.querySelectorAll('[data-glass-field]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      if (!s.glassBg) s.glassBg = {};
+      const f = inp.dataset.glassField;
+      const v = inp.value;
+      if (f === 'solidColor') s.glassBg.solidColor = v;
+      else if (f === 'gradFrom' || f === 'gradTo' || f === 'gradAngle') {
+        if (!s.glassBg.gradient) s.glassBg.gradient = { from:'#e8eef5', to:'#c9d4e3', angle:135 };
+        if (f === 'gradFrom')  s.glassBg.gradient.from = v;
+        if (f === 'gradTo')    s.glassBg.gradient.to = v;
+        if (f === 'gradAngle') {
+          s.glassBg.gradient.angle = parseInt(v, 10) || 0;
+          const lbl = inp.parentElement && inp.parentElement.querySelector('.settings-glass-angle-val');
+          if (lbl) lbl.textContent = s.glassBg.gradient.angle + '°';
+        }
+      } else if (f === 'blur') {
+        s.glassBg.blur = parseInt(v, 10) || 0;
+        const lbl = inp.parentElement && inp.parentElement.querySelector('.settings-glass-blur-val');
+        if (lbl) lbl.textContent = s.glassBg.blur + 'px';
+      }
+      applySkin();
+      // hex 显示同步(纯色)
+      const hex = inp.parentElement && inp.parentElement.querySelector('.color-input-hex');
+      if (hex) hex.textContent = v;
+    });
+    inp.addEventListener('change', () => { pushState(); });
+  });
+  view.querySelectorAll('[data-action="glass-image-pick"]').forEach(b => b.onclick = async () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', async () => {
+      const f = inp.files && inp.files[0];
+      if (f) {
+        try {
+          const dataUrl = await _downscaleImageToDataUrl(f, 1600, 0.85);
+          if (!s.glassBg) s.glassBg = {};
+          s.glassBg.imageDataUrl = dataUrl;
+          s.glassBg.type = 'image';
+          applySkin();
+          pushState();
+          renderSettingsAppearance(view);
+        } catch (e) { showToast('图片处理失败:' + (e && e.message || e)); }
+      }
+      try { document.body.removeChild(inp); } catch (_) {}
+    });
+    inp.click();
+  });
+  view.querySelectorAll('[data-action="glass-image-clear"]').forEach(b => b.onclick = () => {
+    if (s.glassBg) delete s.glassBg.imageDataUrl;
+    applySkin();
     pushState();
     renderSettingsAppearance(view);
   });

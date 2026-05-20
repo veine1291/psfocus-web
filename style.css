@@ -4591,3 +4591,89 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 }
 .lg-add-dir-btn.on.exp { border-color: #d9694f; background: color-mix(in srgb,#d9694f 14%,transparent); color: #d9694f; }
 .lg-add-dir-btn.on.inc { border-color: #3f9d6c; background: color-mix(in srgb,#3f9d6c 14%,transparent); color: #3f9d6c; }
+
+/* =====================================================================
+   毛玻璃皮肤(.skin-glass)— 手机端;跟桌面同一份 state.settings 控制
+   ===================================================================== */
+.skin-glass {
+  --glass-tint:        rgba(255, 255, 255, 0.55);
+  --glass-tint-strong: rgba(255, 255, 255, 0.72);
+  --glass-tint-weak:   rgba(255, 255, 255, 0.32);
+  --glass-border:      rgba(255, 255, 255, 0.22);
+  --glass-shadow:      0 8px 32px rgba(0, 0, 0, 0.10);
+  --glass-blur-px:     24px;
+}
+[data-theme="dark"] .skin-glass,
+[data-theme="dark"].skin-glass {
+  --glass-tint:        rgba(20, 24, 32, 0.58);
+  --glass-tint-strong: rgba(20, 24, 32, 0.74);
+  --glass-tint-weak:   rgba(20, 24, 32, 0.34);
+  --glass-border:      rgba(255, 255, 255, 0.10);
+  --glass-shadow:      0 8px 32px rgba(0, 0, 0, 0.4);
+}
+/* —— 顶栏 —— */
+.skin-glass .topbar {
+  background: var(--glass-tint-strong);
+  backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  border-bottom-color: var(--glass-border);
+}
+/* —— 底部 tab 栏 —— */
+.skin-glass .tabbar {
+  background: var(--glass-tint-strong);
+  backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  border-top-color: var(--glass-border);
+}
+/* —— 同步状态条 —— */
+.skin-glass .sync-bar {
+  background: var(--glass-tint-weak);
+  backdrop-filter: blur(calc(var(--glass-blur-px, 24px) * 0.6)) saturate(140%);
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur-px, 24px) * 0.6)) saturate(140%);
+}
+/* —— 底部 sheet —— */
+.skin-glass .sheet-body {
+  background: var(--glass-tint-strong);
+  backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  border-top: 1px solid var(--glass-border);
+}
+/* —— 左/右抽屉 —— */
+.skin-glass .drawer-panel {
+  background: var(--glass-tint-strong);
+  backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  border-color: var(--glass-border);
+}
+/* —— popover —— */
+.skin-glass .popover-body {
+  background: var(--glass-tint-strong);
+  backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+/* —— Toast —— */
+.skin-glass .toast {
+  background: var(--glass-tint-strong);
+  backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  border: 1px solid var(--glass-border);
+}
+
+/* —— 设置 → 外观 玻璃专属控件 —— */
+.settings-glass-detail { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: 1 1 auto; min-width: 0; }
+.settings-glass-angle { display: inline-flex; align-items: center; gap: 6px; }
+.settings-glass-angle input[type="range"] { width: 110px; }
+.settings-glass-angle-val { font-size: 12px; color: var(--text-dim); min-width: 36px; text-align: right; }
+.settings-glass-blur { display: inline-flex; align-items: center; gap: 8px; flex: 1 1 auto; }
+.settings-glass-blur input[type="range"] { flex: 1 1 auto; min-width: 100px; }
+.settings-glass-blur-val { font-size: 12px; color: var(--text-dim); min-width: 44px; }
+.settings-glass-img-preview { max-height: 80px; max-width: 140px; border-radius: 6px; border: 1px solid var(--border-soft); object-fit: cover; }
+.color-input-label { font-size: 11px; color: var(--text-dim); margin-right: 4px; }
+.settings-mini-btn {
+  padding: 6px 12px;
+  background: var(--bg-section); border: 1px solid var(--border-soft);
+  border-radius: 6px; color: var(--text); font-size: 13px; cursor: pointer;
+}
+.settings-mini-btn:active { background: var(--bg-hover); }

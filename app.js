@@ -398,7 +398,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260521-0100';
+const _PSFOCUS_BUILD = '20260521-0200';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -464,7 +464,29 @@ function stopWatch() {
 }
 let _watchReconnectTimer = null;
 let _watchHeartbeatId = null;
-let _lastWatchAt = 0;   // 上次 watcher onChange 触发的时间;心跳用来检测「watcher 死了但没 onError」
+let _lastWatchAt = 0;          // 上次 watcher onChange 触发的时间
+let _lastStartWatchAt = 0;     // 上次 startWatch 实际跑的时间;用来节流防止 visibilitychange / online / heartbeat 同时撞
+let _lastPullAt = 0;           // 上次 pullStateOnce 完成的时间;节流防止短时间内多次大 payload 拉
+// 节流:visibilitychange / online 触发的 watcher 重启,5s 内只能跑一次,避免 iOS 唤醒后短时间内多次连续启停
+function startWatchThrottled(reason) {
+  const now = Date.now();
+  if (now - _lastStartWatchAt < 5000) {
+    console.log('[cloud] startWatch skip (', reason, ') — last start', now - _lastStartWatchAt, 'ms ago');
+    return;
+  }
+  _lastStartWatchAt = now;
+  try { startWatch(); } catch (_) {}
+}
+// 节流 pull:3s 内只允许一次,避免 visibilitychange + online + watcher restart 三路并发都各拉一遍
+function pullStateOnceThrottled(reason) {
+  const now = Date.now();
+  if (now - _lastPullAt < 3000) {
+    console.log('[cloud] pull skip (', reason, ') — last pull', now - _lastPullAt, 'ms ago');
+    return;
+  }
+  _lastPullAt = now;
+  pullStateOnce();
+}
 function _scheduleWatchReconnect(delay) {
   if (_watchReconnectTimer) return;
   _watchReconnectTimer = setTimeout(() => {
@@ -515,7 +537,8 @@ document.addEventListener('focusout', () => { setTimeout(_flushPendingRemoteM, 0
 
 function startWatch() {
   stopWatch();
-  _lastWatchAt = Date.now();   // 重置心跳基准
+  _lastWatchAt = Date.now();      // 重置心跳基准
+  _lastStartWatchAt = Date.now(); // 让节流闸感知到「刚启动过」
   try {
     watcher = db.collection(COLLECTION).doc(uid).watch({
       onChange: (snapshot) => {
@@ -551,8 +574,9 @@ function startWatch() {
         _scheduleWatchReconnect();
       },
     });
-    // 心跳:每 60s 检查 watcher 是否还活着。watcher 在某些环境(WS 被中间设备截断 / iOS Safari 后台休眠醒来)
+    // 心跳:每 120s 检查 watcher 是否还活着。watcher 在某些环境(WS 被中间设备截断 / iOS Safari 后台休眠醒来)
     // 不一定触发 onError,需要主动监测。超过 5 分钟没动静(且当前前台 + 网络在线)→ 重连。
+    // 节流走 startWatchThrottled,避免心跳跟 visibilitychange 抢着 stop+start。
     if (_watchHeartbeatId) clearInterval(_watchHeartbeatId);
     _watchHeartbeatId = setInterval(() => {
       if (!uid) return;
@@ -561,24 +585,24 @@ function startWatch() {
       const idle = Date.now() - _lastWatchAt;
       if (idle > 5 * 60000) {
         console.warn('[cloud] watcher silent for', Math.round(idle / 1000), 's — restart');
-        stopWatch();
-        _scheduleWatchReconnect(0);
+        startWatchThrottled('heartbeat');
       }
-    }, 60000);
+    }, 120000);
   } catch (e) {
     console.warn('[cloud startWatch fail]', e);
     _scheduleWatchReconnect();
   }
 }
-// 兜底:每 30 秒主动 pull 一次(只在前台),防 watcher silent 断线导致 Kayu 看不到桌面更新
+// 兜底:每 60 秒主动 pull 一次(只在前台),防 watcher silent 断线导致 Kayu 看不到桌面更新
+// 之前是 30s — watcher 活着的时候纯粹是浪费,频繁拉大 payload 在 iOS 上容易让 tab 被回收
 let _periodicPullId = null;
 function startPeriodicPull() {
   if (_periodicPullId) return;
   _periodicPullId = setInterval(() => {
     if (!uid || !state) return;
     if (document.visibilityState !== 'visible') return;
-    pullStateOnce();
-  }, 30000);
+    pullStateOnceThrottled('periodic');
+  }, 60000);
 }
 function pushState() {
   if (applyingRemote || !uid) return;
@@ -641,9 +665,12 @@ function flushPendingPush() {
   state._cloudUpdatedAt = Date.now();
   _performPush();
 }
+let _pullInflight = false;
 async function pullStateOnce() {
   // 本地有还没推上去的改动 → 别拉远端覆盖,先把本地 flush 上去
   if (pushTimer) { flushPendingPush(); return; }
+  if (_pullInflight) return;   // 同一时刻只允许一个 pull 在飞,防止并发拉两份大 payload 双倍解析内存
+  _pullInflight = true;
   try {
     const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'pull', docId: uid } });
     const r = res && res.result;
@@ -659,6 +686,7 @@ async function pullStateOnce() {
       _initialPullOk = true;
     }
   } catch (_) {}
+  finally { _pullInflight = false; }
 }
 // 手动下拉刷新 — 强制从云拉一次,用任务指纹比较判断有无变化
 // (不再依赖 _cloudUpdatedAt — 桌面 push 不一定更新这个字段;用户手动触发就是要拉)
@@ -9614,19 +9642,19 @@ function bindGlobalEvents() {
     }
   });
   // 切回前台:主动 pull + 重启 watcher(iOS Safari 后台一段时间会杀 WebSocket,光 pull 不够,实时同步不会恢复)
+  // 走节流版,避免 visibilitychange 短时间内多次触发(iOS 切换 / 键盘弹出都会触发)→ watcher 重启风暴 → 内存涨爆
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     if (!uid || !state) return;
-    // watcher 在后台时基本不可信,主动重启一次
-    try { startWatch(); } catch (_) {}
-    pullStateOnce();
+    startWatchThrottled('visibilitychange');
+    pullStateOnceThrottled('visibilitychange');
   });
   // 网络从断开恢复 → 重启 watcher + 拉一次状态。手机在地铁、电梯进出 / WiFi 切 4G 时常见
   window.addEventListener('online', () => {
     if (!uid || !state) return;
     console.log('[cloud] network online — restart watcher + pull');
-    try { startWatch(); } catch (_) {}
-    pullStateOnce();
+    startWatchThrottled('online');
+    pullStateOnceThrottled('online');
   });
   // 离线时把同步条标红,用户知道现在不是 app 出问题,是网络断了
   window.addEventListener('offline', () => {

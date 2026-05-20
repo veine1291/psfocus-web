@@ -312,22 +312,37 @@ function _loadCreds() {
 }
 function _clearCreds() { try { localStorage.removeItem(CREDS_KEY); } catch (_) {} }
 
-let _autoReloginTried = false;
+// 节流:同一时刻只能有一次 auto-relogin 在飞;失败后短退避内不再触发;成功后 reset。
+// 不再用永久 flag(老代码 bug:首次重登后再次掉线就不再重试,用户被甩到登录页要手动输密码)。
+let _autoReloginInFlight = false;
+let _autoReloginCooldownUntil = 0;
 function _scheduleAutoRelogin() {
-  if (_autoReloginTried) return;
-  _autoReloginTried = true;
+  if (_autoReloginInFlight) return;
+  if (Date.now() < _autoReloginCooldownUntil) return;
+  _autoReloginInFlight = true;
   setTimeout(async () => {
-    if (uid) return; // 期间已经登上了
+    if (uid) { _autoReloginInFlight = false; return; }   // 期间已经登上了
     const creds = _loadCreds();
-    if (!creds) return;
+    if (!creds) { _autoReloginInFlight = false; return; }
     const msg = $('auth-msg');
     if (msg) msg.textContent = '自动重新登录…';
     try {
       await auth.signIn({ username: creds.u, password: creds.p });
       // onLoginStateChanged 会接管(隐藏 auth-screen + bindCloud)
+      _autoReloginCooldownUntil = 0;   // 成功 → 不再退避
     } catch (e) {
-      _clearCreds();
-      if (msg) msg.textContent = '凭证失效,请重新登录';
+      // 凭证错(USER_PASSWORD_INVALID / USER_NOT_FOUND)→ 清掉,不再重试
+      const code = (e && (e.code || '')) + ''; const m = (e && (e.message || '')) + '';
+      if (/USER_PASSWORD_INVALID|USER_NOT_FOUND|password.*incorrect|wrong.*password|user.*not.*exist/i.test(code + m)) {
+        _clearCreds();
+        if (msg) msg.textContent = '凭证失效,请重新登录';
+      } else {
+        // 网络/服务暂时不可达 → 30s 后允许再试
+        _autoReloginCooldownUntil = Date.now() + 30000;
+        if (msg) msg.textContent = '自动登录失败,30 秒后再试';
+      }
+    } finally {
+      _autoReloginInFlight = false;
     }
   }, 1500);
 }
@@ -383,7 +398,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260520-0600';
+const _PSFOCUS_BUILD = '20260521-0100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -443,17 +458,23 @@ async function bindCloud() {
   // 加载稳定后,后台慢慢把所有项目封面图预缓存到本地 — 之后进项目 tab 不再走网络
   setTimeout(() => { try { prefetchWorksCovers(); } catch (_) {} }, 6000);
 }
-function stopWatch() { if (watcher) { try { watcher.close(); } catch(_) {} watcher = null; } }
+function stopWatch() {
+  if (watcher) { try { watcher.close(); } catch(_) {} watcher = null; }
+  if (_watchHeartbeatId) { clearInterval(_watchHeartbeatId); _watchHeartbeatId = null; }
+}
 let _watchReconnectTimer = null;
-function _scheduleWatchReconnect() {
+let _watchHeartbeatId = null;
+let _lastWatchAt = 0;   // 上次 watcher onChange 触发的时间;心跳用来检测「watcher 死了但没 onError」
+function _scheduleWatchReconnect(delay) {
   if (_watchReconnectTimer) return;
   _watchReconnectTimer = setTimeout(() => {
     _watchReconnectTimer = null;
-    if (uid && document.visibilityState === 'visible') {
-      console.log('[cloud] reconnecting watcher…');
-      startWatch();
-    }
-  }, 4000);
+    // 后台时不重连,但要清掉 watcher,visibilitychange 时再重启
+    if (!uid) return;
+    if (document.visibilityState !== 'visible') return;
+    console.log('[cloud] reconnecting watcher…');
+    startWatch();
+  }, delay != null ? delay : 2500);
 }
 // ── 输入法保护:正在打字/拼音组合中时,延后应用远端快照 ──────────────
 // 根因:云端 watcher / 定时 pull 收到远端 state 后会 renderAll(),
@@ -494,9 +515,11 @@ document.addEventListener('focusout', () => { setTimeout(_flushPendingRemoteM, 0
 
 function startWatch() {
   stopWatch();
+  _lastWatchAt = Date.now();   // 重置心跳基准
   try {
     watcher = db.collection(COLLECTION).doc(uid).watch({
       onChange: (snapshot) => {
+        _lastWatchAt = Date.now();   // 收到任何变更都算心跳
         const docs = snapshot && snapshot.docs ? snapshot.docs : [];
         if (!docs.length) return;
         const data = docs[0];
@@ -528,6 +551,20 @@ function startWatch() {
         _scheduleWatchReconnect();
       },
     });
+    // 心跳:每 60s 检查 watcher 是否还活着。watcher 在某些环境(WS 被中间设备截断 / iOS Safari 后台休眠醒来)
+    // 不一定触发 onError,需要主动监测。超过 5 分钟没动静(且当前前台 + 网络在线)→ 重连。
+    if (_watchHeartbeatId) clearInterval(_watchHeartbeatId);
+    _watchHeartbeatId = setInterval(() => {
+      if (!uid) return;
+      if (document.visibilityState !== 'visible') return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const idle = Date.now() - _lastWatchAt;
+      if (idle > 5 * 60000) {
+        console.warn('[cloud] watcher silent for', Math.round(idle / 1000), 's — restart');
+        stopWatch();
+        _scheduleWatchReconnect(0);
+      }
+    }, 60000);
   } catch (e) {
     console.warn('[cloud startWatch fail]', e);
     _scheduleWatchReconnect();
@@ -8945,7 +8982,8 @@ function renderSettingsAccount(view) {
   view.querySelector('[data-action="logout"]').onclick = async () => {
     if (!confirm('确定退出登录?')) return;
     _clearCreds();          // 主动登出 → 清凭证,避免下次启动自动登回去
-    _autoReloginTried = true; // 阻止 onLoginStateChanged 触发自动重登
+    // 加长冷却到 1 小时,期间不允许自动重登(用户明确想退出)
+    _autoReloginCooldownUntil = Date.now() + 3600 * 1000;
     try { await auth.signOut(); } catch (_) {}
   };
 }
@@ -9575,9 +9613,24 @@ function bindGlobalEvents() {
       saveUI(); renderAll();
     }
   });
-  // 切回前台主动 pull
+  // 切回前台:主动 pull + 重启 watcher(iOS Safari 后台一段时间会杀 WebSocket,光 pull 不够,实时同步不会恢复)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && uid && state) pullStateOnce();
+    if (document.visibilityState !== 'visible') return;
+    if (!uid || !state) return;
+    // watcher 在后台时基本不可信,主动重启一次
+    try { startWatch(); } catch (_) {}
+    pullStateOnce();
+  });
+  // 网络从断开恢复 → 重启 watcher + 拉一次状态。手机在地铁、电梯进出 / WiFi 切 4G 时常见
+  window.addEventListener('online', () => {
+    if (!uid || !state) return;
+    console.log('[cloud] network online — restart watcher + pull');
+    try { startWatch(); } catch (_) {}
+    pullStateOnce();
+  });
+  // 离线时把同步条标红,用户知道现在不是 app 出问题,是网络断了
+  window.addEventListener('offline', () => {
+    setSync('error', '网络断开,等待恢复…');
   });
 }
 

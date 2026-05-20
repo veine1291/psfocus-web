@@ -2814,7 +2814,9 @@ html, body { overscroll-behavior-y: contain; }
   border: 1.5px solid rgba(255, 255, 255, 0.7);
   color: #fff;
   font-size: 26px; line-height: 1;
-  z-index: 3;
+  /* 缩放后图片可能在合成层上盖住按钮 — 拉到顶层,并显式形成自己的层 */
+  z-index: 20;
+  isolation: isolate;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
@@ -2858,6 +2860,8 @@ html, body { overscroll-behavior-y: contain; }
   display: flex;
   gap: 12px;
   align-items: baseline;
+  z-index: 20;
+  position: relative;
 }
 .img-lb-counter { font-size: 13px; font-weight: 500; flex: 0 0 auto; }
 .img-lb-title {

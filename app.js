@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260520-0100';
+const _PSFOCUS_BUILD = '20260520-0200';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -3449,7 +3449,7 @@ let worksState = {
 function restoreWorksUiPrefs() {
   const s = (state && state.settings) || {};
   if (s.worksViewMode === 'list' || s.worksViewMode === 'gallery') worksState.view = s.worksViewMode;
-  if (['custom', 'time', 'updated'].includes(s.worksSortMode)) worksState.sort = s.worksSortMode;
+  if (['custom', 'time', 'updated', 'time-grouped'].includes(s.worksSortMode)) worksState.sort = s.worksSortMode;
 }
 // 改项目 tab 视图/排序时:更新运行态 + 持久化进 state.settings + 推云端
 function setWorksUiPref(patch) {
@@ -3653,14 +3653,41 @@ function renderWorksTab(view) {
   const all = worksProjects();
   const filtered = sortWorksList(filterWorksList(all));
   const isGallery = worksState.view === 'gallery';
-  view.innerHTML = `
-    <div class="works-wrap">
-      ${filtered.length
-        ? (isGallery
-            ? `<div class="works-gallery">${filtered.map(worksGalleryCellHtml).join('')}</div>`
-            : `<div class="works-list">${filtered.map(worksCardHtml).join('')}</div>`)
-        : `<div class="empty" style="padding:32px 18px;">没有符合条件的项目</div>`}
-    </div>`;
+  const grouped = worksState.sort === 'time-grouped';
+  const _monthKey = (p) => {
+    const ts = p.completedAt || p.dueEnd || p.dueStart || p.createdAt || 0;
+    if (!ts) return '__none__';
+    const d = new Date(ts);
+    return d.getFullYear() + '-' + (d.getMonth() + 1);
+  };
+  const _monthLabel = (p) => {
+    const ts = p.completedAt || p.dueEnd || p.dueStart || p.createdAt || 0;
+    if (!ts) return '无日期';
+    const d = new Date(ts);
+    return d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月';
+  };
+  const groupedHtml = (renderItem, dividerExtra) => {
+    let html = ''; let cur = null;
+    for (const p of filtered) {
+      const k = _monthKey(p);
+      if (k !== cur) {
+        cur = k;
+        html += `<div class="works-month-divider ${dividerExtra || ''}"><span>${esc(_monthLabel(p))}</span></div>`;
+      }
+      html += renderItem(p);
+    }
+    return html;
+  };
+  const body = !filtered.length
+    ? `<div class="empty" style="padding:32px 18px;">没有符合条件的项目</div>`
+    : grouped
+      ? (isGallery
+          ? `<div class="works-gallery">${groupedHtml(worksGalleryCellHtml, 'works-month-divider-gallery')}</div>`
+          : `<div class="works-list">${groupedHtml(worksCardHtml)}</div>`)
+      : (isGallery
+          ? `<div class="works-gallery">${filtered.map(worksGalleryCellHtml).join('')}</div>`
+          : `<div class="works-list">${filtered.map(worksCardHtml).join('')}</div>`);
+  view.innerHTML = `<div class="works-wrap">${body}</div>`;
   view.querySelectorAll('[data-works-card]').forEach(c => c.addEventListener('click', (ev) => {
     if (ev.target.closest('[data-works-tag]')) return;
     // 点缩略图 → 看项目大图;点右侧文字区 → 进项目详情
@@ -4510,7 +4537,8 @@ function projectTimelineBodyHtml(pid) {
   const p = state.projects.find(x => x.id === pid);
   if (!p) return '';
   const tl = ensureProjectTimeline(p);
-  const nodes = [...tl].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  // 倒序:最新进度在最前;起点(最旧)沉到底部
+  const nodes = [...tl].sort((a, b) => (b.ts || 0) - (a.ts || 0));
   const fmtTs = (ms) => {
     const d = new Date(ms);
     const pad = (n) => String(n).padStart(2, '0');
@@ -4543,13 +4571,14 @@ function projectTimelineBodyHtml(pid) {
       </div>
     </div>`;
   };
+  // 加节点按钮放在列表上方 —— 倒序后顶部即「最新」,新增的节点也会出现在那里,贴近按钮
   const addBtn = `<button class="proj-tl-add-btn" data-tl-add-proj="${esc(p.id)}">
     <span class="ico-plus"></span><span>加节点</span>
   </button>`;
   if (!nodes.length) {
-    return `<div class="empty" style="padding:14px;">还没有节点</div>${addBtn}`;
+    return `${addBtn}<div class="empty" style="padding:14px;">还没有节点</div>`;
   }
-  return `<div class="proj-tl-line">${nodes.map(renderNode).join('')}</div>${addBtn}`;
+  return `${addBtn}<div class="proj-tl-line">${nodes.map(renderNode).join('')}</div>`;
 }
 
 // 时间轴新建 manual 节点 sheet — 跟 edit 共用一套表单
@@ -6322,20 +6351,7 @@ function _renderWorksDrawerNav() {
     }
   }
 
-  // 完成时间(按年)
-  const yearCount = new Map();
-  for (const p of all) {
-    if (!p.completedAt) continue;
-    const y = new Date(p.completedAt).getFullYear();
-    yearCount.set(y, (yearCount.get(y) || 0) + 1);
-  }
-  const years = Array.from(yearCount.keys()).sort((a, b) => b - a);
-  if (years.length) {
-    html += sectionHead('完成时间');
-    for (const y of years) {
-      html += row(f.kind === 'time' && f.year === y, y + ' 年', yearCount.get(y), `data-wf="time" data-wf-year="${y}"`);
-    }
-  }
+  // 完成时间分类已去除 — 改用右上「排序」里的「按时间分组」(按月分隔线呈现)
 
   body.innerHTML = html;
   body.querySelectorAll('[data-wf]').forEach(b => b.addEventListener('click', () => {
@@ -6362,6 +6378,8 @@ function openWorksSortMenu(anchor) {
       action: () => setWorksUiPref({ sort: 'updated' }) },
     { label: '自定义顺序', icon: 'ico-template', stateText: worksState.sort === 'custom' ? '当前' : '',
       action: () => setWorksUiPref({ sort: 'custom' }) },
+    { label: '按时间分组(按月分隔)', icon: 'ico-calendar', stateText: worksState.sort === 'time-grouped' ? '当前' : '',
+      action: () => setWorksUiPref({ sort: 'time-grouped' }) },
   ], { anchor });
 }
 

@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260520-0300';
+const _PSFOCUS_BUILD = '20260520-0400';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -6325,19 +6325,69 @@ function _renderWorksDrawerNav() {
     if (uncat) html += row(f.kind === 'uncategorized', '未分类', uncat, 'data-wf="uncat"');
   }
 
-  // 标签
-  const tagCount = new Map();
+  // 标签 — 按层级展示(跟桌面 sidebar 一致):/ 分级缩进 + 父级可折叠子级
+  const tagSet = new Set();
   for (const p of all) {
-    for (const t of new Set([...(p.tags || []), ...(p.workTags || [])])) {
-      if (t) tagCount.set(t, (tagCount.get(t) || 0) + 1);
-    }
+    for (const t of new Set([...(p.tags || []), ...(p.workTags || [])])) if (t) tagSet.add(t);
   }
-  const tagNames = Array.from(tagCount.keys()).sort();
+  // workTagPool 里登记但还没挂作品的标签也纳入(跟桌面一致)
+  for (const e of (state.workTagPool || [])) if (e && e.name) tagSet.add(e.name);
+  // 展开所有中间分组节点 — "a/b/c" 也算上 "a"、"a/b"
+  const allTagPaths = new Set();
+  for (const t of tagSet) {
+    const parts = t.split('/');
+    for (let i = 1; i <= parts.length; i++) allTagPaths.add(parts.slice(0, i).join('/'));
+  }
+  // 层级排序:子标签紧跟父级
+  const sortedTagPaths = Array.from(allTagPaths).sort((a, b) => {
+    const ap = a.split('/'), bp = b.split('/');
+    const n = Math.min(ap.length, bp.length);
+    for (let i = 0; i < n; i++) {
+      if (ap[i] !== bp[i]) return ap[i].localeCompare(bp[i], 'zh-Hans-CN');
+    }
+    return ap.length - bp.length;
+  });
+  const tagAggCount = (path) => {
+    let n = 0;
+    for (const p of all) {
+      const ts = new Set([...(p.tags || []), ...(p.workTags || [])]);
+      for (const t of ts) {
+        if (t === path || t.startsWith(path + '/')) { n++; break; }
+      }
+    }
+    return n;
+  };
+  const tagHasChildren = (path) => sortedTagPaths.some(p => p.startsWith(path + '/'));
+  const collapsedTags = worksState.drawerCollapsedTags || (worksState.drawerCollapsedTags = new Set());
+  const isVisibleTagPath = (path) => {
+    const parts = path.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      if (collapsedTags.has(parts.slice(0, i).join('/'))) return false;
+    }
+    return true;
+  };
   const untaggedN = all.filter(p => !(p.tags || []).length && !(p.workTags || []).length).length;
-  if (tagNames.length || untaggedN) {
+  if (sortedTagPaths.length || untaggedN) {
     html += sectionHead('标签');
-    for (const t of tagNames) {
-      html += row(f.kind === 'tag' && f.path === t, '#' + t, tagCount.get(t), `data-wf="tag" data-wf-path="${esc(t)}"`);
+    for (const path of sortedTagPaths) {
+      if (!isVisibleTagPath(path)) continue;
+      const parts = path.split('/');
+      const indent = (parts.length - 1) * 12;
+      const leaf = parts[parts.length - 1];
+      const active = f.kind === 'tag' && f.path === path;
+      const hasC = tagHasChildren(path);
+      const isC = collapsedTags.has(path);
+      const count = tagAggCount(path);
+      const chev = hasC
+        ? `<button class="sum-nav-chev ${isC ? 'collapsed' : ''}" data-wt-toggle="${esc(path)}" type="button" aria-label="${isC ? '展开' : '折叠'}子标签">▾</button>`
+        : `<span class="sum-nav-chev sum-nav-chev-spacer"></span>`;
+      html += `<div class="sum-nav-row ${active ? 'active' : ''}" style="padding-left:${4 + indent}px;">
+        ${chev}
+        <button class="sum-nav-row-main-btn" data-wf="tag" data-wf-path="${esc(path)}" type="button">
+          <span class="sum-tag-hash">#</span><span class="sum-tag-label">${esc(leaf)}</span>
+        </button>
+        <span class="sum-tag-count">${count}</span>
+      </div>`;
     }
     if (untaggedN) html += row(f.kind === 'untagged', '无标签', untaggedN, 'data-wf="untagged"');
   }
@@ -6365,6 +6415,14 @@ function _renderWorksDrawerNav() {
     else                      worksState.filter = { kind: 'all' };
     closeDrawerNav();
     renderAll();
+  }));
+  // 标签层级折叠 — 点 chev 切换该 path 的折叠态,不触发筛选
+  body.querySelectorAll('[data-wt-toggle]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const p = b.dataset.wtToggle;
+    if (!p) return;
+    if (collapsedTags.has(p)) collapsedTags.delete(p); else collapsedTags.add(p);
+    _renderWorksDrawerNav();
   }));
 }
 

@@ -331,7 +331,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260519-0100';
+const _PSFOCUS_BUILD = '20260520-0100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -1380,10 +1380,20 @@ function openSummaryInputSheet() {
 function _renderSummaryTagBar() {
   // 字典序排:子标签紧跟父级,避免 order 字段把不同父的标签穿插
   const tags = (state.summaryTags || []).slice().sort((a,b) => (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN'));
-  const chips = [`<button class="sum-chip ${summaryState.filter==='all'?'active':''}" data-action="summary-filter" data-filter="all">全部</button>`];
-  for (const tg of tags) {
+  // 项目时间轴加图自动生成的「项目名 tag」单独成一段,排在我的自建 tag 之后,中间用分隔标签隔开
+  const _projNamesForTag = new Set((state.projects || []).map(p => p && p.name).filter(Boolean));
+  const _isProjectSumTag = (name) => !!name && _projNamesForTag.has(name.split('/')[0]);
+  const projectTags = tags.filter(t => _isProjectSumTag(t.name));
+  const userTags    = tags.filter(t => !_isProjectSumTag(t.name));
+  const chipOf = (tg) => {
     const active = summaryState.filter === ('tag:' + tg.name);
-    chips.push(`<button class="sum-chip ${active?'active':''}" data-action="summary-filter" data-filter="tag:${esc(tg.name)}">#${esc(tg.name)}</button>`);
+    return `<button class="sum-chip ${active?'active':''}" data-action="summary-filter" data-filter="tag:${esc(tg.name)}">#${esc(tg.name)}</button>`;
+  };
+  const chips = [`<button class="sum-chip ${summaryState.filter==='all'?'active':''}" data-action="summary-filter" data-filter="all">全部</button>`];
+  for (const tg of userTags) chips.push(chipOf(tg));
+  if (projectTags.length) {
+    chips.push(`<span class="sum-chip-sep" title="以下为项目时间轴自动生成的标签">项目</span>`);
+    for (const tg of projectTags) chips.push(chipOf(tg));
   }
   return chips.join('');
 }
@@ -6185,6 +6195,12 @@ function _renderSummaryDrawerNav() {
   const tags = (state.summaryTags || []).slice().sort((a, b) =>
     (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN'));
   const pinned = tags.filter(t => t.pinned);
+  // 项目时间轴加图会自动生成「项目名」tag —— 单独归到「项目」大类,不混在我的自建 tag 里。
+  // 规则:tag 顶层段 = 某个项目名 → 整棵子树归项目类
+  const _projNamesForTag = new Set((state.projects || []).map(p => p && p.name).filter(Boolean));
+  const _isProjectSumTag = (name) => !!name && _projNamesForTag.has(name.split('/')[0]);
+  const projectTags = tags.filter(t => _isProjectSumTag(t.name));
+  const userTags    = tags.filter(t => !_isProjectSumTag(t.name));
   const tagCount = (tagName) => (state.summaries || []).filter(s =>
     (s.tags || []).some(x => x === tagName || x.startsWith(tagName + '/'))).length;
   const hasChildren = (tagName) => tags.some(t => t.name.startsWith(tagName + '/'));
@@ -6227,8 +6243,9 @@ function _renderSummaryDrawerNav() {
       <span>${esc(label)}</span>
     </button>`;
   };
-  const pinnedHidden = sec.has('pinned');
-  const allHidden = sec.has('all');
+  const pinnedHidden  = sec.has('pinned');
+  const projectHidden = sec.has('project');
+  const allHidden     = sec.has('all');
   body.innerHTML = `
     <button class="sum-nav-row sum-nav-row-main ${summaryState.filter==='all'?'active':''}"
       data-action="summary-filter" data-filter="all">
@@ -6236,8 +6253,10 @@ function _renderSummaryDrawerNav() {
     </button>
     ${pinned.length ? `${sectionHead('pinned', '置顶标签')}
       ${pinnedHidden ? '' : pinned.map(renderTagRow).join('')}` : ''}
-    ${tags.length ? `${sectionHead('all', '全部标签')}
-      ${allHidden ? '' : tags.map(renderTagRow).join('')}` : '<div class="sum-nav-empty">还没有标签 — 写笔记时输入 #xxx 自动建立</div>'}
+    ${projectTags.length ? `${sectionHead('project', '项目标签')}
+      ${projectHidden ? '' : projectTags.map(renderTagRow).join('')}` : ''}
+    ${userTags.length ? `${sectionHead('all', '我的标签')}
+      ${allHidden ? '' : userTags.map(renderTagRow).join('')}` : (tags.length ? '' : '<div class="sum-nav-empty">还没有标签 — 写笔记时输入 #xxx 自动建立</div>')}
   `;
   // tag 点击 filter:本地 listener 关 drawer + 触发 filter(全局 dispatcher 也会接,但顺序保证 close drawer)
   body.querySelectorAll('[data-action="summary-filter"]').forEach(b => {

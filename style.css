@@ -3131,6 +3131,19 @@ html, body { overscroll-behavior-y: contain; }
 }
 .sum-search:focus { border-color: var(--accent); }
 
+/* 摘要 chip 栏分隔符:把「项目时间轴自动生成的项目名 tag」与「我的自建 tag」分开 */
+.sum-chip-sep {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px 0 10px;
+  margin-left: 4px;
+  border-left: 1px solid var(--border-soft);
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
 /* 摘要顶栏搜索行(由右上角搜索按钮开关) */
 .sum-search-row {
   display: flex;

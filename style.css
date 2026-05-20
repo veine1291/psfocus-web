@@ -4484,17 +4484,15 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   gap: 6px;
   padding: 10px 12px;
 }
-/* 「按时间分组」月份分隔线 — 列表/相册通用;相册里要跨整行 */
+/* 「按时间分组」分隔条 — 只放轻量文字,不再加边框/底色 */
 .works-month-divider {
-  padding: 14px 16px 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  border-top: 1px solid var(--border-soft);
-  margin-top: 6px;
-  letter-spacing: 0.3px;
+  padding: 16px 16px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint, var(--text-dim));
+  letter-spacing: 0.5px;
 }
-.works-month-divider:first-child { border-top: none; margin-top: 0; padding-top: 6px; }
+.works-month-divider:first-child { padding-top: 6px; }
 .works-month-divider-gallery { grid-column: 1 / -1; }
 .works-gallery-cell {
   aspect-ratio: 1 / 1;

@@ -398,8 +398,18 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260521-0300';
+const _PSFOCUS_BUILD = '20260521-0301';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
+
+// 注册 Service Worker — Chrome / Safari 杀掉 tab 重新加载时,直接吃缓存起来,不依赖网络
+// 防「无法打开此网页」白屏(iOS 切回 app 时常见)
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('[sw] registered, scope=', reg.scope))
+      .catch(err => console.warn('[sw] register failed:', err));
+  });
+}
 
 // ===== 同步层 =====
 function setSync(kind, msg) {

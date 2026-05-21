@@ -398,7 +398,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260521-0200';
+const _PSFOCUS_BUILD = '20260521-0300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // ===== 同步层 =====
@@ -4128,6 +4128,59 @@ function _ledgerNav(dir) {
 }
 function _ledgerCatById(id) { return ((state.ledger && state.ledger.categories) || []).find(c => c.id === id) || null; }
 
+// ===== 消耗品(对齐桌面端 state.ledger.consumables 结构) =====
+// c = { id, name, unit, purchases:[{id,ts,qty,price}], genEvent?, nextEventId?, checklistItem? }
+// 容错数字解析:中文输入法下「1」可能是全角「１」(U+FF11),原生 parseFloat 会失败
+function _parseConsNum(s) {
+  if (s == null) return 0;
+  let str = String(s).trim();
+  if (!str) return 0;
+  str = str.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  str = str.replace(/[．。]/g, '.').replace(/[,,\s]/g, '');
+  const n = parseFloat(str);
+  return Number.isFinite(n) ? n : 0;
+}
+function _consumableFmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function _consumableFmtNum(n, digits) {
+  if (n == null || !isFinite(n)) return '—';
+  if (n === 0) return '0';
+  const d = digits != null ? digits : (n >= 100 ? 0 : n >= 10 ? 1 : 2);
+  return (Math.round(n * Math.pow(10, d)) / Math.pow(10, d)).toLocaleString('zh-CN');
+}
+function _consumableStats(c) {
+  const ps = ((c && c.purchases) || [])
+    .filter(p => p && p.ts)
+    .map(p => ({ ts: +p.ts, qty: Math.max(0, +p.qty || 0), price: Math.max(0, +p.price || 0) }))
+    .sort((a, b) => a.ts - b.ts);
+  const n = ps.length;
+  if (n === 0) return { empty: true };
+  const totalQty   = ps.reduce((s, p) => s + p.qty, 0);
+  const totalSpend = ps.reduce((s, p) => s + p.price, 0);
+  const lastTs  = ps[n - 1].ts;
+  const lastQty = ps[n - 1].qty;
+  const firstTs = ps[0].ts;
+  const avgUnitPrice = totalQty > 0 ? totalSpend / totalQty : 0;
+  if (n < 2) return { lastTs, lastQty, totalQty, totalSpend, avgUnitPrice, needMore: true };
+  // 消耗速率:用「除最后一笔外的总数量」÷ 跨度天数(最后一笔还没用,不能算进消耗)
+  const consumedQty = Math.max(0, totalQty - lastQty);
+  const spanDays = Math.max(1, (lastTs - firstTs) / 86400000);
+  const perDayQty = consumedQty / spanDays;
+  const perMonth   = perDayQty * 30;
+  const perYear    = perDayQty * 365;
+  const costPerMonth = avgUnitPrice * perMonth;
+  const costPerYear  = avgUnitPrice * perYear;
+  let runoutDays = 0, nextTs = null;
+  if (perDayQty > 0 && lastQty > 0) {
+    runoutDays = lastQty / perDayQty;
+    nextTs = lastTs + runoutDays * 86400000;
+  }
+  return { lastTs, lastQty, totalQty, totalSpend, avgUnitPrice, perMonth, perYear, costPerMonth, costPerYear, runoutDays, nextTs };
+}
+
 function renderLedgerTab(view) {
   const lg = state.ledger || {};
   const cats = lg.categories || [];
@@ -4215,6 +4268,7 @@ function renderLedgerTab(view) {
           `<div class="lg-cat-line"><span class="lg-cat-name">${esc(a.name || '账户')}</span>
            <span class="lg-cat-amt">¥${_ledgerMoney(a.amount || 0)}</span></div>`).join('')}</div>` : ''}
       </div>
+      ${_renderConsumablesCardMobile()}
       <div class="section-title" style="padding:14px 12px 6px;">流水</div>
       ${_ledgerTxListHtml(vtx)}
     </div>`;
@@ -4223,6 +4277,288 @@ function renderLedgerTab(view) {
   // 支出分类单击 → 详情抽屉(tag 拆解 + 最大支出账单)
   view.querySelectorAll('[data-lg-cat-detail]').forEach(el => {
     el.addEventListener('click', () => openLedgerCatDetailSheet(el.dataset.lgCatDetail));
+  });
+  // 消耗品:卡片点击 = 编辑;右上 + = 新增
+  view.querySelectorAll('[data-cons-id]').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.consId;
+      const c = ((state.ledger && state.ledger.consumables) || []).find(x => x.id === id);
+      if (c) openConsumableEditSheet(c);
+    });
+  });
+  const consAdd = view.querySelector('[data-cons-add]');
+  if (consAdd) consAdd.addEventListener('click', () => openConsumableEditSheet(null));
+}
+
+// 账本主视图底部:消耗品卡(对齐桌面 _renderConsumablesCard)
+function _renderConsumablesCardMobile() {
+  const list = ((state.ledger && state.ledger.consumables) || []);
+  const cards = list.map(c => {
+    const s = _consumableStats(c);
+    const unitStr = c.unit ? ' ' + c.unit : '';
+    let stat;
+    if (s.empty) stat = '<span class="lg-cons-mute">还没有购买记录</span>';
+    else if (s.needMore) stat = `<span class="lg-cons-mute">上次 ${_consumableFmtDate(s.lastTs)} · 再加一笔即可统计</span>`;
+    else stat = `<div class="lg-cons-stat-grid">
+      <div><span>月消耗</span><b>${_consumableFmtNum(s.perMonth)}${esc(unitStr)}</b></div>
+      <div><span>月支出</span><b>¥${_consumableFmtNum(s.costPerMonth)}</b></div>
+      <div><span>下次</span><b>${_consumableFmtDate(s.nextTs)}</b></div>
+    </div>`;
+    return `<div class="lg-cons-item" data-cons-id="${esc(c.id)}">
+      <div class="lg-cons-name">${esc(c.name || '未命名')}</div>
+      ${stat}
+    </div>`;
+  }).join('');
+  return `<div class="lg-card lg-cons-card">
+    <div class="lg-card-head">
+      <span class="lg-card-title">消耗品</span>
+      <button class="lg-cons-add-btn" data-cons-add aria-label="新增消耗品">+</button>
+    </div>
+    ${list.length ? `<div class="lg-cons-list">${cards}</div>`
+      : '<div class="lg-empty">点右上 + 加上常买的东西(牙膏 / 卫生纸 / 猫粮…)</div>'}
+  </div>`;
+}
+
+// 消耗品编辑 sheet — 新建或编辑现有(existing 可为 null = 新建)
+function openConsumableEditSheet(existing) {
+  const isNew = !existing;
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  // 把 modal-state-like 对象挂在闭包里;UI 操作都改它,保存时一次性写到 state
+  const m = isNew
+    ? {
+        id: 'cs-' + Math.random().toString(36).slice(2, 10),
+        name: '', unit: '',
+        purchases: [{ id: 'cp-' + Math.random().toString(36).slice(2, 10), dateStr: todayStr, qty: '1', price: '' }],
+        isNew: true,
+      }
+    : {
+        id: existing.id,
+        name: existing.name || '',
+        unit: existing.unit || '',
+        purchases: (existing.purchases || []).map(p => ({
+          id: p.id || ('cp-' + Math.random().toString(36).slice(2, 10)),
+          dateStr: p.ts ? _consumableFmtDate(p.ts) : todayStr,
+          qty: p.qty != null ? String(p.qty) : '',
+          price: p.price != null ? String(p.price) : '',
+        })),
+        isNew: false,
+      };
+  if (!m.purchases.length) {
+    m.purchases.push({ id: 'cp-' + Math.random().toString(36).slice(2, 10), dateStr: todayStr, qty: '1', price: '' });
+  }
+
+  const renderBody = () => {
+    const previewItem = {
+      purchases: m.purchases.map(p => ({
+        ts: (() => { const x = new Date(p.dateStr); return isNaN(x.getTime()) ? 0 : x.getTime(); })(),
+        qty: _parseConsNum(p.qty),
+        price: _parseConsNum(p.price),
+      })).filter(p => p.ts && p.qty > 0),
+    };
+    const s = _consumableStats(previewItem);
+    const unitStr = m.unit ? ' ' + m.unit : '';
+    let previewHtml;
+    if (s.empty) previewHtml = '<span class="lg-cons-mute">填几次购买记录,这里就会出现统计</span>';
+    else if (s.needMore) previewHtml = `<div class="lg-cons-preview-grid">
+      <div><span>已记录</span><b>1 次</b></div>
+      <div><span>上次</span><b>${_consumableFmtDate(s.lastTs)}</b></div>
+    </div><div class="lg-cons-mute" style="margin-top:4px;">再加一笔即可计算消耗节奏</div>`;
+    else previewHtml = `<div class="lg-cons-preview-grid">
+      <div><span>上次</span><b>${_consumableFmtDate(s.lastTs)}</b></div>
+      <div><span>预计还能用</span><b>${s.runoutDays ? _consumableFmtNum(s.runoutDays, 0) + ' 天' : '—'}</b></div>
+      <div><span>下次预计</span><b>${_consumableFmtDate(s.nextTs)}</b></div>
+      <div><span>月消耗</span><b>${_consumableFmtNum(s.perMonth)}${esc(unitStr)}</b></div>
+      <div><span>月支出</span><b>¥${_consumableFmtNum(s.costPerMonth)}</b></div>
+      <div><span>平均单价</span><b>¥${_consumableFmtNum(s.avgUnitPrice)}</b></div>
+      <div><span>累计已花</span><b>¥${_consumableFmtNum(s.totalSpend)}</b></div>
+    </div>`;
+
+    const rowsHtml = m.purchases.map((p, i) => `
+      <div class="cons-edit-row" data-row-i="${i}">
+        <input type="date" class="cons-edit-date" data-field="dateStr" data-i="${i}" value="${esc(p.dateStr || '')}" />
+        <input type="text" inputmode="decimal" class="cons-edit-qty" data-field="qty" data-i="${i}" value="${esc(p.qty)}" placeholder="1" />
+        <input type="text" inputmode="decimal" class="cons-edit-price" data-field="price" data-i="${i}" value="${esc(p.price)}" placeholder="总价" />
+        <button class="cons-edit-row-del" data-row-del="${i}" aria-label="删除这笔">×</button>
+      </div>
+    `).join('');
+
+    return `
+      <div class="sheet-handle"></div>
+      <div class="cons-edit-head">
+        <button class="cons-edit-cancel">取消</button>
+        <span class="cons-edit-title">${m.isNew ? '新增消耗品' : '编辑消耗品'}</span>
+        <button class="cons-edit-save">保存</button>
+      </div>
+      <div class="cons-edit-body">
+        <label class="cons-edit-label">名称</label>
+        <input id="cons-edit-name" class="cons-edit-input" type="text" value="${esc(m.name)}" placeholder="如 牙膏" />
+        <label class="cons-edit-label">单位(可选)</label>
+        <input id="cons-edit-unit" class="cons-edit-input" type="text" value="${esc(m.unit)}" placeholder="支 / 卷 / 瓶" />
+        <label class="cons-edit-label">购买记录(每次总花费,系统自动算单价)</label>
+        <div class="cons-edit-row cons-edit-row-head">
+          <span>日期</span><span>数量</span><span>总价</span><span></span>
+        </div>
+        <div class="cons-edit-rows">${rowsHtml}</div>
+        <button class="cons-edit-add-row">+ 加一笔购买</button>
+        <div class="cons-edit-preview">${previewHtml}</div>
+        ${m.isNew ? '' : '<button class="cons-edit-delete">删除消耗品</button>'}
+      </div>
+    `;
+  };
+
+  // 把 DOM 输入的最新值统一回写到 m(任何重渲 / 保存 / 删行 之前都调一遍)
+  const syncFromDom = (body) => {
+    const nm = body.querySelector('#cons-edit-name');
+    const un = body.querySelector('#cons-edit-unit');
+    if (nm) m.name = nm.value;
+    if (un) m.unit = un.value;
+    body.querySelectorAll('[data-row-i]').forEach(rowEl => {
+      const i = +rowEl.dataset.rowI;
+      if (!m.purchases[i]) return;
+      const d = rowEl.querySelector('[data-field="dateStr"]');
+      const q = rowEl.querySelector('[data-field="qty"]');
+      const p = rowEl.querySelector('[data-field="price"]');
+      if (d) m.purchases[i].dateStr = d.value;
+      if (q) m.purchases[i].qty = q.value;
+      if (p) m.purchases[i].price = p.value;
+    });
+  };
+
+  showSheet(`<div class="sheet-content cons-edit-sheet">${renderBody()}</div>`, (body) => {
+    const rerender = () => {
+      const focusKey = (() => {
+        const ae = document.activeElement;
+        if (!ae || !body.contains(ae)) return null;
+        if (ae.id) return '#' + ae.id;
+        if (ae.dataset && ae.dataset.field && ae.dataset.i != null) {
+          return `[data-field="${ae.dataset.field}"][data-i="${ae.dataset.i}"]`;
+        }
+        return null;
+      })();
+      body.innerHTML = `<div class="sheet-content cons-edit-sheet">${renderBody()}</div>`;
+      bindAll(body);
+      if (focusKey) {
+        const next = body.querySelector(focusKey);
+        if (next) { try { next.focus(); } catch (_) {} }
+      }
+    };
+    const bindAll = (b) => {
+      // 输入回写 + 重算 preview
+      b.querySelectorAll('#cons-edit-name, #cons-edit-unit').forEach(inp => {
+        inp.addEventListener('input', () => {
+          if (inp.id === 'cons-edit-name') m.name = inp.value;
+          else m.unit = inp.value;
+          if (inp.id === 'cons-edit-unit') {
+            const pv = b.querySelector('.cons-edit-preview');
+            if (pv) {
+              // 只重渲 preview,不动整个 sheet(避免输入焦点丢失)
+              syncFromDom(b);
+              const tempBody = document.createElement('div');
+              tempBody.innerHTML = `<div>${renderBody()}</div>`;
+              const newPv = tempBody.querySelector('.cons-edit-preview');
+              if (newPv) pv.innerHTML = newPv.innerHTML;
+            }
+          }
+        });
+      });
+      b.querySelectorAll('[data-field]').forEach(inp => {
+        inp.addEventListener('input', () => {
+          const i = +inp.dataset.i;
+          if (!m.purchases[i]) return;
+          m.purchases[i][inp.dataset.field] = inp.value;
+          // 重算 preview(只更新 preview,保留焦点)
+          syncFromDom(b);
+          const tempBody = document.createElement('div');
+          tempBody.innerHTML = `<div>${renderBody()}</div>`;
+          const newPv = tempBody.querySelector('.cons-edit-preview');
+          const oldPv = b.querySelector('.cons-edit-preview');
+          if (oldPv && newPv) oldPv.innerHTML = newPv.innerHTML;
+        });
+      });
+      // 删某行
+      b.querySelectorAll('[data-row-del]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          syncFromDom(b);
+          const i = +btn.dataset.rowDel;
+          m.purchases.splice(i, 1);
+          if (!m.purchases.length) {
+            m.purchases.push({ id: 'cp-' + Math.random().toString(36).slice(2, 10), dateStr: todayStr, qty: '1', price: '' });
+          }
+          rerender();
+        });
+      });
+      // + 加一笔
+      const addBtn = b.querySelector('.cons-edit-add-row');
+      if (addBtn) addBtn.addEventListener('click', () => {
+        syncFromDom(b);
+        // 新行日期 = 最新已填日期(没就今日)
+        let baseTs = 0;
+        for (const p of m.purchases) {
+          const d = new Date(p.dateStr);
+          if (!isNaN(d.getTime()) && d.getTime() > baseTs) baseTs = d.getTime();
+        }
+        const d = new Date(baseTs || Date.now());
+        m.purchases.push({
+          id: 'cp-' + Math.random().toString(36).slice(2, 10),
+          dateStr: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+          qty: '1', price: '',
+        });
+        rerender();
+        // 滚到底 + focus 新行 qty
+        setTimeout(() => {
+          const rows = b.querySelectorAll('[data-row-i]');
+          const last = rows[rows.length - 1];
+          if (last) {
+            try { last.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+            const q = last.querySelector('[data-field="qty"]');
+            if (q) { try { q.focus(); q.select(); } catch (_) {} }
+          }
+        }, 30);
+      });
+      // 取消
+      const cancelBtn = b.querySelector('.cons-edit-cancel');
+      if (cancelBtn) cancelBtn.addEventListener('click', () => closeSheet());
+      // 保存
+      const saveBtn = b.querySelector('.cons-edit-save');
+      if (saveBtn) saveBtn.addEventListener('click', () => {
+        syncFromDom(b);
+        const name = (m.name || '').trim();
+        if (!name) { showToast('填个名称'); return; }
+        const rawCount = m.purchases.length;
+        const purchases = m.purchases.map(p => {
+          const d = new Date(p.dateStr);
+          const ts = !isNaN(d.getTime()) ? d.getTime() : 0;
+          const qty = _parseConsNum(p.qty);
+          const price = _parseConsNum(p.price);
+          return { id: p.id, ts, qty, price };
+        }).filter(p => p.ts && p.qty > 0);
+        const dropped = rawCount - purchases.length;
+        if (!state.ledger) state.ledger = {};
+        if (!Array.isArray(state.ledger.consumables)) state.ledger.consumables = [];
+        const idx = state.ledger.consumables.findIndex(c => c.id === m.id);
+        // 保留原 genEvent/nextEventId/checklistItem 等字段(只动名称 / unit / purchases)
+        const oldRec = idx >= 0 ? state.ledger.consumables[idx] : {};
+        const rec = { ...oldRec, id: m.id, name, unit: (m.unit || '').trim(), purchases };
+        if (idx >= 0) state.ledger.consumables[idx] = rec;
+        else          state.ledger.consumables.push(rec);
+        pushState(); renderAll(); closeSheet();
+        showToast((m.isNew ? '已添加' : '已保存') + (dropped > 0 ? ` · ${dropped} 行因没填日期 / 数量被忽略` : ''));
+      });
+      // 删除消耗品(仅编辑模式有)
+      const delBtn = b.querySelector('.cons-edit-delete');
+      if (delBtn) delBtn.addEventListener('click', () => {
+        if (!confirm(`删除「${m.name || '未命名'}」?所有购买记录会一并删除,无法恢复。`)) return;
+        if (state.ledger && Array.isArray(state.ledger.consumables)) {
+          state.ledger.consumables = state.ledger.consumables.filter(c => c.id !== m.id);
+        }
+        pushState(); renderAll(); closeSheet();
+        showToast('已删除');
+      });
+    };
+    bindAll(body);
   });
 }
 

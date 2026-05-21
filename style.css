@@ -4552,6 +4552,163 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .lg-cat-chev { color: var(--text-faint); font-size: 14px; flex-shrink: 0; margin-left: -2px; }
 .lg-cat-name-dim { color: var(--text-faint); }
 .lg-empty { font-size: 12px; color: var(--text-faint); padding: 10px 0; }
+
+/* ===== 消耗品卡(ledger 主视图)===== */
+.lg-cons-card .lg-cons-add-btn {
+  width: 28px; height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-section);
+  color: var(--text-dim);
+  font-size: 18px; line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.lg-cons-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.lg-cons-item {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--bg-section);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lg-cons-item:active { background: var(--bg-active); }
+.lg-cons-name { font-size: 13.5px; font-weight: 600; color: var(--text-strong); }
+.lg-cons-mute { font-size: 11.5px; color: var(--text-faint); line-height: 1.5; }
+.lg-cons-stat-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px 10px;
+}
+.lg-cons-stat-grid > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.lg-cons-stat-grid span { font-size: 10px; color: var(--text-faint); }
+.lg-cons-stat-grid b { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===== 消耗品编辑 sheet ===== */
+.cons-edit-sheet {
+  display: flex; flex-direction: column;
+  max-height: 92vh;
+}
+.cons-edit-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.cons-edit-title { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.cons-edit-cancel, .cons-edit-save {
+  border: none; background: none;
+  font-size: 14px;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+.cons-edit-cancel { color: var(--text-dim); }
+.cons-edit-save  { color: var(--accent); font-weight: 600; }
+.cons-edit-body {
+  padding: 12px 14px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+.cons-edit-label {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin: 12px 0 6px;
+}
+.cons-edit-label:first-child { margin-top: 0; }
+.cons-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text);
+  outline: none;
+}
+.cons-edit-input:focus { border-color: var(--accent); }
+.cons-edit-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.7fr 0.9fr 28px;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+}
+.cons-edit-row-head {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 4px;
+  padding: 0 4px;
+}
+.cons-edit-row-head > span { padding: 0 2px; }
+.cons-edit-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.cons-edit-row input {
+  padding: 8px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.cons-edit-row input:focus { border-color: var(--accent); }
+.cons-edit-row-del {
+  width: 28px; height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-section);
+  color: var(--text-faint);
+  font-size: 16px; line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.cons-edit-row-del:active {
+  background: color-mix(in srgb, #d54141 12%, transparent);
+  color: #d54141;
+}
+.cons-edit-add-row {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  font-size: 12.5px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.cons-edit-preview {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-section));
+  border: 1px dashed color-mix(in srgb, var(--accent) 35%, var(--border));
+  min-height: 36px;
+}
+.lg-cons-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+}
+.lg-cons-preview-grid > div { display: flex; flex-direction: column; gap: 2px; }
+.lg-cons-preview-grid span { font-size: 10.5px; color: var(--text-faint); }
+.lg-cons-preview-grid b { font-size: 13px; font-weight: 700; color: var(--text-strong); }
+.cons-edit-delete {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  padding: 11px;
+  font-size: 13px;
+  border: 1px solid color-mix(in srgb, #d54141 30%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #d54141 8%, transparent);
+  color: #d54141;
+  cursor: pointer;
+}
 /* 支出分类详情抽屉 */
 .lg-detail-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; }
 .lg-detail-name { font-size: 16px; font-weight: 700; color: var(--text-strong); }

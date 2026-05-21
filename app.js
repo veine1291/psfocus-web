@@ -398,7 +398,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260521-0302';
+const _PSFOCUS_BUILD = '20260521-0303';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // 注册 Service Worker — Chrome / Safari 杀掉 tab 重新加载时,直接吃缓存起来,不依赖网络
@@ -4138,6 +4138,68 @@ function _ledgerNav(dir) {
 }
 function _ledgerCatById(id) { return ((state.ledger && state.ledger.categories) || []).find(c => c.id === id) || null; }
 
+// ===== 重复任务的「检查事项」per-occurrence 完成态(对齐桌面 _isPerOccChecklist 等) =====
+function _isRecurringTaskM(t) {
+  return !!(t && Array.isArray(t.schedules) && t.schedules.some(s => s && s.repeat && s.repeat !== 'none'));
+}
+function _occDayKeyM(occStart) {
+  if (occStart == null) return null;
+  const d = new Date(occStart);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+// 「今天对应的 occurrence」— 跟自然时间走,不看 completedOccurrences。
+// 用来作 checklist 上下文,这样勾的检查事项只属于今天那次出现,明天另算
+function _currentOccurrenceForTaskM(task) {
+  const schedules = (task.schedules || []).filter(s => s && s.start && s.repeat && s.repeat !== 'none');
+  if (!schedules.length) return null;
+  const today0 = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+  const today1 = today0 + 86400000;
+  let bestTs = null;
+  for (const s of schedules) {
+    let occ = new Date(s.start);
+    if (s.repeat === 'workday' && (occ.getDay() === 0 || occ.getDay() === 6)) {
+      do { occ.setDate(occ.getDate() + 1); } while (occ.getDay() === 0 || occ.getDay() === 6);
+    }
+    let safety = 5000;
+    while (safety-- > 0 && occ.getTime() < today0) {
+      const next = new Date(occ);
+      if (s.repeat === 'daily') next.setDate(next.getDate() + 1);
+      else if (s.repeat === 'weekly') next.setDate(next.getDate() + 7);
+      else if (s.repeat === 'monthly') next.setMonth(next.getMonth() + 1);
+      else if (s.repeat === 'workday') {
+        do { next.setDate(next.getDate() + 1); } while (next.getDay() === 0 || next.getDay() === 6);
+      } else { occ = null; break; }
+      occ = next;
+    }
+    if (!occ) continue;
+    const ts = occ.getTime();
+    if (ts >= today0 && ts < today1) return ts;
+    if (bestTs === null || ts < bestTs) bestTs = ts;
+  }
+  return bestTs;
+}
+// 切换检查事项在该 occurrence 的勾选状态
+function _toggleSubtaskForM(sub, parent, occStart) {
+  if (!sub || sub.checklistItem !== true || !_isRecurringTaskM(parent) || occStart == null) {
+    // 普通路径:写 sub.done
+    sub.done = !sub.done; sub.doneAt = sub.done ? Date.now() : null; sub.updatedAt = Date.now();
+    return;
+  }
+  const key = _occDayKeyM(occStart);
+  if (!parent.subtaskCompletions) parent.subtaskCompletions = {};
+  // 同时迁移老 ts key 到规范化 day key,避免数据分散
+  if (parent.subtaskCompletions[occStart] && occStart !== key) {
+    parent.subtaskCompletions[key] = Object.assign({}, parent.subtaskCompletions[key] || {}, parent.subtaskCompletions[occStart]);
+    delete parent.subtaskCompletions[occStart];
+  }
+  if (!parent.subtaskCompletions[key]) parent.subtaskCompletions[key] = {};
+  const occ = parent.subtaskCompletions[key];
+  if (occ[sub.id]) delete occ[sub.id]; else occ[sub.id] = true;
+  if (!Object.keys(occ).length) delete parent.subtaskCompletions[key];
+  parent.updatedAt = Date.now();
+}
+
 // ===== 消耗品(对齐桌面端 state.ledger.consumables 结构) =====
 // c = { id, name, unit, purchases:[{id,ts,qty,price}], genEvent?, nextEventId?, checklistItem? }
 // 容错数字解析:中文输入法下「1」可能是全角「１」(U+FF11),原生 parseFloat 会失败
@@ -5504,23 +5566,54 @@ function openTaskDetail(id) {
   }).join('');
 
   // 子任务 — union 桌面模型(parentTaskId)+ 老 mobile 模型(t.subtasks 数组)
+  // 重复任务下「检查事项(checklistItem=true)」的完成态走 parent.subtaskCompletions[dayKey] map,
+  // 跟自然时间走,每次出现自动重置 — 对齐桌面 _subtaskDoneFor 逻辑
+  const _parentRecurring = _isRecurringTaskM(t);
+  const _occStart = _parentRecurring ? _currentOccurrenceForTaskM(t) : null;
+  const _isChecklistDoneNow = (sub) => {
+    if (!sub || sub.checklistItem !== true) return !!sub.done;
+    if (!_parentRecurring || _occStart == null) return false;
+    const key = _occDayKeyM(_occStart);
+    const all = t.subtaskCompletions || {};
+    const occ = all[key] || all[_occStart] || {};
+    return !!occ[sub.id];
+  };
   const childTasks = (state.tasks || [])
     .filter(x => x.parentTaskId === t.id)
     .sort((a, b) => (a.order || 0) - (b.order || 0));
   const legacySubs = Array.isArray(t.subtasks) ? t.subtasks : [];
   const subItemsRaw = [
-    ...childTasks.map(c => ({ source: 'task', id: c.id, title: c.title, done: !!c.done })),
-    ...legacySubs.map(s => ({ source: 'legacy', id: s.id, title: s.title, done: !!s.done })),
+    ...childTasks.map(c => ({
+      source: 'task', id: c.id, title: c.title,
+      checklistItem: c.checklistItem === true,
+      done: _isChecklistDoneNow(c),
+    })),
+    ...legacySubs.map(s => ({
+      source: 'legacy', id: s.id, title: s.title,
+      checklistItem: false,
+      done: !!s.done,
+    })),
   ];
-  // 已完成沉到下方,未完成在上(对齐桌面)
-  const subItems = subItemsRaw.slice().sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
-  const subsHtml = subItems.length ? `<ul class="dp-sub-list">${subItems.map(s => `
-    <li class="dp-sub ${s.done?'done':''}" data-sub-id="${esc(s.id)}" data-sub-source="${s.source}">
+  // 普通子任务(checklistItem=false)在上,检查事项在下;同组内未完成在前已完成在后
+  const normalSubs = subItemsRaw.filter(s => !s.checklistItem)
+    .sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
+  const checklistSubs = subItemsRaw.filter(s => s.checklistItem)
+    .sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
+  const _renderSubRow = (s) => `
+    <li class="dp-sub ${s.done?'done':''}" data-sub-id="${esc(s.id)}" data-sub-source="${s.source}"${s.checklistItem ? ' data-sub-checklist="1"' : ''}>
       <button class="dp-sub-check ${s.done?'done':''}" data-action="toggle-sub">${s.done ? '✓' : ''}</button>
+      ${s.checklistItem ? '<span class="dp-sub-checklist-mark" title="检查事项 — 每次重复都会重置">≡</span>' : ''}
       <span class="dp-sub-title" contenteditable="true" spellcheck="false" data-action="edit-sub-title">${esc(s.title || '')}</span>
       <button class="dp-sub-del" data-action="del-sub" title="删除">×</button>
-    </li>
-  `).join('')}</ul>` : '<div class="dp-empty">还没有子任务</div>';
+    </li>`;
+  let subsInner = normalSubs.map(_renderSubRow).join('');
+  if (checklistSubs.length) {
+    if (normalSubs.length) subsInner += `<li class="dp-sub-divider"><span>检查事项</span></li>`;
+    subsInner += checklistSubs.map(_renderSubRow).join('');
+  }
+  const subsHtml = subItemsRaw.length
+    ? `<ul class="dp-sub-list">${subsInner}</ul>`
+    : '<div class="dp-empty">还没有子任务</div>';
 
   // 标签 chips + 全局 tag 列表(用于 datalist)
   const tags = Array.isArray(t.tags) ? t.tags : [];
@@ -5815,7 +5908,17 @@ function bindTaskDetailEvents(body, id) {
     row.querySelector('[data-action="toggle-sub"]').onclick = () => {
       if (source === 'task') {
         const child = state.tasks.find(x => x.id === sid);
-        if (child) { child.done = !child.done; child.doneAt = child.done ? Date.now() : null; child.updatedAt = Date.now(); }
+        if (!child) { pushState(); openTaskDetail(id); return; }
+        // 检查事项 + 父重复 → per-occurrence map(各次出现独立勾选)
+        if (child.checklistItem === true && _isRecurringTaskM(t)) {
+          const occ = _currentOccurrenceForTaskM(t);
+          if (occ != null) {
+            _toggleSubtaskForM(child, t, occ);
+            pushState(); openTaskDetail(id); return;
+          }
+        }
+        // 普通子任务 → 老路径
+        child.done = !child.done; child.doneAt = child.done ? Date.now() : null; child.updatedAt = Date.now();
       } else {
         const s = (t.subtasks || []).find(x => x.id === sid);
         if (s) { s.done = !s.done; s.doneAt = s.done ? Date.now() : null; }

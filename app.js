@@ -398,7 +398,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260521-0301';
+const _PSFOCUS_BUILD = '20260521-0302';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // 注册 Service Worker — Chrome / Safari 杀掉 tab 重新加载时,直接吃缓存起来,不依赖网络
@@ -9987,13 +9987,29 @@ function bindGlobalEvents() {
       saveUI(); renderAll();
     }
   });
-  // 切回前台:主动 pull + 重启 watcher(iOS Safari 后台一段时间会杀 WebSocket,光 pull 不够,实时同步不会恢复)
-  // 走节流版,避免 visibilitychange 短时间内多次触发(iOS 切换 / 键盘弹出都会触发)→ watcher 重启风暴 → 内存涨爆
+  // 切回前台 / 切到后台 — visibilitychange 处理:
+  //   - 后台时:主动关 watcher(WebSocket)→ 让页面 BFCache 资格成立,iOS 不会强制 reload
+  //   - 前台时:重启 watcher + 拉一次 state
+  // 节流版避免 visibilitychange 风暴(iOS 切换 / 键盘弹出都会触发)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible') {
+      // 切到后台 — 关掉 WebSocket。BFCache 不允许开放 WS;关了之后 iOS / Chrome 能把 tab 整个冷冻起来
+      // 切回前台时再 reopen(下面的 visible 分支)。即使 iOS 没用 BFCache,关 WS 也省电
+      try { stopWatch(); } catch (_) {}
+      return;
+    }
     if (!uid || !state) return;
     startWatchThrottled('visibilitychange');
     pullStateOnceThrottled('visibilitychange');
+  });
+  // BFCache 恢复事件:页面从 BFCache 复原(没触发 load / DOMContentLoaded)。
+  // 这时 watcher 一定是关的(上面 hidden 分支关掉的),要重启
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted && uid && state) {
+      console.log('[bfcache] restored, restart watcher + pull');
+      startWatchThrottled('pageshow-bfcache');
+      pullStateOnceThrottled('pageshow-bfcache');
+    }
   });
   // 网络从断开恢复 → 重启 watcher + 拉一次状态。手机在地铁、电梯进出 / WiFi 切 4G 时常见
   window.addEventListener('online', () => {

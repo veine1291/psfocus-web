@@ -398,7 +398,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260521-0303';
+const _PSFOCUS_BUILD = '20260523-0301';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // 注册 Service Worker — Chrome / Safari 杀掉 tab 重新加载时,直接吃缓存起来,不依赖网络
@@ -5682,7 +5682,7 @@ function openTaskDetail(id) {
       </datalist>
 
       <div class="dp-section">
-        <div class="dp-section-title">子待办 <span class="dp-section-count">${subItems.length}</span></div>
+        <div class="dp-section-title">子待办 <span class="dp-section-count">${subItemsRaw.length}</span></div>
         <div class="dp-sub-add">
           <input type="text" class="dp-sub-add-input" placeholder="加个子任务,回车确认">
         </div>

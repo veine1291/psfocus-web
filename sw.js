@@ -1,7 +1,7 @@
 // PSFocus mobile · Service Worker
 // 目的:Chrome / Safari iOS 杀掉 tab 重新加载时,不依赖网络也能起来 — 防「无法打开此网页」
 // 策略:app shell(html / js / css)走 stale-while-revalidate,云端 API(CloudBase)绝不拦
-const SW_BUILD = '20260521-0303';
+const SW_BUILD = '20260523-0301';
 const CACHE_NAME = 'psfocus-shell-' + SW_BUILD;
 const SHELL_URLS = ['./', './index.html', './app.js', './style.css'];
 
@@ -38,7 +38,9 @@ self.addEventListener('fetch', (e) => {
   // 没 cache 时就走网络,网络也失败时返回 cache 里 fallback(/ 或 index.html)
   e.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
-    const cached = await cache.match(req, { ignoreSearch: true });
+    // 关键:**不**忽略 query string —— 否则 app.js?v=新 会命中老缓存,版本号 bump 失效
+    // 不同 ?v= 算两个不同 URL 各自缓存;同 URL 走 stale-while-revalidate
+    const cached = await cache.match(req);
     const networkPromise = fetch(req)
       .then(res => {
         if (res && res.ok) cache.put(req, res.clone()).catch(() => {});
@@ -54,6 +56,7 @@ self.addEventListener('fetch', (e) => {
     const netRes = await networkPromise;
     if (netRes) return netRes;
     // 网络也挂了 → 兜底 index.html(避免「无法打开此网页」白屏)
+    // fallback 还是用 ignoreSearch:true,任意 query 都能 fallback 到一个 index.html
     const fallback = await cache.match('./index.html', { ignoreSearch: true })
       || await cache.match('./', { ignoreSearch: true });
     if (fallback) return fallback;

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0312';
+const _PSFOCUS_BUILD = '20260527-0101';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7229,22 +7229,92 @@ function _openSummaryTagRenameSheet(oldName) {
     body.querySelector('[data-rename-action="ok"]').onclick = () => {
       const newName = (input.value || '').trim();
       if (!newName || newName === oldName) { closeSheet(); return; }
-      // 改 summaryTags
-      const tg = (state.summaryTags || []).find(t => t.name === oldName);
-      if (tg) tg.name = newName;
-      // 改所有 summary 里的 tags 引用 + 笔记里 #oldName 文本
-      for (const s of (state.summaries || [])) {
-        if (Array.isArray(s.tags)) s.tags = s.tags.map(x => x === oldName ? newName : (x.startsWith(oldName + '/') ? newName + x.slice(oldName.length) : x));
-        if (s.note) {
-          const re = new RegExp('#' + oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g');
-          s.note = s.note.replace(re, '#' + newName);
-        }
-      }
-      pushState();
-      closeSheet();
-      renderAll();
+      _summaryRenameOrMergeTag(oldName, newName, () => closeSheet());
     };
   });
+}
+
+// 重命名 tag — 撞名时弹合并确认 + 去重(同 desktop 端逻辑,2026-05-27 加)
+// 之前直接改名会让 summaryTags 表里出现两条同名 entry,后续删除时两条都被命中,
+// 该 tag 下的所有笔记一起失去标签(Kayu 真实事故 — #日記 改 #日记 后 52 条笔记 tag 消失)
+function _summaryRenameOrMergeTag(oldName, newName, onDone) {
+  if (!oldName || !newName || oldName === newName) { if (onDone) onDone(); return; }
+  const tags = state.summaryTags || [];
+  const movingEntries = tags.filter(t =>
+    t.name === oldName || t.name.startsWith(oldName + '/'));
+  const targetNames = movingEntries.map(t =>
+    t.name === oldName ? newName : newName + t.name.slice(oldName.length));
+  const existingInNewNs = tags.filter(t =>
+    t.name !== oldName && !t.name.startsWith(oldName + '/') &&
+    (t.name === newName || t.name.startsWith(newName + '/')));
+  const collisionNames = existingInNewNs
+    .map(t => t.name)
+    .filter(n => targetNames.includes(n));
+
+  const _doApply = () => {
+    for (const me of movingEntries) {
+      const newTagName = me.name === oldName ? newName : newName + me.name.slice(oldName.length);
+      const dup = state.summaryTags.find(t => t !== me && t.name === newTagName);
+      if (dup) {
+        state.summaryTags = state.summaryTags.filter(t => t !== me);
+      } else {
+        me.name = newTagName;
+      }
+    }
+    for (const s of (state.summaries || [])) {
+      if (!Array.isArray(s.tags)) continue;
+      let changed = false;
+      const mapped = s.tags.map(x => {
+        if (x === oldName) { changed = true; return newName; }
+        if (x.startsWith(oldName + '/')) { changed = true; return newName + x.slice(oldName.length); }
+        return x;
+      });
+      const deduped = [];
+      const seen = new Set();
+      for (const t of mapped) { if (!seen.has(t)) { seen.add(t); deduped.push(t); } }
+      if (deduped.length !== s.tags.length || changed) {
+        s.tags = deduped;
+        const re = new RegExp('#' + oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+        s.note = (s.note || '').replace(re, '#' + newName);
+        s.updatedAt = Date.now();
+      }
+    }
+    if (Array.isArray(summaryState.tagFilters)) {
+      const f = summaryState.tagFilters.map(t =>
+        (t === oldName || t.startsWith(oldName + '/'))
+          ? newName + t.slice(oldName.length) : t);
+      const fSeen = new Set();
+      summaryState.tagFilters = f.filter(t => fSeen.has(t) ? false : (fSeen.add(t), true));
+    }
+    pushState();
+    if (onDone) onDone();
+    renderAll();
+  };
+
+  if (collisionNames.length) {
+    const tagsText = collisionNames.slice(0, 5).map(n => '#' + n).join(' ');
+    const more = collisionNames.length > 5 ? ` 等 ${collisionNames.length} 个` : '';
+    const msg = '已存在同名标签 ' + tagsText + more + '。\n\n'
+      + '继续将把 #' + oldName + (movingEntries.length > 1 ? ' 及其子标签' : '')
+      + ' 合并进 #' + newName + ':\n'
+      + '· 两边笔记一起共用合并后的标签\n'
+      + '· 每条笔记的 tags 自动去重\n'
+      + '· 保留已存在那条的设置(置顶/颜色/排序)';
+    if (typeof showConfirm === 'function') {
+      showConfirm({
+        title: '合并标签',
+        message: msg,
+        okText: '合并',
+        onOk: _doApply,
+      });
+    } else if (confirm(msg + '\n\n确定合并?')) {
+      _doApply();
+    } else {
+      if (onDone) onDone();
+    }
+    return;
+  }
+  _doApply();
 }
 // 删除标签 sheet
 function _openSummaryTagDeleteSheet(tagName) {

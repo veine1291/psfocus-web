@@ -633,7 +633,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0308';
+const _PSFOCUS_BUILD = '20260526-0309';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -754,9 +754,11 @@ let _aliveCount = 0;
 let _lastHeartbeatPushAt = 0;
 function _startAliveHeartbeat() {
   if (_aliveTimer) return;
+  // 调稀版 — prefetch 修好后心跳改为兜底用途,不再高频
+  // ping 30s 一次(每小时 120 行,对 300 行环形 buf 一致;留约 1 小时事件)
+  // push 5min 一次(每小时 12 次 ≈ 28MB 上行 + CloudBase 函数调用)
   _aliveTimer = setInterval(() => {
     _aliveCount++;
-    // 5s 一次 ping;每 30 秒(=6 次)顺手强推日志
     const memHint = (() => {
       try {
         if (performance && performance.memory) {
@@ -767,11 +769,11 @@ function _startAliveHeartbeat() {
       return '';
     })();
     psLog('PING', 'alive #' + _aliveCount, 'vis=' + document.visibilityState, memHint);
-    // 12 次 ping = 60 秒,推一次。每次推 ~2.3MB,所以不能太频繁。
-    if (_aliveCount % 12 === 0) {
+    // 10 次 ping = 5 分钟推一次
+    if (_aliveCount % 10 === 0) {
       try { _pushMobileLogCloud(true); } catch (_) {}
     }
-  }, 5000);
+  }, 30000);
 }
 function _stopAliveHeartbeat() {
   if (_aliveTimer) { clearInterval(_aliveTimer); _aliveTimer = null; }

@@ -44,6 +44,51 @@ function psLog(level, ...args) {
   } catch (_) {}
   // 节流写盘 — 1s 内合并写,避免高频写 localStorage 拖慢主线程
   if (!_psLogFlushTimer) _psLogFlushTimer = setTimeout(_psLogFlush, 1000);
+  // 推一份到云端 — 自动 debounce,失败不影响主流程
+  try { _pushMobileLogCloud(level === 'ERR'); } catch (_) {}
+}
+
+// 推日志到云端 — 用 db.update 局部更新 _mobileDebugLog 字段(不动主 state),
+// Kayu 不需要做任何事:桌面端的 cloud watch 拉到这个字段后会自动写到 ~/Documents/PSFocus/mobile-debug.log,
+// 我 (Claude) 直接读那个文件就能看完整日志。
+// - 正常 psLog 触发 debounce 3s 合并推
+// - ERR / showFatal / pagehide 触发立即推
+let _logPushTimer = null;
+let _logPushInFlight = false;
+let _logPushPending = false;
+function _pushMobileLogCloud(force) {
+  if (!uid || !db) return;
+  if (force) {
+    if (_logPushTimer) { clearTimeout(_logPushTimer); _logPushTimer = null; }
+    _doPushLogCloud();
+    return;
+  }
+  if (_logPushTimer) return;
+  _logPushTimer = setTimeout(() => { _logPushTimer = null; _doPushLogCloud(); }, 3000);
+}
+async function _doPushLogCloud() {
+  if (!uid || !db) return;
+  if (_logPushInFlight) { _logPushPending = true; return; }
+  _logPushInFlight = true;
+  try {
+    const meta = {
+      build: (typeof _PSFOCUS_BUILD !== 'undefined' ? _PSFOCUS_BUILD : '?'),
+      ua: ((navigator && navigator.userAgent) || '').slice(0, 200),
+      url: location.href,
+      updatedAt: Date.now(),
+    };
+    const lines = (_psLogBuf || []).slice(-_PSLOG_MAX);
+    await db.collection(COLLECTION).doc(uid).update({
+      _mobileDebugLog: lines,
+      _mobileDebugMeta: meta,
+    });
+  } catch (e) {
+    // 写失败别再 psLog,会引发递归。控制台一笔就够
+    try { console.warn('[mlog push fail]', e && e.message || e); } catch (_) {}
+  } finally {
+    _logPushInFlight = false;
+    if (_logPushPending) { _logPushPending = false; setTimeout(_doPushLogCloud, 100); }
+  }
 }
 // 进程任何"该坐下来想想"的点(crash 前)立刻把 buf 同步写盘,
 // 否则节流 timer 还没跑就崩了,日志丢
@@ -77,6 +122,8 @@ function showFatal(msg, opts) {
   const composed = `[v${ver}] ${body}\n\n— 最近日志 (${(_psLogBuf||[]).length} 条) —\n${tail}`;
   psLog('ERR', 'showFatal:', body);
   _psLogFlushNow();
+  // 立即把日志推一份到云端 — 即便接下来 tab 被 kill,我从桌面端落盘文件也能看到完整崩前痕迹
+  try { _pushMobileLogCloud(true); } catch (_) {}
   const box = document.getElementById('fatal-err');
   const m = document.getElementById('fatal-err-msg');
   if (!box || !m) return;
@@ -161,9 +208,16 @@ window.addEventListener('unhandledrejection', (e) => {
   showFatal('未处理的 Promise:' + (stack || msg));
 });
 // 页面隐藏/卸载前把日志强写一次 — iOS Safari 经常在切到后台时被冷冻,日志可能丢
-window.addEventListener('pagehide', _psLogFlushNow);
+// 同时强推一份到云端,即便后续被 kill 我也能从云端 + 桌面端落盘文件看到崩前的日志
+window.addEventListener('pagehide', () => {
+  _psLogFlushNow();
+  try { _pushMobileLogCloud(true); } catch (_) {}
+});
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') _psLogFlushNow();
+  if (document.visibilityState !== 'visible') {
+    _psLogFlushNow();
+    try { _pushMobileLogCloud(true); } catch (_) {}
+  }
 });
 
 // ===== TCB 初始化 =====
@@ -539,7 +593,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0303';
+const _PSFOCUS_BUILD = '20260526-0304';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 

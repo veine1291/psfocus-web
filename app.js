@@ -633,7 +633,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0306';
+const _PSFOCUS_BUILD = '20260526-0307';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -740,6 +740,10 @@ async function bindCloud() {
   // 加载稳定后,后台慢慢把所有项目封面图预缓存到本地 — 之后进项目 tab 不再走网络
   setTimeout(() => { try { prefetchWorksCovers(); } catch (e) { psLog('ERR', 'prefetchWorksCovers throw', e); } }, 6000);
   psLog('LOG', 'bindCloud:done');
+  // 兜底:一登入成功立即推一次日志 — 把累在 localStorage 里的(上次崩前 + 本次 boot)
+  // 一次性飞到云端。若用户登进来就崩,异步 push 飞不出去,这次会丢;但 *下* 一次再登
+  // 时就会把上次崩的日志带过来,desktop 那边就能落到 mobile-debug.log。
+  setTimeout(() => { try { _pushMobileLogCloud(true); } catch (_) {} }, 500);
 }
 function stopWatch() {
   if (watcher) { try { watcher.close(); } catch(_) {} watcher = null; }

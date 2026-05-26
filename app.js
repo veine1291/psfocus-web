@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0311';
+const _PSFOCUS_BUILD = '20260526-0312';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1843,6 +1843,7 @@ function openSummaryInputSheet() {
   // 这样新发的笔记天然就被打上这个标签,不用每次手动 # 一遍
   // 仅当 draft 为空时预填,避免覆盖用户已写的草稿
   _summaryPrefillFilterTagIfEmpty();
+  _savedTaSel = null;
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content sum-input-sheet">
@@ -1858,6 +1859,12 @@ function openSummaryInputSheet() {
           if (actions['summary-submit']) actions['summary-submit']();
         }
       });
+      // textarea 失焦时存最后 cursor 位置 — 工具栏按钮 tap 会让 textarea 失焦,
+      // iOS 上 selectionStart/End 会被清成 0,format 按钮处理时再还原
+      ta.addEventListener('blur', () => {
+        try { _savedTaSel = { start: ta.selectionStart, end: ta.selectionEnd }; } catch (_) {}
+      });
+      ta.addEventListener('focus', () => { _savedTaSel = null; });
       // 同步 focus(仍在 FAB 点击手势内)→ iOS 打开面板即自动弹键盘,不用再点一下框
       ta.focus();
       // 光标置末尾 — 预填后用户继续打字接在 tag 后面,不要插在前面
@@ -1865,6 +1872,12 @@ function openSummaryInputSheet() {
       ta.style.height = 'auto';
       ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
     }
+    // 工具栏按钮 mousedown 阻止默认焦点转移 — 这样点 B/I/H/列表/tag 时
+    // textarea 不会失焦,选区保住,可以连续叠加多种格式(粗+斜=***xxx***)
+    // 这是 WYSIWYG 编辑器标准做法。Submit 按钮不加,要让它正常拿到 click。
+    body.querySelectorAll('.sum-input-toolbar .sum-tb-btn').forEach(b => {
+      b.addEventListener('mousedown', e => e.preventDefault());
+    });
     if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(body);
   });
 }
@@ -1919,9 +1932,16 @@ function _renderSummaryInputBox() {
     </div>
   </div>` : '';
   const hasPending = Object.keys(summaryState.pendingModuleValues || {}).length > 0;
+  const draft = summaryState.draftNote || '';
+  // 实时预览:渲染当前 draft 的 markdown,让用户看到粗体/标题/列表/tag 真正长啥样,
+  // 不用脑补 ** 之间的字会变粗。textarea 改字时 summary-input-autosize 同步刷
+  const previewInner = draft.trim()
+    ? _renderSummaryNoteHtml(draft)
+    : '<span class="sum-input-preview-hint">预览效果会显示在这里</span>';
   return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
     <textarea class="sum-input" rows="2" placeholder="现在的想法是…"
-      data-action-input="summary-input-autosize">${esc(summaryState.draftNote || '')}</textarea>
+      data-action-input="summary-input-autosize">${esc(draft)}</textarea>
+    <div class="sum-input-preview ${draft.trim() ? '' : 'sum-input-preview-empty'}" id="sum-input-preview">${previewInner}</div>
     ${pendingImgs ? `<div class="sum-input-pending">${pendingImgs}</div>` : ''}
     ${todayModsHtml}
     <div class="sum-input-toolbar">
@@ -1942,6 +1962,51 @@ function _renderSummaryInputBox() {
       <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
     </div>
   </div>`;
+}
+
+// 取摘要输入框 textarea — 优先 sheet 里的(避免误打到主视图的同名 class)
+function _summaryInputTa() {
+  return document.querySelector('#sheet-body .sum-input')
+      || document.querySelector('.sum-input');
+}
+
+// 用 _savedTaSel 兜底:格式按钮 tap 时 textarea 短暂失焦,iOS 可能 selectionStart 归零;
+// 我们在 textarea blur 时保存最后一次 sel,format 触发时若发现 sel=0..0 且我们有备份就还原
+let _savedTaSel = null;
+function _restoreTaSelIfBlurred(ta) {
+  if (!ta || !_savedTaSel) return;
+  if ((ta.selectionStart || 0) === 0 && (ta.selectionEnd || 0) === 0
+      && (ta.value || '').length > 0) {
+    try { ta.setSelectionRange(_savedTaSel.start, _savedTaSel.end); } catch (_) {}
+  }
+}
+
+// 同步 ta.value → draftNote 并刷新预览块 + 重排高度;
+// 任何修改 textarea 的格式按钮都得调它,否则:
+//   1) draftNote 滞后 → renderAll 重新挂载时撤销了用户的格式编辑
+//   2) 预览块跟手输入不一致
+function _syncDraftFromTa(ta) {
+  if (!ta) return;
+  summaryState.draftNote = ta.value;
+  try { _refreshSummaryInputPreview(); } catch (_) {}
+  try {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+  } catch (_) {}
+}
+
+// 刷新输入框下方的实时预览 — 内容空时显示 hint,有内容时渲染 markdown
+function _refreshSummaryInputPreview() {
+  const preview = document.getElementById('sum-input-preview');
+  if (!preview) return;
+  const v = summaryState.draftNote || '';
+  if (v.trim() && typeof _renderSummaryNoteHtml === 'function') {
+    preview.innerHTML = _renderSummaryNoteHtml(v);
+    preview.classList.remove('sum-input-preview-empty');
+  } else {
+    preview.innerHTML = '<span class="sum-input-preview-hint">预览效果会显示在这里</span>';
+    preview.classList.add('sum-input-preview-empty');
+  }
 }
 
 function _renderSummaryModuleEditor(m, dayKey) {
@@ -2504,11 +2569,14 @@ const _summaryActions = {
       el._autosizeRAF = null;
       el.style.height = 'auto';
       el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+      // 同步刷新实时预览块
+      try { _refreshSummaryInputPreview(); } catch (_) {}
     });
   },
   'summary-tb-tag': () => {
-    const ta = document.querySelector('.sum-input');
+    const ta = _summaryInputTa();
     if (!ta) return;
+    _restoreTaSelIfBlurred(ta);
     ta.focus();
     const s = ta.selectionStart || 0;
     const before = ta.value.slice(0, s);
@@ -2517,11 +2585,13 @@ const _summaryActions = {
     ta.value = before + sep + '#' + after;
     const np = (before + sep + '#').length;
     ta.setSelectionRange(np, np);
+    _syncDraftFromTa(ta);
   },
   'summary-tb-format': (el) => {
     const fmt = el.dataset.fmt;
-    const ta = document.querySelector('.sum-input');
+    const ta = _summaryInputTa();
     if (!ta) return;
+    _restoreTaSelIfBlurred(ta);
     ta.focus();
     const v = ta.value;
     const s = ta.selectionStart || 0;
@@ -2544,16 +2614,24 @@ const _summaryActions = {
       ta.setSelectionRange(np, np);
     };
     const _wrap = (mark) => {
-      const inner = sel || '文字';
-      ta.value = before + mark + inner + mark + after;
-      const ns = before.length + mark.length;
-      ta.setSelectionRange(ns, ns + inner.length);
+      // 有选区:包起来,新选区落在 inner 上 — 再点别的格式按钮能继续叠加(粗+斜=***xxx***)
+      // 无选区:直接插入两段 mark,光标落在中间,用户继续打字立即被格式包住
+      if (sel) {
+        ta.value = before + mark + sel + mark + after;
+        const ns = before.length + mark.length;
+        ta.setSelectionRange(ns, ns + sel.length);
+      } else {
+        ta.value = before + mark + mark + after;
+        const np = before.length + mark.length;
+        ta.setSelectionRange(np, np);
+      }
     };
     if (fmt === 'bold')        _wrap('**');
     else if (fmt === 'italic') _wrap('*');
     else if (fmt === 'head')   _linePrefix('# ');
     else if (fmt === 'ul')     _linePrefix('- ');
     else if (fmt === 'ol')     _linePrefix('1. ');
+    _syncDraftFromTa(ta);
   },
   'summary-upload-image': async (el) => {
     const files = Array.from(el.files || []);
@@ -2622,12 +2700,21 @@ const _summaryActions = {
     else delete summaryState.pendingModuleValues[modId];
   },
   'summary-submit': () => {
-    const ta = document.querySelector('.sum-input');
-    const text = ta ? ta.value.trim() : '';
+    const ta = _summaryInputTa();
+    // 优先实时 ta.value,兜底 summaryState.draftNote — 防 textarea 在格式按钮交互后
+    // 出现 value 跟 draftNote 不一致的情况(之前 Kayu 报"无法发布"的现象很可能就是这个)
+    let text = ta ? (ta.value || '').trim() : '';
+    if (!text) text = String(summaryState.draftNote || '').trim();
     const imgs = summaryState.pendingImages.slice();
     const pendingMods = Object.keys(summaryState.pendingModuleValues || {});
     const hasNoteOrImg = !!text || imgs.length > 0;
-    if (!hasNoteOrImg && !pendingMods.length) return;
+    if (!hasNoteOrImg && !pendingMods.length) {
+      // 给用户反馈 — 之前是静默 return,Kayu 反复点都不响应根本看不出原因
+      if (typeof showToast === 'function') showToast('内容是空的,先写点啥');
+      psLog('WARN', 'summary-submit: empty (ta.value=' + (ta ? JSON.stringify((ta.value||'').slice(0,50)) : 'no-ta')
+        + ' draftNote=' + JSON.stringify((summaryState.draftNote||'').slice(0,50)) + ')');
+      return;
+    }
     const now = Date.now();
     if (pendingMods.length) {
       const todayKey = _todayKey();

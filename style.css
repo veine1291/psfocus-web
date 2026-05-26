@@ -3598,6 +3598,40 @@ html, body { overscroll-behavior-y: contain; }
   margin: 0 2px 0 -2px;
 }
 
+/* 摘要输入框实时预览块 — 渲染 markdown,让用户看到粗体/标题/列表/tag 真实效果 */
+.sum-input-preview {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-section);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  max-height: 160px;
+  overflow-y: auto;
+  word-break: break-word;
+}
+.sum-input-preview-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.sum-input-preview-hint { font-size: 11.5px; }
+.sum-input-preview b { font-weight: 700; }
+.sum-input-preview i { font-style: italic; }
+.sum-input-preview .sum-md-h {
+  font-size: 14px; font-weight: 600; margin: 4px 0 2px;
+}
+.sum-input-preview .sum-md-ul,
+.sum-input-preview .sum-md-ol { padding-left: 20px; margin: 2px 0; }
+.sum-input-preview .sum-md-tag {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
 .sum-input-toolbar {
   display: flex;
   align-items: center;

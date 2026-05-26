@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0101';
+const _PSFOCUS_BUILD = '20260527-0201';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1630,7 +1630,15 @@ let summaryState = {
   inputModsCollapsed: (() => { try { return localStorage.getItem('psfocus_inputModsCollapsed') === '1'; } catch (_) { return false; } })(),
   // tag 侧栏:父 tag 折叠子 tag 状态、大分类(置顶 / 全部)折叠状态
   collapsedTags: new Set(),
-  collapsedSections: new Set(),
+  // 大类折叠状态 — localStorage 跨刷新保留;首次默认「项目标签」折叠
+  // (项目 tag 是时间轴自动生成的,通常一大堆,默认占视野不合理)
+  collapsedSections: (() => {
+    try {
+      const raw = localStorage.getItem('psfocus_sumCollapsedSections');
+      if (raw == null) return new Set(['project']);
+      return new Set(JSON.parse(raw));
+    } catch (_) { return new Set(['project']); }
+  })(),
 };
 
 // === 辅助函数(对齐桌面 main.js)===
@@ -2461,13 +2469,17 @@ const _summaryActions = {
     else summaryState.collapsedTags.add(t);
     _renderSummaryDrawerNav();
   },
-  // 大分类(置顶/全部)折叠
+  // 大分类(置顶/项目/全部)折叠 — localStorage 持久化跨刷新保留
   'summary-section-toggle': (el) => {
     const k = el.dataset.section;
     if (!k) return;
     if (!summaryState.collapsedSections) summaryState.collapsedSections = new Set();
     if (summaryState.collapsedSections.has(k)) summaryState.collapsedSections.delete(k);
     else summaryState.collapsedSections.add(k);
+    try {
+      localStorage.setItem('psfocus_sumCollapsedSections',
+        JSON.stringify(Array.from(summaryState.collapsedSections)));
+    } catch (_) {}
     _renderSummaryDrawerNav();
   },
   // 单条 tag 的更多菜单(置顶 / 编辑 / 删除)
@@ -7406,6 +7418,7 @@ function _renderSummaryDrawerNav() {
   const pinnedHidden  = sec.has('pinned');
   const projectHidden = sec.has('project');
   const allHidden     = sec.has('all');
+  // 「我的标签」放在「项目标签」之上 — 用户自建 tag 是主用例;项目标签默认折叠(也是项目自动生成的辅料,默认占视野不合理)
   body.innerHTML = `
     <button class="sum-nav-row sum-nav-row-main ${summaryState.filter==='all'?'active':''}"
       data-action="summary-filter" data-filter="all">
@@ -7413,10 +7426,10 @@ function _renderSummaryDrawerNav() {
     </button>
     ${pinned.length ? `${sectionHead('pinned', '置顶标签')}
       ${pinnedHidden ? '' : pinned.map(renderTagRow).join('')}` : ''}
-    ${projectTags.length ? `${sectionHead('project', '项目标签')}
-      ${projectHidden ? '' : projectTags.map(renderTagRow).join('')}` : ''}
     ${userTags.length ? `${sectionHead('all', '我的标签')}
       ${allHidden ? '' : userTags.map(renderTagRow).join('')}` : (tags.length ? '' : '<div class="sum-nav-empty">还没有标签 — 写笔记时输入 #xxx 自动建立</div>')}
+    ${projectTags.length ? `${sectionHead('project', '项目标签')}
+      ${projectHidden ? '' : projectTags.map(renderTagRow).join('')}` : ''}
   `;
   // tag 点击 filter:本地 listener 关 drawer + 触发 filter(全局 dispatcher 也会接,但顺序保证 close drawer)
   body.querySelectorAll('[data-action="summary-filter"]').forEach(b => {

@@ -46,15 +46,20 @@ function psLog(level, ...args) {
   if (!_psLogFlushTimer) _psLogFlushTimer = setTimeout(_psLogFlush, 1000);
   // 把日志快照同步注入 state,任何 pushState 都会顺路带上去,省掉单独的云调用
   // 注意:只是改 state 的字段,不触发 pushState — 这里不能 push,会变成每条日志一次云调用
-  if (state) {
-    state._mobileDebugLog = _psLogBuf.slice(-_PSLOG_MAX);
-    state._mobileDebugMeta = {
-      build: (typeof _PSFOCUS_BUILD !== 'undefined' ? _PSFOCUS_BUILD : '?'),
-      ua: ((navigator && navigator.userAgent) || '').slice(0, 200),
-      url: location.href,
-      updatedAt: Date.now(),
-    };
-  }
+  // ⚠️ 用 try/catch 包 — `state` 用 let 声明在文件后面(行 282 附近),
+  // 但 psLog 在文件最前面就被调用了,会落进 TDZ 触发 ReferenceError 把整个 boot 干掉
+  // → setupAuth 没机会绑登录按钮 → "登录键按了没用"。所以这里必须吞掉异常。
+  try {
+    if (state) {
+      state._mobileDebugLog = _psLogBuf.slice(-_PSLOG_MAX);
+      state._mobileDebugMeta = {
+        build: (typeof _PSFOCUS_BUILD !== 'undefined' ? _PSFOCUS_BUILD : '?'),
+        ua: ((navigator && navigator.userAgent) || '').slice(0, 200),
+        url: location.href,
+        updatedAt: Date.now(),
+      };
+    }
+  } catch (_) {}
   // ERR 级别 → 立刻强推一次到云端,即便 tab 接下来被 kill 我也能看到崩前痕迹
   if (level === 'ERR') {
     try { _pushMobileLogCloud(true); } catch (_) {}
@@ -628,7 +633,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0305';
+const _PSFOCUS_BUILD = '20260526-0306';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 

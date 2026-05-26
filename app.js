@@ -216,12 +216,22 @@ function showFatal(msg, opts) {
   if (app) app.classList.add('hidden');
 }
 window.addEventListener('error', (e) => {
-  // e.message 跨源时为 "Script error.",但 filename/lineno/colno 通常仍可拿
-  const fileInfo = e && (e.filename || e.lineno != null)
-    ? ` @ ${e.filename || '?'}:${e.lineno || '?'}:${e.colno || '?'}`
-    : '';
+  // e.message 跨源时为 "Script error.",没 stack 没 filename(CORS 屏蔽)。
+  // 这种几乎总是 cloudbase SDK 内部跨源脚本的暂态异常(WS 抖、call 失败、SDK 内部 promise),
+  // SDK 自己会重试。不要把它当致命错挡住 UI — 之前会让 Kayu 看到红卡片以为崩了,
+  // 实际 app 还在正常跑。只 log 不 fatal。
+  const msg = (e && e.message) || 'JS 错误';
   const stack = e && e.error && e.error.stack;
-  const detail = stack || ((e && e.message) || 'JS 错误') + fileInfo;
+  const filename = (e && e.filename) || '';
+  const isOpaqueCrossOrigin = (msg === 'Script error.' && !stack && !filename);
+  if (isOpaqueCrossOrigin) {
+    psLog('WARN', 'cross-origin Script error swallowed (likely cloudbase SDK transient)');
+    return;
+  }
+  const fileInfo = (filename || e.lineno != null)
+    ? ` @ ${filename || '?'}:${e.lineno || '?'}:${e.colno || '?'}`
+    : '';
+  const detail = stack || (msg + fileInfo);
   psLog('ERR', 'window.error:', detail);
   _psLogFlushNow();
   showFatal(detail);
@@ -237,7 +247,11 @@ window.addEventListener('unhandledrejection', (e) => {
     /Network request failed/i.test(msg) ||
     /timeout/i.test(msg) ||
     /WebSocket/i.test(msg) ||
-    /AbortError/i.test(msg);
+    /AbortError/i.test(msg) ||
+    /callFunction/i.test(msg) ||
+    /cloudbase|tcb/i.test(msg) ||
+    /Load failed/i.test(msg) ||
+    msg === '';   // 空消息 = 跨源屏蔽,跟 "Script error." 同理
   if (isTransient) {
     psLog('WARN', 'transient rejection swallowed:', msg);
     e.preventDefault && e.preventDefault();
@@ -633,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0309';
+const _PSFOCUS_BUILD = '20260526-0310';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 

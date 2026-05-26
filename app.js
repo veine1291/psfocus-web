@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0201';
+const _PSFOCUS_BUILD = '20260527-0301';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1851,38 +1851,26 @@ function openSummaryInputSheet() {
   // 这样新发的笔记天然就被打上这个标签,不用每次手动 # 一遍
   // 仅当 draft 为空时预填,避免覆盖用户已写的草稿
   _summaryPrefillFilterTagIfEmpty();
-  _savedTaSel = null;
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content sum-input-sheet">
       ${_renderSummaryInputBox()}
     </div>
   `, (body) => {
-    const ta = body.querySelector('.sum-input');
-    if (ta) {
-      ta.addEventListener('paste', _summaryHandlePaste);
-      ta.addEventListener('keydown', (e) => {
+    const ed = body.querySelector('.sum-input');
+    if (ed) {
+      ed.addEventListener('paste', _summaryHandlePaste);
+      ed.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
           if (actions['summary-submit']) actions['summary-submit']();
         }
       });
-      // textarea 失焦时存最后 cursor 位置 — 工具栏按钮 tap 会让 textarea 失焦,
-      // iOS 上 selectionStart/End 会被清成 0,format 按钮处理时再还原
-      ta.addEventListener('blur', () => {
-        try { _savedTaSel = { start: ta.selectionStart, end: ta.selectionEnd }; } catch (_) {}
-      });
-      ta.addEventListener('focus', () => { _savedTaSel = null; });
-      // 同步 focus(仍在 FAB 点击手势内)→ iOS 打开面板即自动弹键盘,不用再点一下框
-      ta.focus();
-      // 光标置末尾 — 预填后用户继续打字接在 tag 后面,不要插在前面
-      try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
-      ta.style.height = 'auto';
-      ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+      ed.focus();
+      _caretToEnd(ed);
     }
-    // 工具栏按钮 mousedown 阻止默认焦点转移 — 这样点 B/I/H/列表/tag 时
-    // textarea 不会失焦,选区保住,可以连续叠加多种格式(粗+斜=***xxx***)
-    // 这是 WYSIWYG 编辑器标准做法。Submit 按钮不加,要让它正常拿到 click。
+    // 工具栏按钮 mousedown 阻止默认焦点转移 — 编辑器不失焦,选区保住,
+    // execCommand 才能正确作用于当前选区(WYSIWYG 标准做法)
     body.querySelectorAll('.sum-input-toolbar .sum-tb-btn').forEach(b => {
       b.addEventListener('mousedown', e => e.preventDefault());
     });
@@ -1941,15 +1929,12 @@ function _renderSummaryInputBox() {
   </div>` : '';
   const hasPending = Object.keys(summaryState.pendingModuleValues || {}).length > 0;
   const draft = summaryState.draftNote || '';
-  // 实时预览:渲染当前 draft 的 markdown,让用户看到粗体/标题/列表/tag 真正长啥样,
-  // 不用脑补 ** 之间的字会变粗。textarea 改字时 summary-input-autosize 同步刷
-  const previewInner = draft.trim()
-    ? _renderSummaryNoteHtml(draft)
-    : '<span class="sum-input-preview-hint">预览效果会显示在这里</span>';
+  // 2026-05-27 textarea + 预览框 → contenteditable WYSIWYG。Kayu 要实时看效果不分两块。
+  // 编辑器 IS 预览:粗体直接显示加粗、标题直接显示大字。底层保存还是 markdown 串。
   return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
-    <textarea class="sum-input" rows="2" placeholder="现在的想法是…"
-      data-action-input="summary-input-autosize">${esc(draft)}</textarea>
-    <div class="sum-input-preview ${draft.trim() ? '' : 'sum-input-preview-empty'}" id="sum-input-preview">${previewInner}</div>
+    <div class="sum-input" contenteditable="true"
+      data-action-input="summary-input-autosize"
+      data-placeholder="现在的想法是…">${_mdToEditHtml(draft)}</div>
     ${pendingImgs ? `<div class="sum-input-pending">${pendingImgs}</div>` : ''}
     ${todayModsHtml}
     <div class="sum-input-toolbar">
@@ -1972,10 +1957,136 @@ function _renderSummaryInputBox() {
   </div>`;
 }
 
-// 取摘要输入框 textarea — 优先 sheet 里的(避免误打到主视图的同名 class)
+// 取摘要输入框 — contenteditable div (优先 sheet 里的, 避免误打到主视图同名 class)
+// 2026-05-27 textarea + 独立预览框 → contenteditable WYSIWYG 重构,Kayu 要实时显示不分两块
 function _summaryInputTa() {
   return document.querySelector('#sheet-body .sum-input')
       || document.querySelector('.sum-input');
+}
+
+// ===== Markdown <-> contenteditable HTML 双向转换 =====
+// 保存格式仍是 markdown 字符串(summaryState.draftNote / state.summaries[].note),
+// 编辑器渲染时 md → editable HTML, input 事件时反向 HTML → md 同步回 draftNote。
+function _mdToEditHtml(md) {
+  const txt = String(md || '');
+  if (!txt) return '<div><br></div>';
+  const _e = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const _inline = (s) => {
+    let h = _e(s);
+    const _PA = '', _PB = '';
+    h = h.replace(/\*\*([^\n]+?)\*\*/g, _PA + '$1' + _PB);
+    h = h.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<i>$1</i>');
+    h = h.split(_PA).join('<b>').split(_PB).join('</b>');
+    return h;
+  };
+  const lines = txt.split('\n');
+  const blocks = [];
+  let listType = null, listItems = [];
+  const flushList = () => {
+    if (listType) {
+      blocks.push('<' + listType + '>' + listItems.join('') + '</' + listType + '>');
+      listType = null; listItems = [];
+    }
+  };
+  for (const line of lines) {
+    if (/^# (.+)$/.test(line)) {
+      flushList(); blocks.push('<h3>' + _inline(line.slice(2)) + '</h3>');
+    } else if (/^- (.+)$/.test(line)) {
+      if (listType !== 'ul') { flushList(); listType = 'ul'; }
+      listItems.push('<li>' + _inline(line.slice(2)) + '</li>');
+    } else if (/^\d+\. (.+)$/.test(line)) {
+      if (listType !== 'ol') { flushList(); listType = 'ol'; }
+      listItems.push('<li>' + _inline(line.replace(/^\d+\. /, '')) + '</li>');
+    } else {
+      flushList();
+      blocks.push(line.trim() ? '<div>' + _inline(line) + '</div>' : '<div><br></div>');
+    }
+  }
+  flushList();
+  return blocks.join('') || '<div><br></div>';
+}
+
+function _editHtmlToMd(root) {
+  if (!root) return '';
+  let md = '';
+  for (const child of root.childNodes) md += _editNodeToMd(child);
+  return md.replace(/\n+$/, '');
+}
+function _editNodeToMd(node) {
+  if (!node) return '';
+  if (node.nodeType === 3) return node.textContent || '';
+  if (node.nodeType !== 1) return '';
+  const tag = node.tagName.toLowerCase();
+  if (tag === 'br') return '\n';
+  if (tag === 'b' || tag === 'strong') {
+    const inner = _editHtmlToMd(node);
+    return inner ? '**' + inner + '**' : '';
+  }
+  if (tag === 'i' || tag === 'em') {
+    const inner = _editHtmlToMd(node);
+    return inner ? '*' + inner + '*' : '';
+  }
+  if (/^h[1-6]$/.test(tag)) return '# ' + _editHtmlToMd(node) + '\n';
+  if (tag === 'ul') {
+    let out = '';
+    for (const li of node.children) {
+      if (li.tagName.toLowerCase() === 'li') out += '- ' + _editHtmlToMd(li) + '\n';
+    }
+    return out;
+  }
+  if (tag === 'ol') {
+    let i = 1, out = '';
+    for (const li of node.children) {
+      if (li.tagName.toLowerCase() === 'li') { out += i + '. ' + _editHtmlToMd(li) + '\n'; i++; }
+    }
+    return out;
+  }
+  if (tag === 'div' || tag === 'p') {
+    const inner = _editHtmlToMd(node);
+    return inner + (inner.endsWith('\n') ? '' : '\n');
+  }
+  // span, font 等 inline — 仅取内容
+  return _editHtmlToMd(node);
+}
+
+// contenteditable 里:在当前光标处插入纯文本
+function _insertTextAtCaret(text) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) {
+    try { document.execCommand('insertText', false, text); } catch (_) {}
+    return;
+  }
+  const range = sel.getRangeAt(0);
+  range.deleteContents();
+  const node = document.createTextNode(text);
+  range.insertNode(node);
+  range.setStartAfter(node);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+// 光标移到 contenteditable 末尾(替代 textarea.setSelectionRange)
+function _caretToEnd(el) {
+  if (!el) return;
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
+// 同步 contenteditable 内容 → 对应的 state(主输入 draftNote / 编辑 modalState.value)
+function _syncEditorToState(ed) {
+  if (!ed) return;
+  const md = _editHtmlToMd(ed);
+  if (ed.id === 'sum-edit-note-text') {
+    // 老的 mobile 编辑 sheet 用 id 区分;改成 contenteditable 后照样保留 id
+    summaryState._editingNoteMd = md;
+  } else {
+    summaryState.draftNote = md;
+  }
 }
 
 // 用 _savedTaSel 兜底:格式按钮 tap 时 textarea 短暂失焦,iOS 可能 selectionStart 归零;
@@ -2571,79 +2682,49 @@ const _summaryActions = {
     }
   },
   'summary-input-autosize': (el, e) => {
-    // 实时保存草稿 — 防 renderAll(点 dot / 模块按钮等)时 textarea 被替换丢失内容
-    summaryState.draftNote = el.value;
-    // IME 组词期间不 reflow(每段拼音都重排很卡),等 compositionend 触发的最终 input 再 resize
+    // contenteditable WYSIWYG — input event 时 HTML → md 同步回 draftNote / 编辑 modal value。
+    // 组词期间跳过,等 compositionend 触发的最终 input 再处理(防 IME 拼音被打断)
     if (e && e.isComposing) return;
-    // 把 reflow 推到下一帧,不阻塞当前 input event;前一帧没跑完的 cancel 掉,避免堆积
-    if (el._autosizeRAF) cancelAnimationFrame(el._autosizeRAF);
-    el._autosizeRAF = requestAnimationFrame(() => {
-      el._autosizeRAF = null;
-      el.style.height = 'auto';
-      el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-      // 同步刷新实时预览块
-      try { _refreshSummaryInputPreview(); } catch (_) {}
+    // 用 RAF 推一帧,避免高频输入阻塞主线程;前一帧没跑完的 cancel
+    if (el._syncRAF) cancelAnimationFrame(el._syncRAF);
+    el._syncRAF = requestAnimationFrame(() => {
+      el._syncRAF = null;
+      _syncEditorToState(el);
     });
   },
   'summary-tb-tag': () => {
-    const ta = _summaryInputTa();
-    if (!ta) return;
-    _restoreTaSelIfBlurred(ta);
-    ta.focus();
-    const s = ta.selectionStart || 0;
-    const before = ta.value.slice(0, s);
-    const after = ta.value.slice(ta.selectionEnd || s);
-    const sep = (s > 0 && !/\s/.test(before.slice(-1))) ? ' ' : '';
-    ta.value = before + sep + '#' + after;
-    const np = (before + sep + '#').length;
-    ta.setSelectionRange(np, np);
-    _syncDraftFromTa(ta);
+    const ed = _summaryInputTa();
+    if (!ed) return;
+    ed.focus();
+    // 当前光标前是字才补空格,行首/已经有空格就不加(避免行首出现 " #")
+    let sep = '';
+    try {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        const r = sel.getRangeAt(0).cloneRange();
+        r.setStart(ed, 0);
+        const txt = r.toString();
+        if (txt && !/\s$/.test(txt)) sep = ' ';
+      }
+    } catch (_) {}
+    _insertTextAtCaret(sep + '#');
+    _syncEditorToState(ed);
   },
   'summary-tb-format': (el) => {
     const fmt = el.dataset.fmt;
-    const ta = _summaryInputTa();
-    if (!ta) return;
-    _restoreTaSelIfBlurred(ta);
-    ta.focus();
-    const v = ta.value;
-    const s = ta.selectionStart || 0;
-    const e = ta.selectionEnd || 0;
-    const before = v.slice(0, s);
-    const sel = v.slice(s, e);
-    const after = v.slice(e);
-    const _linePrefix = (prefix) => {
-      const lineStart = before.lastIndexOf('\n') + 1;
-      const beforeLine = v.slice(0, lineStart);
-      const lineAndAfter = v.slice(lineStart);
-      const segEnd = e - lineStart;
-      const segText = lineAndAfter.slice(0, segEnd);
-      const tail = lineAndAfter.slice(segEnd);
-      const lines = segText.split('\n');
-      const newLines = lines.map((l, i) => (i === 0 || l.length > 0 ? prefix + l : l));
-      const newSegText = newLines.join('\n');
-      ta.value = beforeLine + newSegText + tail;
-      const np = beforeLine.length + newSegText.length;
-      ta.setSelectionRange(np, np);
-    };
-    const _wrap = (mark) => {
-      // 有选区:包起来,新选区落在 inner 上 — 再点别的格式按钮能继续叠加(粗+斜=***xxx***)
-      // 无选区:直接插入两段 mark,光标落在中间,用户继续打字立即被格式包住
-      if (sel) {
-        ta.value = before + mark + sel + mark + after;
-        const ns = before.length + mark.length;
-        ta.setSelectionRange(ns, ns + sel.length);
-      } else {
-        ta.value = before + mark + mark + after;
-        const np = before.length + mark.length;
-        ta.setSelectionRange(np, np);
-      }
-    };
-    if (fmt === 'bold')        _wrap('**');
-    else if (fmt === 'italic') _wrap('*');
-    else if (fmt === 'head')   _linePrefix('# ');
-    else if (fmt === 'ul')     _linePrefix('- ');
-    else if (fmt === 'ol')     _linePrefix('1. ');
-    _syncDraftFromTa(ta);
+    const ed = _summaryInputTa();
+    if (!ed) return;
+    ed.focus();
+    // execCommand 已 deprecated 但浏览器都还支持, contenteditable WYSIWYG 标准做法
+    try {
+      if (fmt === 'bold')         document.execCommand('bold');
+      else if (fmt === 'italic')  document.execCommand('italic');
+      else if (fmt === 'head')    document.execCommand('formatBlock', false, 'H3');
+      else if (fmt === 'ul')      document.execCommand('insertUnorderedList');
+      else if (fmt === 'ol')      document.execCommand('insertOrderedList');
+      else if (fmt === 'mention') _insertTextAtCaret('@');
+    } catch (_) {}
+    _syncEditorToState(ed);
   },
   'summary-upload-image': async (el) => {
     const files = Array.from(el.files || []);
@@ -2712,10 +2793,12 @@ const _summaryActions = {
     else delete summaryState.pendingModuleValues[modId];
   },
   'summary-submit': () => {
-    const ta = _summaryInputTa();
-    // 优先实时 ta.value,兜底 summaryState.draftNote — 防 textarea 在格式按钮交互后
-    // 出现 value 跟 draftNote 不一致的情况(之前 Kayu 报"无法发布"的现象很可能就是这个)
-    let text = ta ? (ta.value || '').trim() : '';
+    const ed = _summaryInputTa();
+    // 优先实时 editor → md;兜底 summaryState.draftNote
+    let text = '';
+    if (ed) {
+      try { text = _editHtmlToMd(ed).trim(); } catch (_) {}
+    }
     if (!text) text = String(summaryState.draftNote || '').trim();
     const imgs = summaryState.pendingImages.slice();
     const pendingMods = Object.keys(summaryState.pendingModuleValues || {});
@@ -2757,7 +2840,7 @@ const _summaryActions = {
     summaryState.pendingImages = [];
     summaryState.pendingModuleValues = {};
     summaryState.draftNote = '';
-    if (ta) ta.value = '';
+    if (ed) ed.innerHTML = '<div><br></div>';
     pushState();
     if (typeof closeSheet === 'function') closeSheet();   // 收起浮动输入面板
     renderAll();
@@ -2795,6 +2878,8 @@ const _summaryActions = {
     const pad = n => String(n).padStart(2, '0');
     const dt = new Date(s.createdAt || Date.now());
     const dtLocal = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    // 初始化 _editingNoteMd —— 编辑过程中 summary-input-autosize 同步进来
+    summaryState._editingNoteMd = s.note || '';
     showSheet(`
       <div class="sheet-handle"></div>
       <div class="sheet-content">
@@ -2803,23 +2888,35 @@ const _summaryActions = {
           <span class="sum-edit-date-label">日期 / 时间</span>
           <input id="sum-edit-note-date" class="sum-edit-date-input" type="datetime-local" value="${dtLocal}">
         </label>
-        <textarea id="sum-edit-note-text" class="sum-edit-note-textarea"
-          data-action-input="summary-input-autosize"
-          placeholder="备注、笔记…  输入 #xxx 自动加标签" rows="6">${esc(s.note || '')}</textarea>
+        <div class="sum-input-card sum-edit-card" style="margin-top:8px;">
+          <div id="sum-edit-note-text" class="sum-input sum-edit-note-textarea" contenteditable="true"
+            data-action-input="summary-input-autosize"
+            data-placeholder="备注、笔记…  输入 #xxx 自动加标签">${_mdToEditHtml(s.note || '')}</div>
+          <div class="sum-input-toolbar">
+            <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
+            <span class="sum-tb-sep"></span>
+            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="bold" title="粗体"><b>B</b></button>
+            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="italic" title="斜体"><i>I</i></button>
+            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="head" title="标题">H</button>
+            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ul" title="无序"><span class="ico-list"></span></button>
+            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ol" title="有序">1.</button>
+          </div>
+        </div>
         <div style="display:flex;gap:8px;margin-top:14px;">
           <button class="modal-btn" data-action="close-sheet" style="flex:1;">取消</button>
           <button class="modal-btn modal-btn-primary" data-action="summary-edit-note-save" data-id="${esc(id)}" style="flex:1;">保存</button>
         </div>
       </div>
     `, (body) => {
-      // 聚焦 textarea 末尾 + autosize 初始化
-      const ta = body.querySelector('#sum-edit-note-text');
-      if (ta) {
-        ta.focus();
-        try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
-        ta.style.height = 'auto';
-        ta.style.height = Math.min(ta.scrollHeight, 360) + 'px';
+      const ed = body.querySelector('#sum-edit-note-text');
+      if (ed) {
+        ed.focus();
+        _caretToEnd(ed);
       }
+      // 工具栏 mousedown 保护选区(同主输入)
+      body.querySelectorAll('.sum-input-toolbar .sum-tb-btn').forEach(b => {
+        b.addEventListener('mousedown', e => e.preventDefault());
+      });
     });
   },
   // 保存编辑后的笔记 — note + createdAt + 重新解析 tags
@@ -2827,9 +2924,15 @@ const _summaryActions = {
     const id = el.dataset.id;
     const s = (state.summaries || []).find(x => x.id === id);
     if (!s) { closeSheet(); return; }
-    const ta = document.getElementById('sum-edit-note-text');
+    const ed = document.getElementById('sum-edit-note-text');
     const dateInp = document.getElementById('sum-edit-note-date');
-    const nextNote = ta ? ta.value : (s.note || '');
+    // contenteditable → md;兜底 _editingNoteMd
+    let nextNote;
+    if (ed) {
+      try { nextNote = _editHtmlToMd(ed); } catch (_) { nextNote = summaryState._editingNoteMd || (s.note || ''); }
+    } else {
+      nextNote = summaryState._editingNoteMd || (s.note || '');
+    }
     let nextCreatedAt = s.createdAt;
     if (dateInp && dateInp.value) {
       const parsed = new Date(dateInp.value).getTime();

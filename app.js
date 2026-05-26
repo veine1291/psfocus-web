@@ -2,12 +2,126 @@
    PS Focus Mobile — 完整版(任务/日历/统计/设置)
    ========================================================= */
 
+// ===== 持久化日志系统 =====
+// 用户反馈「上去就刷新一下然后崩溃 — Script error.」无法定位根因。
+// Safari/Chrome 标签崩溃 → 控制台清空,Wi-Fi 调试又没法每次都接;
+// 用 localStorage 写一个环形日志,崩溃后下次打开能看到上次崩前的最后 200 条事件 +
+// 一并暴露在"加载失败"卡片里(有「复制」+「查看完整日志」按钮),用户能直接发给我看。
+const _PSLOG_KEY = 'psfocus.boot.log.v1';
+const _PSLOG_MAX = 300;
+let _psLogBuf = [];
+try {
+  const raw = localStorage.getItem(_PSLOG_KEY);
+  if (raw) _psLogBuf = JSON.parse(raw) || [];
+  if (!Array.isArray(_psLogBuf)) _psLogBuf = [];
+} catch (_) { _psLogBuf = []; }
+let _psLogFlushTimer = null;
+function _psLogFlush() {
+  _psLogFlushTimer = null;
+  try { localStorage.setItem(_PSLOG_KEY, JSON.stringify(_psLogBuf.slice(-_PSLOG_MAX))); } catch (_) {}
+}
+function psLog(level, ...args) {
+  const t = new Date();
+  const ts = `${t.getHours().toString().padStart(2,'0')}:${t.getMinutes().toString().padStart(2,'0')}:${t.getSeconds().toString().padStart(2,'0')}.${t.getMilliseconds().toString().padStart(3,'0')}`;
+  let msg = '';
+  try {
+    msg = args.map(a => {
+      if (a === null) return 'null';
+      if (a === undefined) return 'undefined';
+      if (typeof a === 'string') return a;
+      if (a instanceof Error) return (a.stack || a.message || String(a));
+      try { return JSON.stringify(a); } catch (_) { return String(a); }
+    }).join(' ');
+  } catch (_) { msg = '[unstringifiable]'; }
+  // 限单条长度,防一条巨长 stack 把环形 buf 撑爆 localStorage
+  if (msg.length > 800) msg = msg.slice(0, 800) + '…[truncated]';
+  _psLogBuf.push(`[${ts}] ${level} ${msg}`);
+  if (_psLogBuf.length > _PSLOG_MAX) _psLogBuf.splice(0, _psLogBuf.length - _PSLOG_MAX);
+  // 同步 console
+  try {
+    const fn = level === 'ERR' ? console.error : level === 'WARN' ? console.warn : console.log;
+    fn.apply(console, ['[' + level + ']', ...args]);
+  } catch (_) {}
+  // 节流写盘 — 1s 内合并写,避免高频写 localStorage 拖慢主线程
+  if (!_psLogFlushTimer) _psLogFlushTimer = setTimeout(_psLogFlush, 1000);
+}
+// 进程任何"该坐下来想想"的点(crash 前)立刻把 buf 同步写盘,
+// 否则节流 timer 还没跑就崩了,日志丢
+function _psLogFlushNow() {
+  if (_psLogFlushTimer) { clearTimeout(_psLogFlushTimer); _psLogFlushTimer = null; }
+  _psLogFlush();
+}
+// 早期标记 — 后面 _PSFOCUS_BUILD 还没定义,先写个 marker
+psLog('LOG', '=== boot start === ua=' + (navigator && navigator.userAgent ? navigator.userAgent.slice(0, 120) : '?'));
+psLog('LOG', 'href=' + location.href, 'persisted=' + (typeof PerformanceNavigationTiming !== 'undefined'));
+
+// 内存观察(Chrome 才有 performance.memory;Safari 没有)
+function _psMemSnapshot(tag) {
+  try {
+    if (performance && performance.memory) {
+      const m = performance.memory;
+      psLog('MEM', tag, 'used=' + Math.round(m.usedJSHeapSize/1024/1024) + 'MB',
+                       'total=' + Math.round(m.totalJSHeapSize/1024/1024) + 'MB',
+                       'limit=' + Math.round(m.jsHeapSizeLimit/1024/1024) + 'MB');
+    }
+  } catch (_) {}
+}
+_psMemSnapshot('boot');
+
 // ===== 全局错误捕获 =====
-function showFatal(msg) {
+function showFatal(msg, opts) {
+  // 把崩前最后 30 行日志拼到 msg 后面 — 同一张卡片直接呈现,用户不用再点
+  const tail = (_psLogBuf || []).slice(-30).join('\n');
+  const ver = (typeof _PSFOCUS_BUILD !== 'undefined') ? _PSFOCUS_BUILD : 'unknown';
+  const body = String(msg || '未知错误').slice(0, 1500);
+  const composed = `[v${ver}] ${body}\n\n— 最近日志 (${(_psLogBuf||[]).length} 条) —\n${tail}`;
+  psLog('ERR', 'showFatal:', body);
+  _psLogFlushNow();
   const box = document.getElementById('fatal-err');
   const m = document.getElementById('fatal-err-msg');
   if (!box || !m) return;
-  m.textContent = String(msg || '未知错误').slice(0, 800);
+  m.textContent = composed.slice(0, 4000);
+  // 注入复制 + 查看完整日志按钮(若 index.html 老版没有,这里补)
+  if (!box.querySelector('[data-action="fatal-copy-log"]')) {
+    const card = box.querySelector('.fatal-err-card') || box;
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;';
+    bar.innerHTML = `
+      <button data-action="fatal-copy-log" style="flex:1;min-width:120px;padding:10px;border:1px solid #999;border-radius:6px;background:#fff;color:#333;font-size:14px;">复制全部日志</button>
+      <button data-action="fatal-clear-log" style="padding:10px 14px;border:1px solid #999;border-radius:6px;background:#fff;color:#333;font-size:14px;">清空日志</button>
+      <button data-action="fatal-reload" style="padding:10px 14px;border:1px solid #4a90e2;border-radius:6px;background:#4a90e2;color:#fff;font-size:14px;">硬刷新</button>
+    `;
+    card.appendChild(bar);
+    bar.querySelector('[data-action="fatal-copy-log"]').onclick = () => {
+      const full = '=== PSFocus mobile fatal log ===\n' +
+                   `version: ${ver}\n` +
+                   `ua: ${navigator.userAgent}\n` +
+                   `error: ${body}\n\n` +
+                   _psLogBuf.join('\n');
+      const ok = (txt) => alert('已复制 ' + txt.length + ' 字到剪贴板,发给我即可');
+      const fail = () => {
+        // 失败兜底:把日志渲到一个可选的 textarea 里
+        const ta = document.createElement('textarea');
+        ta.value = full;
+        ta.style.cssText = 'width:100%;height:200px;font-size:11px;font-family:monospace;margin-top:8px;';
+        card.appendChild(ta); ta.select();
+        alert('自动复制不被允许,日志已展开 — 长按全选复制即可');
+      };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(full).then(() => ok(full)).catch(fail);
+        } else { fail(); }
+      } catch (_) { fail(); }
+    };
+    bar.querySelector('[data-action="fatal-clear-log"]').onclick = () => {
+      _psLogBuf = []; _psLogFlushNow();
+      alert('已清空');
+    };
+    bar.querySelector('[data-action="fatal-reload"]').onclick = () => {
+      try { _psLogFlushNow(); } catch (_) {}
+      try { location.reload(); } catch (_) {}
+    };
+  }
   box.classList.remove('hidden');
   const auth = document.getElementById('auth-screen');
   if (auth) auth.classList.add('hidden');
@@ -15,10 +129,19 @@ function showFatal(msg) {
   if (app) app.classList.add('hidden');
 }
 window.addEventListener('error', (e) => {
-  showFatal((e?.error?.stack) || (e?.message) || 'JS 错误');
+  // e.message 跨源时为 "Script error.",但 filename/lineno/colno 通常仍可拿
+  const fileInfo = e && (e.filename || e.lineno != null)
+    ? ` @ ${e.filename || '?'}:${e.lineno || '?'}:${e.colno || '?'}`
+    : '';
+  const stack = e && e.error && e.error.stack;
+  const detail = stack || ((e && e.message) || 'JS 错误') + fileInfo;
+  psLog('ERR', 'window.error:', detail);
+  _psLogFlushNow();
+  showFatal(detail);
 });
 window.addEventListener('unhandledrejection', (e) => {
   const msg = String(e?.reason?.message || e?.reason || '');
+  const stack = (e && e.reason && e.reason.stack) || '';
   // 已知暂态错误 — CloudBase SDK 内部 ws 超时会自动重连,iOS Safari 切后台 / 网络抖动会触发
   // 这种全屏报错只会让用户以为"挂了"。日志记一下就好,不要 hijack 整个 app。
   const isTransient =
@@ -29,24 +152,42 @@ window.addEventListener('unhandledrejection', (e) => {
     /WebSocket/i.test(msg) ||
     /AbortError/i.test(msg);
   if (isTransient) {
-    console.warn('[transient swallowed]', msg);
+    psLog('WARN', 'transient rejection swallowed:', msg);
     e.preventDefault && e.preventDefault();
     return;
   }
-  showFatal('未处理的 Promise:' + msg);
+  psLog('ERR', 'unhandledrejection:', stack || msg);
+  _psLogFlushNow();
+  showFatal('未处理的 Promise:' + (stack || msg));
+});
+// 页面隐藏/卸载前把日志强写一次 — iOS Safari 经常在切到后台时被冷冻,日志可能丢
+window.addEventListener('pagehide', _psLogFlushNow);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') _psLogFlushNow();
 });
 
 // ===== TCB 初始化 =====
 if (typeof cloudbase === 'undefined') {
+  psLog('ERR', 'cloudbase SDK not loaded');
   showFatal('CloudBase SDK 没加载到。检查网络或浏览器是否拦了 static.cloudbase.net。');
   throw new Error('cloudbase undefined');
 }
+psLog('LOG', 'cloudbase SDK ok, init env');
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const tcbApp = cloudbase.init({ env: ENV_ID, region: REGION });
-const auth = tcbApp.auth({ persistence: 'local' });
-const db = tcbApp.database();
+let tcbApp, auth, db;
+try {
+  tcbApp = cloudbase.init({ env: ENV_ID, region: REGION });
+  auth = tcbApp.auth({ persistence: 'local' });
+  db = tcbApp.database();
+  psLog('LOG', 'tcbApp/auth/db ready');
+} catch (e) {
+  psLog('ERR', 'cloudbase.init failed', e);
+  _psLogFlushNow();
+  showFatal('CloudBase 初始化失败:' + (e && e.message || e));
+  throw e;
+}
 
 // ===== 全局状态 =====
 let state = null;
@@ -398,7 +539,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0301';
+const _PSFOCUS_BUILD = '20260526-0302';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // 注册 Service Worker — Chrome / Safari 杀掉 tab 重新加载时,直接吃缓存起来,不依赖网络
@@ -430,43 +571,60 @@ let _initialPullOk = false;
 let _lastKnownGoodTaskCount = -1;  // 最近一次拉到 / push 时的任务数(用作骤降检测)
 
 async function bindCloud() {
+  psLog('LOG', 'bindCloud:start uid=' + (uid || '?'));
   setSync('syncing', '加载中…');
   try {
+    const t0 = Date.now();
     const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'pull', docId: uid } });
+    psLog('LOG', 'bindCloud:pull done in', (Date.now() - t0) + 'ms');
     const r = res && res.result;
     const remote = (r && r.ok) ? r.state : null;
     if (remote) {
+      const _sz = (() => { try { return JSON.stringify(remote).length; } catch (_) { return -1; } })();
+      psLog('LOG', 'bindCloud:remote ok size=' + _sz + 'B',
+                  'tasks=' + ((remote.tasks||[]).length),
+                  'projects=' + ((remote.projects||[]).length),
+                  'summaries=' + ((remote.summaries||[]).length),
+                  'sessions=' + ((remote.sessions||[]).length));
       state = sanitizeState(remote);
       _initialPullOk = true;
       _lastKnownGoodTaskCount = (state.tasks || []).length;
       setSync('synced', '已同步');
     } else {
-      // 云端真的空(可能新账号)— 允许后续 push,但记录
+      psLog('LOG', 'bindCloud:remote empty — new account?');
       state = emptyState();
       _initialPullOk = true;
       _lastKnownGoodTaskCount = 0;
       setSync('synced', '已同步(空)');
     }
   } catch (e) {
-    // 网络/鉴权失败 — 严禁后续 push,避免空 state 覆盖云端
+    psLog('ERR', 'bindCloud:pull fail', (e && e.message) || e);
     state = emptyState();
     _initialPullOk = false;
     _lastKnownGoodTaskCount = -1;
     setSync('error', '加载失败,本地暂用空数据 — 已锁定,不会覆盖云端');
     console.error('[bindCloud pull]', e);
   }
-  restoreWorksUiPrefs();
-  applyAllAppearance();
-  renderAll();
-  startWatch();
-  startPeriodicPull();
+  _psMemSnapshot('bindCloud after pull');
+  try { psLog('LOG', 'bindCloud:restoreWorksUiPrefs'); restoreWorksUiPrefs(); }
+  catch (e) { psLog('ERR', 'restoreWorksUiPrefs throw', e); }
+  try { psLog('LOG', 'bindCloud:applyAllAppearance'); applyAllAppearance(); }
+  catch (e) { psLog('ERR', 'applyAllAppearance throw', e); }
+  try { psLog('LOG', 'bindCloud:renderAll tab=' + (ui && ui.tab)); renderAll(); psLog('LOG', 'bindCloud:renderAll done'); }
+  catch (e) { psLog('ERR', 'renderAll throw', e); _psLogFlushNow(); showFatal('首次渲染失败:' + (e && (e.stack || e.message) || e)); return; }
+  _psMemSnapshot('bindCloud after render');
+  try { startWatch(); psLog('LOG', 'bindCloud:startWatch ok'); }
+  catch (e) { psLog('ERR', 'startWatch throw', e); }
+  try { startPeriodicPull(); }
+  catch (e) { psLog('ERR', 'startPeriodicPull throw', e); }
   // 拉到云端旧数据后,如果 sanitize 补了缺字段,立刻 push 回去让云端自愈
   if (_stateNeedsBackfillPush) {
     _stateNeedsBackfillPush = false;
-    setTimeout(() => { try { pushState(); } catch (_) {} }, 1500);
+    setTimeout(() => { try { pushState(); } catch (e) { psLog('ERR', 'backfill push fail', e); } }, 1500);
   }
   // 加载稳定后,后台慢慢把所有项目封面图预缓存到本地 — 之后进项目 tab 不再走网络
-  setTimeout(() => { try { prefetchWorksCovers(); } catch (_) {} }, 6000);
+  setTimeout(() => { try { prefetchWorksCovers(); } catch (e) { psLog('ERR', 'prefetchWorksCovers throw', e); } }, 6000);
+  psLog('LOG', 'bindCloud:done');
 }
 function stopWatch() {
   if (watcher) { try { watcher.close(); } catch(_) {} watcher = null; }
@@ -524,14 +682,29 @@ function _applyRemoteSnapshot(rawState) {
   if (!rawState || typeof rawState !== 'object') return;
   if (_isTypingNowM()) { _pendingRemoteRaw = rawState; return; }
   _pendingRemoteRaw = null;
-  applyingRemote = true;
-  state = sanitizeState(rawState);
-  applyingRemote = false;
-  _initialPullOk = true;
-  _lastKnownGoodTaskCount = (state.tasks || []).length;
-  setSync('synced', '已同步');
-  applyAllAppearance();
-  renderAll();
+  const _sz = (() => { try { return JSON.stringify(rawState).length; } catch (_) { return -1; } })();
+  psLog('LOG', 'applyRemote:start size=' + _sz + 'B',
+              'tasks=' + ((rawState.tasks||[]).length),
+              'projects=' + ((rawState.projects||[]).length),
+              'summaries=' + ((rawState.summaries||[]).length));
+  _psMemSnapshot('applyRemote before');
+  try {
+    applyingRemote = true;
+    state = sanitizeState(rawState);
+    applyingRemote = false;
+    _initialPullOk = true;
+    _lastKnownGoodTaskCount = (state.tasks || []).length;
+    setSync('synced', '已同步');
+    applyAllAppearance();
+    renderAll();
+    _psMemSnapshot('applyRemote after render');
+    psLog('LOG', 'applyRemote:done');
+  } catch (e) {
+    applyingRemote = false;
+    psLog('ERR', 'applyRemote throw', e);
+    _psLogFlushNow();
+    showFatal('应用远端快照失败:' + (e && (e.stack || e.message) || e));
+  }
 }
 function _flushPendingRemoteM() {
   if (!_pendingRemoteRaw || _isTypingNowM()) return;
@@ -1033,19 +1206,34 @@ function colorOfCalItem(item) {
 // ===== 渲染主入口 =====
 function renderAll() {
   if (!state) return;
+  const _renderT0 = Date.now();
   // 当前 tab 被隐藏了 → 自动切到第一个可见的
   const visible = getVisibleMobileTabs();
   if (!visible.includes(ui.tab)) ui.tab = visible[0] || 'tasks';
-  applyTheme();
-  renderTabBar();
-  renderTopbar();
-  renderTab(ui.tab);
-  if ($('drawer-nav').classList.contains('open')) renderDrawerNav();
-  if ($('drawer-right') && $('drawer-right').classList.contains('open')) renderCalendarSidebar();
+  try { applyTheme(); }   catch (e) { psLog('ERR', 'applyTheme throw', e); }
+  try { renderTabBar(); } catch (e) { psLog('ERR', 'renderTabBar throw', e); }
+  try { renderTopbar(); } catch (e) { psLog('ERR', 'renderTopbar throw', e); }
+  try {
+    const _tt0 = Date.now();
+    renderTab(ui.tab);
+    const _tEl = Date.now() - _tt0;
+    if (_tEl > 200) psLog('WARN', 'renderTab slow tab=' + ui.tab, _tEl + 'ms');
+  } catch (e) {
+    psLog('ERR', 'renderTab throw tab=' + ui.tab, e);
+    throw e;   // 让 _applyRemoteSnapshot / bindCloud 的 catch 接住
+  }
+  if ($('drawer-nav').classList.contains('open')) {
+    try { renderDrawerNav(); } catch (e) { psLog('ERR', 'renderDrawerNav throw', e); }
+  }
+  if ($('drawer-right') && $('drawer-right').classList.contains('open')) {
+    try { renderCalendarSidebar(); } catch (e) { psLog('ERR', 'renderCalendarSidebar throw', e); }
+  }
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   $('fab').classList.toggle('hidden', !(ui.tab === 'tasks' || ui.tab === 'calendar'
     || ui.tab === 'ledger'
     || (ui.tab === 'summary' && summaryState.tab !== 'data')));
+  const _renderEl = Date.now() - _renderT0;
+  if (_renderEl > 300) psLog('WARN', 'renderAll slow', _renderEl + 'ms tab=' + ui.tab);
 }
 function renderTabBar() {
   const bar = document.querySelector('.tabbar');

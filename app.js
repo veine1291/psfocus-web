@@ -539,16 +539,37 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0302';
+const _PSFOCUS_BUILD = '20260526-0303';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
+psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
 // 注册 Service Worker — Chrome / Safari 杀掉 tab 重新加载时,直接吃缓存起来,不依赖网络
 // 防「无法打开此网页」白屏(iOS 切回 app 时常见)
+//
+// 升级链路 — 之前的 stale-while-revalidate 让用户必须刷两次才看到新版(第一次仍吃旧缓存,
+// 后台静默更新;第二次才拿到新),这次部署用户就反馈"版本号没变"。
+// 解法:监听 controllerchange — 新 SW 接管页面那一刻自动 reload 一次,刷一次立马用新版。
+// 加 _refreshing 闸防 reload loop;新 SW 首次启动时页面是不带 controller 的,reload 后页面就以新 SW 为 controller,
+// 此后不会再触发 controllerchange,所以不会循环。
+let _swRefreshing = false;
 if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (_swRefreshing) return;
+    _swRefreshing = true;
+    psLog('LOG', 'SW controllerchange → auto reload to apply new build');
+    _psLogFlushNow();
+    try { location.reload(); } catch (_) {}
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js')
-      .then(reg => console.log('[sw] registered, scope=', reg.scope))
-      .catch(err => console.warn('[sw] register failed:', err));
+      .then(reg => {
+        psLog('LOG', 'sw registered scope=' + reg.scope);
+        // 主动让浏览器检查更新 — 不依赖默认 24h 周期(用户也许整天不关 tab)
+        try { reg.update(); } catch (_) {}
+        // 1h 周期再检查一次,让长时间挂着的 tab 也能跟上新版
+        setInterval(() => { try { reg.update(); } catch (_) {} }, 60 * 60 * 1000);
+      })
+      .catch(err => psLog('WARN', 'sw register failed:', err && err.message || err));
   });
 }
 

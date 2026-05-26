@@ -633,7 +633,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0307';
+const _PSFOCUS_BUILD = '20260526-0308';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -744,6 +744,37 @@ async function bindCloud() {
   // 一次性飞到云端。若用户登进来就崩,异步 push 飞不出去,这次会丢;但 *下* 一次再登
   // 时就会把上次崩的日志带过来,desktop 那边就能落到 mobile-debug.log。
   setTimeout(() => { try { _pushMobileLogCloud(true); } catch (_) {} }, 500);
+  // 心跳 — 每 5 秒一行 + 每 30 秒强推一次,即便没异常也能持续给云端拍照片
+  // 这样下次崩前 / 崩后只丢失最近 30 秒的事件,而不是整段几分钟
+  _startAliveHeartbeat();
+}
+
+let _aliveTimer = null;
+let _aliveCount = 0;
+let _lastHeartbeatPushAt = 0;
+function _startAliveHeartbeat() {
+  if (_aliveTimer) return;
+  _aliveTimer = setInterval(() => {
+    _aliveCount++;
+    // 5s 一次 ping;每 30 秒(=6 次)顺手强推日志
+    const memHint = (() => {
+      try {
+        if (performance && performance.memory) {
+          const m = performance.memory;
+          return 'mem=' + Math.round(m.usedJSHeapSize/1024/1024) + '/' + Math.round(m.jsHeapSizeLimit/1024/1024) + 'MB';
+        }
+      } catch (_) {}
+      return '';
+    })();
+    psLog('PING', 'alive #' + _aliveCount, 'vis=' + document.visibilityState, memHint);
+    // 12 次 ping = 60 秒,推一次。每次推 ~2.3MB,所以不能太频繁。
+    if (_aliveCount % 12 === 0) {
+      try { _pushMobileLogCloud(true); } catch (_) {}
+    }
+  }, 5000);
+}
+function _stopAliveHeartbeat() {
+  if (_aliveTimer) { clearInterval(_aliveTimer); _aliveTimer = null; }
 }
 function stopWatch() {
   if (watcher) { try { watcher.close(); } catch(_) {} watcher = null; }
@@ -4014,6 +4045,14 @@ function _refreshWorksSubtitle() {
 async function prefetchWorksCovers() {
   if (_prefetchState.running || !tcbApp || !uid) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  // iOS Safari 整个 tab 内存预算 ~384MB。370 个项目 × 2 个尺寸 = 740 张图,
+  // 哪怕 200ms 一张串行抓,fetch Response buffer + Cache API put 累计能撑爆。
+  // iOS 上完全跳过预缓存,等用户实际滚到时再走 IntersectionObserver 懒加载
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  if (isIOS) {
+    psLog('LOG', 'prefetchWorksCovers SKIP (iOS — memory protection)');
+    return;
+  }
   let cache = null;
   try { cache = window.caches ? await caches.open(_IMG_CACHE_NAME) : null; } catch (_) {}
   if (!cache) return;
@@ -4029,6 +4068,7 @@ async function prefetchWorksCovers() {
       if (!seen.has(k)) { seen.add(k); want.push({ fid, thumb }); }
     }
   }
+  psLog('LOG', 'prefetchWorksCovers start: want=' + want.length);
   // 过滤掉已缓存的
   const todo = [];
   for (const t of want) {

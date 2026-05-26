@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0310';
+const _PSFOCUS_BUILD = '20260526-0311';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1839,6 +1839,10 @@ function renderSummaryTab(view) {
 
 // 摘要输入面板 — 浮动 FAB 点开的底部输入(参考 flomo:不常驻,用时弹出)
 function openSummaryInputSheet() {
+  // 在某个 tag 筛选下激活输入框 → 自动把该 tag 预填到草稿,
+  // 这样新发的笔记天然就被打上这个标签,不用每次手动 # 一遍
+  // 仅当 draft 为空时预填,避免覆盖用户已写的草稿
+  _summaryPrefillFilterTagIfEmpty();
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content sum-input-sheet">
@@ -1856,11 +1860,22 @@ function openSummaryInputSheet() {
       });
       // 同步 focus(仍在 FAB 点击手势内)→ iOS 打开面板即自动弹键盘,不用再点一下框
       ta.focus();
+      // 光标置末尾 — 预填后用户继续打字接在 tag 后面,不要插在前面
+      try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
       ta.style.height = 'auto';
       ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
     }
     if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(body);
   });
+}
+
+function _summaryPrefillFilterTagIfEmpty() {
+  if (summaryState.draftNote && summaryState.draftNote.trim()) return;
+  const f = summaryState.filter || '';
+  if (!f.startsWith('tag:')) return;
+  const tagName = f.slice(4);
+  if (!tagName) return;
+  summaryState.draftNote = '#' + tagName + ' ';
 }
 
 function _renderSummaryTagBar() {

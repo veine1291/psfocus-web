@@ -398,7 +398,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260523-0301';
+const _PSFOCUS_BUILD = '20260526-0301';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 
 // 注册 Service Worker — Chrome / Safari 杀掉 tab 重新加载时,直接吃缓存起来,不依赖网络
@@ -1260,7 +1260,12 @@ let summaryState = {
     try { return new Set(JSON.parse(localStorage.getItem('psfocus_collapsedDays') || '[]')); }
     catch (_) { return new Set(); }
   })(),
-  visibleDaysCount: 20,        // 默认只渲染最近 20 天,余下点"加载更早"
+  // 默认只渲染最近 N 天,余下点"加载更早"。iPhone Safari 的 tab 内存预算 ~384MB,
+  // 用户有 100+ 个项目 + 大量摘要带云图时,20 天初始 HTML + 几百个 img DOM 节点 + observer
+  // 容易把 BFCache 重渲那一瞬挤爆,Safari 直接 kill 标签。默认从 7 天起步,要看更早 tap 一下按钮。
+  visibleDaysCount: 7,
+  // 单天展开 — 默认每天只渲染最近 40 条,余下 tap 「显示本天更早」拉开
+  expandedDays: new Set(),
   pendingImages: [],           // [{ id, cloudFileID, name }]
   pendingModuleValues: {},     // { [modId]: value/valueMs }
   draftNote: '',               // 输入框未发布的笔记草稿 — 防 renderAll 时清空
@@ -1698,6 +1703,9 @@ function _renderSummaryList() {
     moreDays = sortedAllKeys.length - sortedKeys.length;
   }
   let html = '';
+  // 每天最多先渲染 N 条;余下 tap 「显示本天更早」展开。
+  // 防止某天写了几百条笔记带云图 → DOM 太大把 iPhone Safari 内存挤爆
+  const PER_DAY_INIT = 40;
   for (const k of sortedKeys) {
     const items = byDay.get(k) || [];
     const hasNotes = items.length > 0;
@@ -1707,6 +1715,12 @@ function _renderSummaryList() {
     const modSummary = _renderSummaryDayHeaderModules(k);
     const editBtn = `<button class="sum-day-edit-btn" data-action="summary-day-edit" data-day-key="${esc(k)}" title="编辑此天的模块"><span class="ico-pencil"></span></button>`;
     if (hasNotes) {
+      const expanded = summaryState.expandedDays && summaryState.expandedDays.has(k);
+      const visibleItems = expanded ? items : items.slice(0, PER_DAY_INIT);
+      const hiddenCount  = items.length - visibleItems.length;
+      const moreBtn = hiddenCount > 0
+        ? `<button class="sum-day-more-in" data-action="summary-expand-day" data-day-key="${esc(k)}">显示本天更早 (${hiddenCount} 条)</button>`
+        : '';
       html += `<div class="sum-day ${collapsed?'collapsed':''}">
         <div class="sum-day-header">
           <button class="sum-day-toggle" data-action="summary-toggle-day" data-day-key="${esc(k)}">
@@ -1718,7 +1732,8 @@ function _renderSummaryList() {
           ${modSummary ? `<div class="sum-day-mods">${modSummary}</div>` : ''}
         </div>
         ${collapsed ? '' : `<div class="sum-day-body">
-          <div class="sum-day-items">${items.map(_renderSummaryItem).join('')}</div>
+          <div class="sum-day-items">${visibleItems.map(_renderSummaryItem).join('')}</div>
+          ${moreBtn}
         </div>`}
       </div>`;
     } else {
@@ -2077,8 +2092,20 @@ const _summaryActions = {
   },
   // 分页:加载更多天
   'summary-load-more': () => {
-    summaryState.visibleDaysCount = (summaryState.visibleDaysCount || 20) + 20;
+    summaryState.visibleDaysCount = (summaryState.visibleDaysCount || 7) + 14;
     // 只重渲列表,不全 renderAll
+    const listEl = document.querySelector('.sum-list');
+    if (listEl) {
+      listEl.innerHTML = _renderSummaryList();
+      if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(listEl);
+    }
+  },
+  // 展开单天的余下条目(原本只渲染最近 40 条)
+  'summary-expand-day': (el) => {
+    const k = el && el.dataset && el.dataset.dayKey;
+    if (!k) return;
+    if (!summaryState.expandedDays) summaryState.expandedDays = new Set();
+    summaryState.expandedDays.add(k);
     const listEl = document.querySelector('.sum-list');
     if (listEl) {
       listEl.innerHTML = _renderSummaryList();
@@ -3138,13 +3165,16 @@ function _ensureCloudImgObserver() {
 function bindCloudTimelineImages(root) {
   // (1) 云图:用 IntersectionObserver 懒加载,只加载视口附近的图
   const imgs = Array.from(root.querySelectorAll('img[data-cloud-file-id]'));
+  // 即使本次 root 里没图(比如切去日历 tab),也得做一次扫泄清理,
+  // 否则 _cloudImgObserved 会无限增长,每个 detached <img> 都被强引用着,iOS 上很容易把 tab 撑爆
+  const obs = _ensureCloudImgObserver();
+  if (obs) {
+    for (const old of Array.from(_cloudImgObserved)) {
+      if (!old.isConnected) { try { obs.unobserve(old); } catch (_) {} _cloudImgObserved.delete(old); }
+    }
+  }
   if (imgs.length) {
-    const obs = _ensureCloudImgObserver();
     if (obs) {
-      // 清掉上次 render 留下、已脱离 DOM 的观察对象,防 observer 集合只增不减
-      for (const old of Array.from(_cloudImgObserved)) {
-        if (!old.isConnected) { try { obs.unobserve(old); } catch (_) {} _cloudImgObserved.delete(old); }
-      }
       for (const img of imgs) {
         if (_cloudImgObserved.has(img)) continue;
         try { obs.observe(img); _cloudImgObserved.add(img); } catch (_) {}

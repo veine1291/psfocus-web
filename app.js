@@ -42,32 +42,44 @@ function psLog(level, ...args) {
     const fn = level === 'ERR' ? console.error : level === 'WARN' ? console.warn : console.log;
     fn.apply(console, ['[' + level + ']', ...args]);
   } catch (_) {}
-  // 节流写盘 — 1s 内合并写,避免高频写 localStorage 拖慢主线程
+  // 节流写 localStorage — 1s 内合并,避免高频写盘拖慢主线程
   if (!_psLogFlushTimer) _psLogFlushTimer = setTimeout(_psLogFlush, 1000);
-  // 推一份到云端 — 自动 debounce,失败不影响主流程
-  try { _pushMobileLogCloud(level === 'ERR'); } catch (_) {}
+  // 把日志快照同步注入 state,任何 pushState 都会顺路带上去,省掉单独的云调用
+  // 注意:只是改 state 的字段,不触发 pushState — 这里不能 push,会变成每条日志一次云调用
+  if (state) {
+    state._mobileDebugLog = _psLogBuf.slice(-_PSLOG_MAX);
+    state._mobileDebugMeta = {
+      build: (typeof _PSFOCUS_BUILD !== 'undefined' ? _PSFOCUS_BUILD : '?'),
+      ua: ((navigator && navigator.userAgent) || '').slice(0, 200),
+      url: location.href,
+      updatedAt: Date.now(),
+    };
+  }
+  // ERR 级别 → 立刻强推一次到云端,即便 tab 接下来被 kill 我也能看到崩前痕迹
+  if (level === 'ERR') {
+    try { _pushMobileLogCloud(true); } catch (_) {}
+  }
 }
 
-// 推日志到云端 — 用 db.update 局部更新 _mobileDebugLog 字段(不动主 state),
-// Kayu 不需要做任何事:桌面端的 cloud watch 拉到这个字段后会自动写到 ~/Documents/PSFocus/mobile-debug.log,
-// 我 (Claude) 直接读那个文件就能看完整日志。
-// - 正常 psLog 触发 debounce 3s 合并推
-// - ERR / showFatal / pagehide 触发立即推
-let _logPushTimer = null;
+// 推日志到云端 — 走云函数 syncState/push(唯一被授权写 user_states 的管道,
+// 直接 db.collection.update 在默认权限下被拒)。
+// 日志已被 psLog 实时注入 state._mobileDebugLog,所以这里只负责"现在就推一次"。
+// 正常 pushState(用户操作触发)会自动捎带最新日志,不需要单独推;
+// 仅在 ERR / showFatal / pagehide 时强推,确保崩前痕迹真的飞到云端。
 let _logPushInFlight = false;
 let _logPushPending = false;
+let _lastForcePushAt = 0;
 function _pushMobileLogCloud(force) {
-  if (!uid || !db) return;
-  if (force) {
-    if (_logPushTimer) { clearTimeout(_logPushTimer); _logPushTimer = null; }
-    _doPushLogCloud();
-    return;
-  }
-  if (_logPushTimer) return;
-  _logPushTimer = setTimeout(() => { _logPushTimer = null; _doPushLogCloud(); }, 3000);
+  if (!uid) return;
+  if (!force) return;   // 不再做 timer-based 推送,等正常 pushState 捎带
+  // ERR 风暴节流:同一秒内多条 ERR 只推一次
+  const now = Date.now();
+  if (now - _lastForcePushAt < 1000) return;
+  _lastForcePushAt = now;
+  _doPushLogCloud();
 }
 async function _doPushLogCloud() {
-  if (!uid || !db) return;
+  if (!uid) return;
   if (_logPushInFlight) { _logPushPending = true; return; }
   _logPushInFlight = true;
   try {
@@ -78,10 +90,33 @@ async function _doPushLogCloud() {
       updatedAt: Date.now(),
     };
     const lines = (_psLogBuf || []).slice(-_PSLOG_MAX);
-    await db.collection(COLLECTION).doc(uid).update({
-      _mobileDebugLog: lines,
-      _mobileDebugMeta: meta,
-    });
+    // 走云函数 syncState/push — 这是唯一被授权写 user_states 的管道。
+    // 直接 db.collection.update 在 CloudBase 默认权限下会被拒(只有 watch / get 是允许的)。
+    // 把 _mobileDebugLog 注入 state 后整份 push 上去,desktop _applyRemoteState 会落盘。
+    if (state && _initialPullOk && typeof tcbApp !== 'undefined' && tcbApp.callFunction) {
+      state._mobileDebugLog = lines;
+      state._mobileDebugMeta = meta;
+      // bump ts 防 watcher 回声压回去
+      state._cloudUpdatedAt = Date.now();
+      const res = await tcbApp.callFunction({
+        name: 'syncState',
+        data: { action: 'push', docId: uid, state },
+      });
+      const r = res && res.result;
+      if (!r || r.ok !== true) {
+        try { console.warn('[mlog push] cloud-fn returned !ok', r && r.error); } catch (_) {}
+      }
+    } else if (db) {
+      // 兜底:state 还没初始化(super-early crash)— 试直接 db update,可能因权限失败
+      try {
+        await db.collection(COLLECTION).doc(uid).update({
+          _mobileDebugLog: lines,
+          _mobileDebugMeta: meta,
+        });
+      } catch (e2) {
+        try { console.warn('[mlog push direct fail]', e2 && e2.message || e2); } catch (_) {}
+      }
+    }
   } catch (e) {
     // 写失败别再 psLog,会引发递归。控制台一笔就够
     try { console.warn('[mlog push fail]', e && e.message || e); } catch (_) {}
@@ -593,7 +628,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260526-0304';
+const _PSFOCUS_BUILD = '20260526-0305';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 

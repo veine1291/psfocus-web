@@ -3419,6 +3419,141 @@ html, body { overscroll-behavior-y: contain; }
 .sum-input ul li { list-style: disc; }
 .sum-input ol li { list-style: decimal; }
 .sum-input div { min-height: 1.6em; }
+
+/* ============ 概念 [[xxx]] 双向链接 (2026-05-27) ============ */
+.concept-link {
+  display: inline-block;
+  padding: 0 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-radius: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.concept-link-edit { user-select: text; }
+.concept-link-ctx { color: var(--accent); font-weight: 500; }
+.concept-link-bracket {
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: -1px;
+  margin: 0 1px;
+}
+
+.concept-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.concept-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 10px;
+}
+.concept-drawer-close {
+  width: 28px; height: 28px;
+  border: 0; background: transparent;
+  border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.concept-title-input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  outline: none;
+  padding: 4px 6px;
+}
+.concept-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.concept-empty {
+  color: var(--text-faint);
+  font-size: 12.5px;
+  padding: 10px;
+  text-align: center;
+  border: 1px dashed var(--border-soft);
+  border-radius: 6px;
+}
+.concept-empty-mini { color: var(--text-faint); font-size: 12px; }
+
+.concept-aliases { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.concept-aliases .concept-section-title { width: 100%; margin-bottom: 0; }
+.concept-alias-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 6px 2px 8px;
+  background: var(--bg-section);
+  border-radius: 12px;
+  font-size: 12px;
+}
+.concept-alias-x { border: 0; background: transparent; color: var(--text-faint); font-size: 14px; padding: 0 2px; }
+.concept-alias-add {
+  border: 1px dashed var(--border-soft);
+  background: transparent;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.concept-backlinks { display: flex; flex-direction: column; gap: 8px; }
+.concept-backlink {
+  text-align: left; display: block; width: 100%;
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.concept-backlink-meta { font-size: 11px; color: var(--text-faint); margin-bottom: 4px; }
+.concept-backlink-ctx { font-size: 12.5px; color: var(--text); line-height: 1.5; word-break: break-word; }
+.concept-unlinked {
+  display: flex; gap: 8px; align-items: flex-start;
+  background: var(--bg-section);
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.concept-wrap-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.concept-delete-btn {
+  border: 0;
+  background: transparent;
+  color: var(--danger, #d44);
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.concept-nav-row .sum-tag-label { color: var(--accent); }
+.sum-tb-wiki {
+  width: auto !important;
+  padding: 0 6px;
+  font-size: 11px;
+  letter-spacing: -1px;
+  color: var(--accent);
+}
+
+.sum-item-flash {
+  animation: sum-item-flash .8s ease-out 1;
+}
+@keyframes sum-item-flash {
+  0% { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+  100% { background: transparent; }
+}
 .sum-input-pending {
   display: flex;
   flex-wrap: wrap;

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0301';
+const _PSFOCUS_BUILD = '20260527-0401';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1089,6 +1089,7 @@ function emptyState() {
     folders: [], projects: [], taskLists: [], tasks: [],
     events: [], sessions: [], tags: [], smartLists: [], templates: [],
     summaries: [], summaryTags: [], summaryDayModules: {},
+    concepts: [],   // Obsidian-style [[xxx]] 双向链接 (2026-05-27)
     settings: {}, currentSession: null,
   };
 }
@@ -1195,6 +1196,12 @@ function sanitizeState(s) {
     if (sum.modules) delete sum.modules;
   }
   const summaryTags = arr(s.summaryTags);
+  // 概念库 — Obsidian 风格 [[xxx]] 双向链接 (2026-05-27)
+  const concepts = arr(s.concepts);
+  for (const c of concepts) {
+    if (!Array.isArray(c.aliases)) c.aliases = [];
+    if (typeof c.description !== 'string') c.description = '';
+  }
   const summaryDayModules = (s.summaryDayModules && typeof s.summaryDayModules === 'object' && !Array.isArray(s.summaryDayModules)) ? s.summaryDayModules : {};
   for (const k of Object.keys(summaryDayModules)) {
     if (!Array.isArray(summaryDayModules[k])) summaryDayModules[k] = [];
@@ -1214,6 +1221,7 @@ function sanitizeState(s) {
     tasks, events, sessions: arr(s.sessions),
     tags: arr(s.tags), smartLists: arr(s.smartLists), templates: arr(s.templates),
     summaries, summaryTags, summaryDayModules,
+    concepts,
     settings,
   };
 }
@@ -1787,6 +1795,10 @@ function _renderSummaryNoteHtml(text) {
   html = html.replace(/\*\*([^\n]+?)\*\*/g, _PA + '$1' + _PB);
   html = html.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<i>$1</i>');
   html = html.split(_PA).join('<b>').split(_PB).join('</b>');
+  // [[xxx]] 概念链接 — 在 #tag 替换之前做, 防止 [[xxx]] 内含 # 被误抓
+  html = html.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) =>
+    '<span class="concept-link" data-action="concept-open" data-name="' + esc(name.trim()) + '">'
+    + esc(name.trim()) + '</span>');
   // inline #xxx 转 clickable tag span(行级标题 "# " 形式跳过)
   html = html.replace(/(^|[^&\w])#([^\s#,。、,<&]+)/g, (m, before, tag) => {
     return before + '<span class="sum-md-tag" data-action="summary-filter" data-filter="tag:' + esc(tag) + '">#' + esc(tag) + '</span>';
@@ -1939,6 +1951,7 @@ function _renderSummaryInputBox() {
     ${todayModsHtml}
     <div class="sum-input-toolbar">
       <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
+      <button class="sum-tb-btn sum-tb-wiki" data-action="summary-tb-wikilink" title="加概念链接 [[xxx]]">[[]]</button>
       <label class="sum-tb-btn sum-tb-img" title="上传图片">
         <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
         <span class="ico-image"></span>
@@ -1977,6 +1990,12 @@ function _mdToEditHtml(md) {
     h = h.replace(/\*\*([^\n]+?)\*\*/g, _PA + '$1' + _PB);
     h = h.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<i>$1</i>');
     h = h.split(_PA).join('<b>').split(_PB).join('</b>');
+    // [[xxx]] 概念链接 chip — span 内文本就是 [[xxx]], _editHtmlToMd 读 textContent 就 round-trip
+    h = h.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) => {
+      const n = name.trim();
+      return '<span class="concept-link concept-link-edit" data-action="concept-open" data-name="'
+        + n.replace(/"/g, '&quot;') + '">[[' + n + ']]</span>';
+    });
     return h;
   };
   const lines = txt.split('\n');
@@ -2082,10 +2101,150 @@ function _syncEditorToState(ed) {
   if (!ed) return;
   const md = _editHtmlToMd(ed);
   if (ed.id === 'sum-edit-note-text') {
-    // 老的 mobile 编辑 sheet 用 id 区分;改成 contenteditable 后照样保留 id
     summaryState._editingNoteMd = md;
+  } else if (ed.id === 'concept-desc-input') {
+    // 概念描述编辑
+    const cid = ed.dataset.conceptId;
+    const c = (state.concepts || []).find(x => x.id === cid);
+    if (c) { c.description = md; c.updatedAt = Date.now(); }
   } else {
     summaryState.draftNote = md;
+  }
+}
+
+// ===== 概念 [[xxx]] (Obsidian 风格 双向链接, 2026-05-27) =====
+function _findConcept(name) {
+  if (!name || !Array.isArray(state.concepts)) return null;
+  const n = String(name).trim();
+  for (const c of state.concepts) {
+    if (c.name === n) return c;
+    if (Array.isArray(c.aliases) && c.aliases.indexOf(n) >= 0) return c;
+  }
+  return null;
+}
+function _ensureConcept(name) {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  const found = _findConcept(n);
+  if (found) return found;
+  if (!Array.isArray(state.concepts)) state.concepts = [];
+  const c = {
+    id: 'cpt-' + Math.random().toString(36).slice(2, 10),
+    name: n, aliases: [], description: '', color: '',
+    createdAt: Date.now(), updatedAt: Date.now(),
+  };
+  state.concepts.push(c);
+  return c;
+}
+function _extractWikilinks(text) {
+  const out = [];
+  const re = /\[\[([^\]\n]+?)\]\]/g;
+  let m;
+  while ((m = re.exec(String(text || ''))) !== null) {
+    const n = m[1].trim();
+    if (n) out.push(n);
+  }
+  return out;
+}
+function _extractBacklinks(concept) {
+  if (!concept) return [];
+  const names = [concept.name].concat(concept.aliases || []).filter(Boolean);
+  if (!names.length) return [];
+  const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const reAlt = names.map(escRe).join('|');
+  const re = new RegExp('\\[\\[(' + reAlt + ')\\]\\]');
+  const out = [];
+  for (const s of (state.summaries || [])) {
+    const note = s.note || '';
+    const m = note.match(re);
+    if (!m) continue;
+    const idx = m.index;
+    const before = note.slice(Math.max(0, idx - 30), idx);
+    const after  = note.slice(idx + m[0].length, idx + m[0].length + 30);
+    out.push({ summary: s, context: before + m[0] + after, idx });
+  }
+  out.sort((a, b) => (b.summary.createdAt || 0) - (a.summary.createdAt || 0));
+  return out;
+}
+function _extractUnlinkedMentions(concept) {
+  if (!concept) return [];
+  const names = [concept.name].concat(concept.aliases || []).filter(Boolean);
+  if (!names.length) return [];
+  const out = [];
+  for (const s of (state.summaries || [])) {
+    const note = s.note || '';
+    const stripped = note.replace(/\[\[[^\]\n]+?\]\]/g, '');
+    for (const n of names) {
+      if (stripped.indexOf(n) < 0) continue;
+      const noteIdx = note.indexOf(n, 0);
+      if (noteIdx < 0) continue;
+      const before = note.slice(Math.max(0, noteIdx - 30), noteIdx);
+      const after  = note.slice(noteIdx + n.length, noteIdx + n.length + 30);
+      out.push({
+        summary: s, name: n,
+        context: before + '〚' + n + '〛' + after,
+        noteIdx,
+      });
+      break;
+    }
+  }
+  out.sort((a, b) => (b.summary.createdAt || 0) - (a.summary.createdAt || 0));
+  return out;
+}
+function _wrapMentionWithLink(summaryId, name) {
+  const s = (state.summaries || []).find(x => x.id === summaryId);
+  if (!s || !s.note) return false;
+  const escRe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('(^|[^\\[])(' + escRe + ')(?!\\])', '');
+  const newNote = s.note.replace(re, (m, before, mid) => before + '[[' + mid + ']]');
+  if (newNote === s.note) return false;
+  s.note = newNote;
+  s.updatedAt = Date.now();
+  return true;
+}
+function _renameOrMergeConcept(oldName, newName) {
+  if (!oldName || !newName || oldName === newName) return;
+  const oldC = _findConcept(oldName);
+  if (!oldC) return;
+  const dup = (state.concepts || []).find(c => c !== oldC && c.name === newName);
+  const doApply = () => {
+    if (dup) {
+      const set = new Set(dup.aliases || []);
+      for (const a of (oldC.aliases || [])) set.add(a);
+      set.add(oldName);
+      dup.aliases = Array.from(set);
+      if (oldC.description && !dup.description) dup.description = oldC.description;
+      else if (oldC.description) dup.description += '\n\n' + oldC.description;
+      dup.updatedAt = Date.now();
+      state.concepts = state.concepts.filter(c => c !== oldC);
+    } else {
+      oldC.name = newName;
+      oldC.updatedAt = Date.now();
+    }
+    const escRe = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('\\[\\[' + escRe + '\\]\\]', 'g');
+    for (const s of (state.summaries || [])) {
+      if (!s.note || !re.test(s.note)) { re.lastIndex = 0; continue; }
+      re.lastIndex = 0;
+      s.note = s.note.replace(re, '[[' + newName + ']]');
+      s.updatedAt = Date.now();
+    }
+    pushState();
+    renderAll();
+  };
+  if (dup) {
+    const msg = '已存在概念 [[' + newName + ']]。\n'
+      + '继续将把 [[' + oldName + ']] 合并进 [[' + newName + ']]:\n'
+      + '· 笔记里所有 [[' + oldName + ']] 改为 [[' + newName + ']]\n'
+      + '· 旧名 "' + oldName + '" 自动作为别名\n'
+      + '· 旧描述追加到新描述末尾';
+    if (typeof showConfirm === 'function') {
+      showConfirm({ title: '合并概念', message: msg, okText: '合并', onOk: doApply });
+    } else if (confirm(msg + '\n\n确定合并?')) {
+      doApply();
+    }
+  } else {
+    doApply();
   }
 }
 
@@ -2593,6 +2752,116 @@ const _summaryActions = {
     } catch (_) {}
     _renderSummaryDrawerNav();
   },
+  // ===== 概念 [[xxx]] 双向链接 actions =====
+  'concept-open': (el) => {
+    const id = el.dataset.conceptId;
+    const name = el.dataset.name;
+    let c = null;
+    if (id) c = (state.concepts || []).find(x => x.id === id);
+    if (!c && name) c = _ensureConcept(name);
+    if (!c) return;
+    // drawer 打开同时关闭可能开着的左侧 nav drawer
+    try { closeDrawerNav(); } catch (_) {}
+    _openConceptSheet(c.id);
+  },
+  'concept-close': () => { try { closeSheet(); } catch (_) {} },
+  'concept-desc-input': (el, e) => {
+    if (e && e.isComposing) return;
+    const id = el.dataset.conceptId;
+    const c = (state.concepts || []).find(x => x.id === id);
+    if (!c) return;
+    if (el._syncRAF) cancelAnimationFrame(el._syncRAF);
+    el._syncRAF = requestAnimationFrame(() => {
+      el._syncRAF = null;
+      c.description = _editHtmlToMd(el);
+      c.updatedAt = Date.now();
+      pushState();
+    });
+  },
+  'concept-rename': (el) => {
+    const id = el.dataset.conceptId;
+    const c = (state.concepts || []).find(x => x.id === id);
+    if (!c) return;
+    const newName = String(el.value || '').trim();
+    if (!newName || newName === c.name) { el.value = c.name; return; }
+    _renameOrMergeConcept(c.name, newName);
+  },
+  'concept-delete': (el) => {
+    const id = el.dataset.conceptId;
+    const c = (state.concepts || []).find(x => x.id === id);
+    if (!c) return;
+    if (!confirm('删除概念 [[' + c.name + ']]?\n笔记里 [[' + c.name + ']] 文本不会自动删除。')) return;
+    state.concepts = (state.concepts || []).filter(x => x.id !== id);
+    pushState();
+    closeSheet();
+    renderAll();
+  },
+  'concept-add-alias': (el) => {
+    const id = el.dataset.conceptId;
+    const c = (state.concepts || []).find(x => x.id === id);
+    if (!c) return;
+    const a = (prompt('为 [[' + c.name + ']] 添加别名:', '') || '').trim();
+    if (!a || a === c.name) return;
+    const collide = (state.concepts || []).find(x => x !== c &&
+      (x.name === a || (x.aliases || []).indexOf(a) >= 0));
+    if (collide) { showToast && showToast('「' + a + '」已被 [[' + collide.name + ']] 占用'); return; }
+    if (!Array.isArray(c.aliases)) c.aliases = [];
+    if (c.aliases.indexOf(a) < 0) c.aliases.push(a);
+    c.updatedAt = Date.now();
+    pushState();
+    _openConceptSheet(c.id);   // 重渲 sheet
+  },
+  'concept-remove-alias': (el) => {
+    const id = el.dataset.conceptId;
+    const a = el.dataset.alias;
+    const c = (state.concepts || []).find(x => x.id === id);
+    if (!c || !Array.isArray(c.aliases)) return;
+    c.aliases = c.aliases.filter(x => x !== a);
+    c.updatedAt = Date.now();
+    pushState();
+    _openConceptSheet(c.id);
+  },
+  'concept-goto-summary': (el) => {
+    const sid = el.dataset.summaryId;
+    if (!sid) return;
+    closeSheet();
+    setTimeout(() => {
+      const item = document.querySelector('.sum-item[data-summary-id="' + sid + '"]');
+      if (item) {
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        item.classList.add('sum-item-flash');
+        setTimeout(() => item.classList.remove('sum-item-flash'), 1400);
+      }
+    }, 80);
+  },
+  'concept-wrap-mention': (el) => {
+    const sid = el.dataset.summaryId;
+    const name = el.dataset.name;
+    if (!sid || !name) return;
+    if (_wrapMentionWithLink(sid, name)) {
+      pushState();
+      const cid = (state.concepts || []).find(c => c.name === name || (c.aliases||[]).indexOf(name) >= 0);
+      if (cid) _openConceptSheet(cid.id);
+      else renderAll();
+    }
+  },
+  'summary-tb-wikilink': (el) => {
+    const ed = _summaryInputTa();
+    if (!ed) return;
+    ed.focus();
+    _insertTextAtCaret('[[]]');
+    try {
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        const r = sel.getRangeAt(0);
+        r.setStart(r.startContainer, Math.max(0, r.startOffset - 2));
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+    } catch (_) {}
+    _syncEditorToState(ed);
+  },
   // 单条 tag 的更多菜单(置顶 / 编辑 / 删除)
   'summary-tag-menu': (el, e) => {
     if (e) e.stopPropagation();
@@ -2830,6 +3099,9 @@ const _summaryActions = {
     if (hasNoteOrImg) {
       const tags = _summaryParseTagsFromText(text);
       for (const tg of tags) _summaryEnsureTag(tg);
+      // [[xxx]] 概念自动建库
+      const wikiLinks = _extractWikilinks(text);
+      for (const wn of wikiLinks) _ensureConcept(wn);
       if (!Array.isArray(state.summaries)) state.summaries = [];
       state.summaries.push({
         id: 'sum-' + Math.random().toString(36).slice(2, 10),
@@ -2953,6 +3225,9 @@ const _summaryActions = {
       }
       s.tags = newTags;
       for (const tg of newTags) _summaryEnsureTag(tg);
+      // [[xxx]] 概念自动建库
+      const wikiLinks = _extractWikilinks(nextNote);
+      for (const wn of wikiLinks) _ensureConcept(wn);
     }
     if (dateChanged) s.createdAt = nextCreatedAt;
     s.updatedAt = Date.now();
@@ -7326,6 +7601,67 @@ function closeDrawerNav() {
   setTimeout(() => $('drawer-nav').classList.add('hidden'), 280);
 }
 // 重命名标签 sheet
+// 概念页 sheet (2026-05-27, Obsidian-style [[xxx]] 双向链接)
+function _openConceptSheet(conceptId) {
+  const c = (state.concepts || []).find(x => x.id === conceptId);
+  if (!c) return;
+  const backlinks = _extractBacklinks(c);
+  const unlinked = _extractUnlinkedMentions(c);
+  const _ctxHtml = (ctx) => esc(ctx).replace(/\[\[([^\]\n]+?)\]\]/g, '<span class="concept-link-ctx">[[$1]]</span>');
+  const backlinksHtml = backlinks.length
+    ? backlinks.map(bl => `<button class="concept-backlink" data-action="concept-goto-summary" data-summary-id="${esc(bl.summary.id)}">
+        <div class="concept-backlink-meta">${esc(_summaryDayLabel(bl.summary.createdAt))}</div>
+        <div class="concept-backlink-ctx">…${_ctxHtml(bl.context)}…</div>
+      </button>`).join('')
+    : '<div class="concept-empty">还没有笔记引用 [[' + esc(c.name) + ']]</div>';
+  const unlinkedHtml = unlinked.length
+    ? '<div class="concept-section-title">未链接提及 (' + unlinked.length + ')</div>'
+      + unlinked.map(u => `<div class="concept-unlinked">
+          <div style="flex:1;min-width:0;">
+            <div class="concept-backlink-meta">${esc(_summaryDayLabel(u.summary.createdAt))}</div>
+            <div class="concept-backlink-ctx">…${esc(u.context)}…</div>
+          </div>
+          <button class="concept-wrap-btn" data-action="concept-wrap-mention" data-summary-id="${esc(u.summary.id)}" data-name="${esc(u.name)}">+ 链上</button>
+        </div>`).join('')
+    : '';
+  const aliasesHtml = (c.aliases || []).map(a =>
+    `<span class="concept-alias-chip">${esc(a)}<button class="concept-alias-x" data-action="concept-remove-alias" data-concept-id="${esc(c.id)}" data-alias="${esc(a)}">×</button></span>`
+  ).join('');
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content concept-sheet">
+      <div class="concept-drawer-head">
+        <input type="text" class="concept-title-input" value="${esc(c.name)}" data-action-blur="concept-rename" data-action-enter="concept-rename" data-concept-id="${esc(c.id)}">
+        <button class="concept-drawer-close" data-action="close-sheet"><span class="ico-x"></span></button>
+      </div>
+      <div class="concept-aliases">
+        <div class="concept-section-title">别名</div>
+        ${aliasesHtml || '<span class="concept-empty-mini">(无)</span>'}
+        <button class="concept-alias-add" data-action="concept-add-alias" data-concept-id="${esc(c.id)}">+ 别名</button>
+      </div>
+      <div class="concept-desc">
+        <div class="concept-section-title">描述</div>
+        <div class="sum-input-card">
+          <div id="concept-desc-input" class="sum-input" contenteditable="true"
+            data-action-input="concept-desc-input"
+            data-concept-id="${esc(c.id)}"
+            data-placeholder="给这个概念写点描述…  支持 [[其它概念]] 互链">${_mdToEditHtml(c.description || '')}</div>
+        </div>
+      </div>
+      <div class="concept-backlinks">
+        <div class="concept-section-title">反链 (${backlinks.length})</div>
+        ${backlinksHtml}
+        ${unlinkedHtml}
+      </div>
+      <div style="display:flex;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--border-soft);margin-top:8px;">
+        <button class="concept-delete-btn" data-action="concept-delete" data-concept-id="${esc(c.id)}">删除概念</button>
+      </div>
+    </div>
+  `, (body) => {
+    if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(body);
+  });
+}
+
 function _openSummaryTagRenameSheet(oldName) {
   showSheet(`
     <div class="sheet-handle"></div>
@@ -7521,6 +7857,20 @@ function _renderSummaryDrawerNav() {
   const pinnedHidden  = sec.has('pinned');
   const projectHidden = sec.has('project');
   const allHidden     = sec.has('all');
+  const conceptsHidden = sec.has('concepts');
+  // 概念列表 — Obsidian 风格 [[xxx]] (2026-05-27)
+  const concepts = (state.concepts || []).slice().sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN'));
+  const renderConceptRow = (c) => {
+    const cnt = _extractBacklinks(c).length;
+    return `<div class="sum-nav-row concept-nav-row" title="${cnt} 条笔记引用">
+      <span class="sum-nav-chev sum-nav-chev-spacer"></span>
+      <button class="sum-nav-row-main-btn" data-action="concept-open" data-concept-id="${esc(c.id)}" data-name="${esc(c.name)}">
+        <span class="concept-link-bracket">[[</span><span class="sum-tag-label">${esc(c.name)}</span><span class="concept-link-bracket">]]</span>
+      </button>
+      <span class="sum-tag-count">${cnt}</span>
+    </div>`;
+  };
   // 「我的标签」放在「项目标签」之上 — 用户自建 tag 是主用例;项目标签默认折叠(也是项目自动生成的辅料,默认占视野不合理)
   body.innerHTML = `
     <button class="sum-nav-row sum-nav-row-main ${summaryState.filter==='all'?'active':''}"
@@ -7531,6 +7881,8 @@ function _renderSummaryDrawerNav() {
       ${pinnedHidden ? '' : pinned.map(renderTagRow).join('')}` : ''}
     ${userTags.length ? `${sectionHead('all', '我的标签')}
       ${allHidden ? '' : userTags.map(renderTagRow).join('')}` : (tags.length ? '' : '<div class="sum-nav-empty">还没有标签 — 写笔记时输入 #xxx 自动建立</div>')}
+    ${concepts.length ? `${sectionHead('concepts', '概念')}
+      ${conceptsHidden ? '' : concepts.map(renderConceptRow).join('')}` : ''}
     ${projectTags.length ? `${sectionHead('project', '项目标签')}
       ${projectHidden ? '' : projectTags.map(renderTagRow).join('')}` : ''}
   `;

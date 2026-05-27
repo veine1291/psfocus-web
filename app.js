@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0703';
+const _PSFOCUS_BUILD = '20260527-0704';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2247,11 +2247,30 @@ function _extractUnlinkedMentions(concept) {
 function _wrapMentionWithLink(summaryId, name) {
   const s = (state.summaries || []).find(x => x.id === summaryId);
   if (!s || !s.note) return false;
-  const escRe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp('(^|[^\\[])(' + escRe + ')(?!\\])', '');
-  const newNote = s.note.replace(re, (m, before, mid) => before + '[[' + mid + ']]');
-  if (newNote === s.note) return false;
-  s.note = newNote;
+  // 把所有未包的同名出现都包成 [[name]], 跳过已经在 [[...]] 内的
+  // (Kayu 2026-05-27: 之前只包第一处, 同一笔记有多处时未链接条目不消失)
+  let out = '';
+  let i = 0;
+  let changed = false;
+  while (i < s.note.length) {
+    if (s.note.startsWith('[[', i)) {
+      const end = s.note.indexOf(']]', i + 2);
+      if (end === -1) { out += s.note[i]; i++; continue; }
+      out += s.note.slice(i, end + 2);
+      i = end + 2;
+      continue;
+    }
+    if (s.note.startsWith(name, i)) {
+      out += '[[' + name + ']]';
+      i += name.length;
+      changed = true;
+      continue;
+    }
+    out += s.note[i];
+    i++;
+  }
+  if (!changed) return false;
+  s.note = out;
   s.updatedAt = Date.now();
   return true;
 }

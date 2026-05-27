@@ -3447,20 +3447,40 @@ html, body { overscroll-behavior-y: contain; }
   flex-direction: column;
   gap: 14px;
 }
-/* 概念页头 sticky 在 sheet 顶部 — 否则下滚时关闭按钮跟着滚走没法点 (Kayu 2026-05-27 报) */
-.concept-drawer-head {
+/* 固定头 — 放在 .sheet-content 外面, sheet-body 直接子元素, 永不滚 (Kayu 2026-05-27) */
+.concept-sheet-fixed-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 6px 16px 10px;
   border-bottom: 1px solid var(--border-soft);
-  padding-bottom: 10px;
-  position: sticky;
-  top: 0;
-  background: var(--bg-panel, var(--bg-page));
-  z-index: 5;
-  margin: 0 -16px 0;
-  padding: 10px 16px;
+  background: var(--bg-panel);
+  z-index: 1;
 }
+.concept-sheet-fixed-head .concept-title-input {
+  flex: 1; min-width: 0;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  outline: none;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.concept-sheet-fixed-head .concept-title-input:focus { background: var(--bg-section); }
+.concept-sheet-fixed-head .concept-drawer-close {
+  flex: 0 0 36px; height: 36px;
+  border: 0;
+  background: var(--bg-section);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+.concept-sheet-fixed-head .concept-drawer-close:active { background: var(--bg-active); color: var(--text); }
 /* 概念描述编辑框 — 防文字脱框 */
 .concept-sheet .sum-input {
   word-break: break-word;

@@ -583,7 +583,12 @@ html, body { overscroll-behavior-y: contain; }
 .sheet-body {
   position: fixed;
   left: 0; right: 0; bottom: 0;
+  /* 关键:用 svh (small viewport height) 而不是 vh
+   * iOS Safari 100vh 是「浏览器栏折叠时」的高度, 浏览器栏展开时 sheet 顶部会被栏遮住,
+   * 用户根本看不到 banner / 关闭按钮 (Kayu 2026-05-27 两次报)。
+   * svh 是「浏览器栏完全展开时」的高度, 85svh 保证 sheet 不管什么时候都完全在可视区内 */
   max-height: 85vh;
+  max-height: 85svh;
   background: var(--bg-panel);
   border-top-left-radius: var(--radius-xl);
   border-top-right-radius: var(--radius-xl);
@@ -3446,42 +3451,21 @@ html, body { overscroll-behavior-y: contain; }
   flex-direction: column;
   gap: 14px;
 }
-/* 固定头 — 放在 .sheet-content 外面, sheet-body 直接子元素, 永不滚 (Kayu 2026-05-27) */
+/* 固定头 — 放在 .sheet-content 外面, sheet-body 直接子元素, 永不滚 (Kayu 2026-05-27)
+   样式跟 PSFocus 其它 sheet head 保持一致:浅边框分隔 + 标题加粗 + × 圆按钮 */
 .concept-sheet-fixed-head {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px 10px;
+  gap: 10px;
+  padding: 4px 16px 10px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-panel);
   z-index: 2;
   min-height: 48px;
   box-sizing: border-box;
 }
-/* 紧急关闭浮按钮 — position:fixed 锚在 viewport(不是 sheet-body),
-   保证不管 iOS 浏览器顶栏 / sheet 怎么布局, 这按钮永远在 viewport 已知位置可见。
-   z-index 9999 压所有东西。带白色描边对比, 浅深背景都看得清。
-   2026-05-27 Kayu 第二次报: sheet 顶端在 iOS Safari 被浏览器栏遮住, 改 fixed */
-.concept-sheet-emergency-close {
-  position: fixed !important;
-  top: calc(env(safe-area-inset-top, 0px) + 60px);
-  right: 14px;
-  width: 44px; height: 44px;
-  border: 2px solid rgba(255,255,255,0.9);
-  background: rgba(0, 0, 0, 0.72);
-  color: #fff;
-  font-size: 26px;
-  line-height: 1;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999 !important;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
-  padding: 0;
-}
-.concept-sheet-emergency-close:active { background: rgba(0,0,0,0.9); }
+/* (紧急关闭按钮已删除 — sheet 改用 svh 后顶部 banner 正常显示, 不再需要兜底) */
 .concept-sheet-fixed-head .concept-title-input {
   flex: 1; min-width: 0;
   border: 0;
@@ -3503,6 +3487,15 @@ html, body { overscroll-behavior-y: contain; }
   align-items: center;
   justify-content: center;
   color: var(--text-dim);
+  padding: 0;
+}
+.concept-sheet-fixed-head .concept-drawer-close .ico-x {
+  width: 14px; height: 14px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
 }
 .concept-sheet-fixed-head .concept-drawer-close:active { background: var(--bg-active); color: var(--text); }
 /* 概念描述编辑框 — 防文字脱框 */

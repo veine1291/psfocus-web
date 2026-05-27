@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0704';
+const _PSFOCUS_BUILD = '20260527-0705';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7766,8 +7766,6 @@ function _openConceptSheet(conceptId) {
   // 滚动内容 (.sheet-content.concept-sheet) 独立滚 — 这样关闭按钮永远固定可见
   // (Kayu 2026-05-27 反馈:之前 sticky 在 flex 容器里不稳, 顶端跑出画面)
   showSheet(`
-    <!-- 紧急关闭浮按钮 — 绝对定位贴 sheet-body 右上, z-index 高, 任何布局问题都能点到关 (Kayu 2026-05-27 报: 顶部 banner 不可见无法退出) -->
-    <button class="concept-sheet-emergency-close" data-action="close-sheet" aria-label="关闭概念页">×</button>
     <div class="sheet-handle"></div>
     <div class="concept-sheet-fixed-head">
       <input type="text" class="concept-title-input" value="${esc(c.name)}" data-action-blur="concept-rename" data-action-enter="concept-rename" data-concept-id="${esc(c.id)}" placeholder="概念名">

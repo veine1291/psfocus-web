@@ -3402,20 +3402,7 @@ html, body { overscroll-behavior-y: contain; }
   overscroll-behavior: contain;        /* 防 sheet 跟着一起滑 */
   touch-action: pan-y;                 /* 明确告诉浏览器: 这里只接 Y 方向滑动 */
 }
-/* contenteditable 空时显示 placeholder
-   关键:overlay 在第一行(absolute 定位),不要让 ::before 自己占一行,
-   否则 placeholder 在第一行光标在第二行,看起来非常诡异 (Kayu 2026-05-27 报) */
-.sum-input:empty::before,
-.sum-input[data-empty="1"]::before,
-.sum-input:has(> div:only-child > br:only-child)::before {
-  content: attr(data-placeholder);
-  color: var(--text-faint);
-  pointer-events: none;
-  position: absolute;
-  top: 4px;
-  left: 0;
-  right: 0;
-}
+/* (placeholder ::before 已删除 — Kayu 2026-05-27 反馈输入框 placeholder 文本溢出框体, 干脆全部不要 placeholder) */
 /* 编辑器内的格式渲染 */
 .sum-input b, .sum-input strong { font-weight: 700; }
 .sum-input i, .sum-input em { font-style: italic; }
@@ -3451,53 +3438,27 @@ html, body { overscroll-behavior-y: contain; }
   flex-direction: column;
   gap: 14px;
 }
-/* 固定头 — 放在 .sheet-content 外面, sheet-body 直接子元素, 永不滚 (Kayu 2026-05-27)
-   样式跟 PSFocus 其它 sheet head 保持一致:浅边框分隔 + 标题加粗 + × 圆按钮 */
+/* 概念页固定头 — 跟其它 sheet 一样靠下滑关闭, 无 × 按钮 + 无白底 (Kayu 2026-05-27 三次反馈) */
 .concept-sheet-fixed-head {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 16px 10px;
-  border-bottom: 1px solid var(--border-soft);
+  padding: 2px 18px 8px;
   background: var(--bg-panel);
   z-index: 2;
-  min-height: 48px;
   box-sizing: border-box;
 }
-/* (紧急关闭按钮已删除 — sheet 改用 svh 后顶部 banner 正常显示, 不再需要兜底) */
 .concept-sheet-fixed-head .concept-title-input {
   flex: 1; min-width: 0;
   border: 0;
-  background: transparent;
-  font-size: 16px;
-  font-weight: 600;
+  background: transparent;   /* 不要白底, 直接平铺在 sheet 背景上 */
+  font-size: 18px;
+  font-weight: 700;
   color: var(--text);
   outline: none;
-  padding: 4px 6px;
-  border-radius: 6px;
+  padding: 4px 0;
 }
-.concept-sheet-fixed-head .concept-title-input:focus { background: var(--bg-section); }
-.concept-sheet-fixed-head .concept-drawer-close {
-  flex: 0 0 36px; height: 36px;
-  border: 0;
-  background: var(--bg-section);
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-  padding: 0;
-}
-.concept-sheet-fixed-head .concept-drawer-close .ico-x {
-  width: 14px; height: 14px;
-  background: currentColor;
-  -webkit-mask-size: contain; mask-size: contain;
-  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-  -webkit-mask-position: center; mask-position: center;
-  display: inline-block;
-}
-.concept-sheet-fixed-head .concept-drawer-close:active { background: var(--bg-active); color: var(--text); }
+.concept-sheet-fixed-head .concept-title-input:focus { background: transparent; }
 /* 概念描述编辑框 — 防文字脱框 */
 .concept-sheet .sum-input {
   word-break: break-word;

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0706';
+const _PSFOCUS_BUILD = '20260527-0801';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1965,10 +1965,9 @@ function _renderSummaryInputBox() {
   return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
     <input type="text" class="sum-input-title" id="sum-main-input-title"
       data-action-input="summary-draft-title"
-      value="${esc(draftTitle)}" placeholder="概要(可选)— 一句话标题, 概念页上会显示" />
+      value="${esc(draftTitle)}" />
     <div class="sum-input" contenteditable="true"
-      data-action-input="summary-input-autosize"
-      data-placeholder="现在的想法是…">${_mdToEditHtml(draft)}</div>
+      data-action-input="summary-input-autosize">${_mdToEditHtml(draft)}</div>
     ${pendingImgs ? `<div class="sum-input-pending">${pendingImgs}</div>` : ''}
     ${todayModsHtml}
     <div class="sum-input-toolbar">
@@ -3269,11 +3268,10 @@ const _summaryActions = {
           <input id="sum-edit-note-date" class="sum-edit-date-input" type="datetime-local" value="${dtLocal}">
         </label>
         <input id="sum-edit-note-title" type="text" class="sum-edit-title-input"
-          value="${esc(s.title || '')}" placeholder="概要(可选)— 给这条笔记一个标题/中心思想, 概念页上会显示" />
+          value="${esc(s.title || '')}" />
         <div class="sum-input-card sum-edit-card" style="margin-top:8px;">
           <div id="sum-edit-note-text" class="sum-input sum-edit-note-textarea" contenteditable="true"
-            data-action-input="summary-input-autosize"
-            data-placeholder="备注、笔记…  输入 #xxx 自动加标签">${_mdToEditHtml(s.note || '')}</div>
+            data-action-input="summary-input-autosize">${_mdToEditHtml(s.note || '')}</div>
           <div class="sum-input-toolbar">
             <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
             <span class="sum-tb-sep"></span>
@@ -6646,10 +6644,6 @@ function openTaskDetail(id) {
   body.innerHTML = `
     <div class="sheet-handle"></div>
     <div class="dp-detail">
-      <div class="dp-head">
-        <span class="dp-head-kind">${isRecurring ? '重复任务' : '任务'}</span>
-        <button class="dp-head-close" data-action="task-detail-close" title="关闭">×</button>
-      </div>
 
       <div class="dp-time-bar">
         ${schedHtml}
@@ -6661,7 +6655,7 @@ function openTaskDetail(id) {
 
       <div class="dp-title-row">
         <button class="dp-check ${checked ? 'done' : ''}" data-action="toggle-done" title="${checked ? '标记未完成' : '标记完成'}">${checked ? '✓' : ''}</button>
-        <input type="text" class="dp-title-input ${checked ? 'done' : ''}" value="${esc(t.title || '')}" placeholder="任务标题" />
+        <input type="text" class="dp-title-input ${checked ? 'done' : ''}" value="${esc(t.title || '')}" />
       </div>
 
       ${focusedHtml}
@@ -7768,22 +7762,18 @@ function _openConceptSheet(conceptId) {
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="concept-sheet-fixed-head">
-      <input type="text" class="concept-title-input" value="${esc(c.name)}" data-action-blur="concept-rename" data-action-enter="concept-rename" data-concept-id="${esc(c.id)}" placeholder="概念名">
-      <button class="concept-drawer-close" data-action="close-sheet" aria-label="关闭"><span class="ico-x"></span></button>
+      <input type="text" class="concept-title-input" value="${esc(c.name)}" data-action-blur="concept-rename" data-action-enter="concept-rename" data-concept-id="${esc(c.id)}">
     </div>
     <div class="sheet-content concept-sheet">
       <div class="concept-aliases">
-        <div class="concept-section-title">别名</div>
-        ${aliasesHtml || '<span class="concept-empty-mini">(无)</span>'}
+        ${aliasesHtml}
         <button class="concept-alias-add" data-action="concept-add-alias" data-concept-id="${esc(c.id)}">+ 别名</button>
       </div>
       <div class="concept-desc">
-        <div class="concept-section-title">描述</div>
         <div class="sum-input-card">
           <div id="concept-desc-input" class="sum-input" contenteditable="true"
             data-action-input="concept-desc-input"
-            data-concept-id="${esc(c.id)}"
-            data-placeholder="给这个概念写点描述…  支持 [[其它概念]] 互链">${_mdToEditHtml(c.description || '')}</div>
+            data-concept-id="${esc(c.id)}">${_mdToEditHtml(c.description || '')}</div>
         </div>
       </div>
       <div class="concept-backlinks">

@@ -3393,6 +3393,9 @@ html, body { overscroll-behavior-y: contain; }
   word-wrap: break-word;
   word-break: break-word;
   white-space: pre-wrap;
+  -webkit-overflow-scrolling: touch;   /* iOS 惯性滚动 */
+  overscroll-behavior: contain;        /* 防 sheet 跟着一起滑 */
+  touch-action: pan-y;                 /* 明确告诉浏览器: 这里只接 Y 方向滑动 */
 }
 /* contenteditable 空时显示 placeholder */
 .sum-input:empty::before,
@@ -3444,12 +3447,29 @@ html, body { overscroll-behavior-y: contain; }
   flex-direction: column;
   gap: 14px;
 }
+/* 概念页头 sticky 在 sheet 顶部 — 否则下滚时关闭按钮跟着滚走没法点 (Kayu 2026-05-27 报) */
 .concept-drawer-head {
   display: flex;
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--border-soft);
   padding-bottom: 10px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel, var(--bg-page));
+  z-index: 5;
+  margin: 0 -16px 0;
+  padding: 10px 16px;
+}
+/* 概念描述编辑框 — 防文字脱框 */
+.concept-sheet .sum-input {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.concept-sheet .sum-input-card {
+  overflow: hidden;
 }
 .concept-drawer-close {
   width: 28px; height: 28px;
@@ -3539,6 +3559,40 @@ html, body { overscroll-behavior-y: contain; }
 }
 
 .concept-nav-row .sum-tag-label { color: var(--accent); }
+/* 笔记概要输入 (编辑笔记 sheet 里) */
+.sum-edit-title-input {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  outline: none;
+  box-sizing: border-box;
+}
+.sum-edit-title-input:focus { border-color: var(--accent); }
+.sum-edit-title-input::placeholder { color: var(--text-faint); font-weight: 400; font-size: 12.5px; }
+/* 概念页反链卡片里的概要 + tag chip */
+.concept-backlink-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 3px 0 2px;
+  line-height: 1.35;
+}
+.concept-bl-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  border-radius: 3px;
+  font-size: 10.5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
 .concept-unlinked-main {
   flex: 1; min-width: 0;
   text-align: left;

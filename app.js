@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0501';
+const _PSFOCUS_BUILD = '20260527-0601';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1191,6 +1191,7 @@ function sanitizeState(s) {
     if (!Array.isArray(sum.tags))    sum.tags    = [];
     if (!Array.isArray(sum.images))  sum.images  = [];
     if (typeof sum.note !== 'string') sum.note   = '';
+    if (typeof sum.title !== 'string') sum.title = '';   // 概要 (2026-05-27)
     if (!sum.createdAt) sum.createdAt = sum.updatedAt || Date.now();
     if (!sum.updatedAt) sum.updatedAt = sum.createdAt;
     if (sum.modules) delete sum.modules;
@@ -3211,6 +3212,8 @@ const _summaryActions = {
           <span class="sum-edit-date-label">日期 / 时间</span>
           <input id="sum-edit-note-date" class="sum-edit-date-input" type="datetime-local" value="${dtLocal}">
         </label>
+        <input id="sum-edit-note-title" type="text" class="sum-edit-title-input"
+          value="${esc(s.title || '')}" placeholder="概要(可选)— 给这条笔记一个标题/中心思想, 概念页上会显示" />
         <div class="sum-input-card sum-edit-card" style="margin-top:8px;">
           <div id="sum-edit-note-text" class="sum-input sum-edit-note-textarea" contenteditable="true"
             data-action-input="summary-input-autosize"
@@ -3261,9 +3264,14 @@ const _summaryActions = {
       const parsed = new Date(dateInp.value).getTime();
       if (Number.isFinite(parsed)) nextCreatedAt = parsed;
     }
+    // 概要 (title) — 概念页上显示
+    const titleInp = document.getElementById('sum-edit-note-title');
+    const nextTitle = titleInp ? String(titleInp.value || '').trim() : (s.title || '');
     const dateChanged = nextCreatedAt && nextCreatedAt !== s.createdAt;
     const noteChanged = nextNote !== (s.note || '');
-    if (!dateChanged && !noteChanged) { closeSheet(); return; }
+    const titleChanged = nextTitle !== (s.title || '');
+    if (!dateChanged && !noteChanged && !titleChanged) { closeSheet(); return; }
+    if (titleChanged) { s.title = nextTitle; s.updatedAt = Date.now(); }
     if (noteChanged) {
       s.note = nextNote;
       // 重新解析 tags
@@ -7659,11 +7667,20 @@ function _openConceptSheet(conceptId) {
   const backlinks = _extractBacklinks(c);
   const unlinked = _extractUnlinkedMentions(c);
   const _ctxHtml = (ctx) => esc(ctx).replace(/\[\[([^\]\n]+?)\]\]/g, '<span class="concept-link-ctx">[[$1]]</span>');
+  const _summaryBlMeta = (s) => {
+    const time = esc(_summaryDayLabel(s.createdAt));
+    const tags = (s.tags || []).slice(0, 5).map(t =>
+      '<span class="concept-bl-tag">#' + esc(t) + '</span>').join('');
+    return '<div class="concept-backlink-meta">' + time + (tags ? ' ' + tags : '') + '</div>';
+  };
+  const _summaryTitle = (s) =>
+    (s.title && s.title.trim()) ? '<div class="concept-backlink-title">' + esc(s.title) + '</div>' : '';
   const backlinksHtml = backlinks.length
     ? backlinks.map(bl => {
         if (bl.summary) {
           return `<button class="concept-backlink" data-action="concept-goto-summary" data-summary-id="${esc(bl.summary.id)}">
-            <div class="concept-backlink-meta">${esc(_summaryDayLabel(bl.summary.createdAt))}</div>
+            ${_summaryBlMeta(bl.summary)}
+            ${_summaryTitle(bl.summary)}
             <div class="concept-backlink-ctx">…${_ctxHtml(bl.context)}…</div>
           </button>`;
         } else if (bl.concept) {
@@ -7679,7 +7696,8 @@ function _openConceptSheet(conceptId) {
     ? '<div class="concept-section-title">未链接提及 (' + unlinked.length + ')</div>'
       + unlinked.map(u => `<div class="concept-unlinked">
           <button class="concept-unlinked-main" data-action="concept-goto-summary" data-summary-id="${esc(u.summary.id)}">
-            <div class="concept-backlink-meta">${esc(_summaryDayLabel(u.summary.createdAt))}</div>
+            ${_summaryBlMeta(u.summary)}
+            ${_summaryTitle(u.summary)}
             <div class="concept-backlink-ctx">…${esc(u.context)}…</div>
           </button>
           <button class="concept-wrap-btn" data-action="concept-wrap-mention" data-summary-id="${esc(u.summary.id)}" data-name="${esc(u.name)}">+ 链上</button>

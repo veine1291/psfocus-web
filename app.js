@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0705';
+const _PSFOCUS_BUILD = '20260527-0706';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11541,12 +11541,12 @@ const _PSF_STANDALONE = window.navigator.standalone === true
   const vv = window.visualViewport;
   if (!vv) return;
   let lastOffset = 0;
-  // 之前的逻辑是「焦点在 sheet 里就把整个 sheet body 上抬 kbHeight」,问题:
-  // sheet 内容比 viewport 高时 (像编辑笔记 sheet, 概要 + note + 工具栏几百 px),
-  // 上抬 kbHeight 会把 sheet 顶部连同顶部的概要 input 一起推到 viewport 上方看不见。
-  // 新逻辑:计算 focused 元素当前是否被键盘遮住, 仅按所需的"差量"上抬, 不多抬。
-  // (Kayu 2026-05-27 报:概要 input 在键盘弹起后跑到屏幕外)
+  // 算法:每次 apply 都先复原 transform 再测真位置, 算需要 lift 的绝对值, 一次性 set。
+  // 不再累加 (旧 0703 的 bug: 多次 vv.resize 期间 lift 滚雪球, 把 sheet 顶部跑出视窗)。
+  // (Kayu 2026-05-27 第三次报: 新建/编辑 sheet 一开始输入框完全看不见, 关键盘才能下来)
+  let applying = false;
   const apply = () => {
+    if (applying) return;
     const sheet = $('sheet');
     if (!sheet || sheet.classList.contains('hidden')) return;
     const body = $('sheet-body');
@@ -11554,58 +11554,57 @@ const _PSF_STANDALONE = window.navigator.standalone === true
     const kbHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     const ae = document.activeElement;
     const focused = ae && body.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
-    let target = 0;
-    if (focused && kbHeight > 50) {
-      // 当前 focused 元素在 viewport 里的位置
-      const rect = ae.getBoundingClientRect();
-      // 键盘上方 = viewport 可见区域下边界
-      const visibleBottom = vv.height + vv.offsetTop;
-      // 元素底边超出可见区下边界多少 → 抬这么多 + 12 px 余量
-      const overflow = rect.bottom - visibleBottom;
-      if (overflow > 0) {
-        // 已经有 lastOffset(之前已抬过), 累加上去
-        target = lastOffset - overflow - 12;
-      } else {
-        // 元素已可见 — 不动, 不要回弹 (避免每次 focusin 都抖)
-        target = lastOffset;
+
+    // 没键盘 或 焦点不在 sheet 里 → 复位
+    if (kbHeight < 50 || !focused) {
+      if (lastOffset !== 0) {
+        applying = true;
+        body.style.transition = 'transform .18s ease';
+        body.style.transform = '';
+        lastOffset = 0;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          body.style.transition = '';
+          applying = false;
+        }));
       }
+      return;
     }
-    if (target !== lastOffset) {
-      lastOffset = target;
-      const prevTrans = body.style.transition;
+
+    // 键盘开了 + 焦点在 sheet 里 — 算需要 lift 的绝对值
+    // 关键:先清空 transform 拿到真位置, 不会因为前次 lift 而读到偏移过的位置
+    applying = true;
+    const prevTransform = body.style.transform;
+    const prevTransition = body.style.transition;
+    body.style.transition = 'none';
+    body.style.transform = '';
+    // force reflow
+    void body.offsetHeight;
+    const rect = ae.getBoundingClientRect();
+    const visibleBottom = vv.height + vv.offsetTop;
+    const overflow = rect.bottom - visibleBottom;
+    const newOffset = overflow > 0 ? -(overflow + 12) : 0;
+
+    if (newOffset === 0) {
+      // 不需要 lift — 让 transform 保持清空状态, lastOffset = 0
+      body.style.transition = prevTransition;
+      lastOffset = 0;
+      requestAnimationFrame(() => { applying = false; });
+    } else {
+      // 需要 lift — apply 绝对偏移
       body.style.transition = 'transform .18s ease';
-      body.style.transform = target ? `translateY(${target}px)` : '';
-      requestAnimationFrame(() => requestAnimationFrame(() => { body.style.transition = prevTrans; }));
-    }
-    // 兜底:不管 lift 多少, 让 focused 元素 scrollIntoView 一下,
-    // 防止 sheet-content 内部 scroll 把它隐藏在视图外
-    if (focused && kbHeight > 50) {
-      setTimeout(() => {
-        try { ae.scrollIntoView({ block: 'nearest', behavior: 'auto' }); } catch (_) {}
-      }, 220);   // 等键盘 + sheet 动画完成
+      body.style.transform = `translateY(${newOffset}px)`;
+      lastOffset = newOffset;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        body.style.transition = '';
+        applying = false;
+      }));
     }
   };
   vv.addEventListener('resize', apply);
   vv.addEventListener('scroll', apply);
-  // focus/blur 也触发(键盘可能在 visualViewport 事件之前就被调起)
-  document.addEventListener('focusin', () => setTimeout(apply, 50), true);
-  document.addEventListener('focusout', () => {
-    // 失焦时如果键盘真的关了,清空 lift
-    setTimeout(() => {
-      const kbHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      if (kbHeight < 50) {
-        const body = $('sheet-body');
-        if (body && lastOffset !== 0) {
-          lastOffset = 0;
-          body.style.transition = 'transform .18s ease';
-          body.style.transform = '';
-          requestAnimationFrame(() => requestAnimationFrame(() => { body.style.transition = ''; }));
-        }
-      } else {
-        apply();
-      }
-    }, 50);
-  }, true);
+  // focus/blur 触发 — 键盘可能在 vv 事件之前调起
+  document.addEventListener('focusin', () => setTimeout(apply, 80), true);
+  document.addEventListener('focusout', () => setTimeout(apply, 80), true);
 })();
 
 // 启动

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0404';
+const _PSFOCUS_BUILD = '20260527-0405';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1636,8 +1636,14 @@ let summaryState = {
   expandedModuleCards: new Set(),
   // 输入框下方"今日 · 待录入"面板的折叠状态 — 跨刷新保留
   inputModsCollapsed: (() => { try { return localStorage.getItem('psfocus_inputModsCollapsed') === '1'; } catch (_) { return false; } })(),
-  // tag 侧栏:父 tag 折叠子 tag 状态、大分类(置顶 / 全部)折叠状态
-  collapsedTags: new Set(),
+  // tag 侧栏:父 tag 折叠子 tag 状态 — localStorage 持久化
+  collapsedTags: (() => {
+    try {
+      const raw = localStorage.getItem('psfocus_sumCollapsedTags');
+      if (raw == null) return new Set();
+      return new Set(JSON.parse(raw));
+    } catch (_) { return new Set(); }
+  })(),
   // 大类折叠状态 — localStorage 跨刷新保留;首次默认「项目标签」折叠
   // (项目 tag 是时间轴自动生成的,通常一大堆,默认占视野不合理)
   collapsedSections: (() => {
@@ -2741,6 +2747,10 @@ const _summaryActions = {
     if (!summaryState.collapsedTags) summaryState.collapsedTags = new Set();
     if (summaryState.collapsedTags.has(t)) summaryState.collapsedTags.delete(t);
     else summaryState.collapsedTags.add(t);
+    try {
+      localStorage.setItem('psfocus_sumCollapsedTags',
+        JSON.stringify(Array.from(summaryState.collapsedTags)));
+    } catch (_) {}
     _renderSummaryDrawerNav();
   },
   // 大分类(置顶/项目/全部)折叠 — localStorage 持久化跨刷新保留

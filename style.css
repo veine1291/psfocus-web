@@ -4179,14 +4179,14 @@ html, body { overscroll-behavior-y: contain; }
 .sum-md-quote {
   margin: 6px 0;
   padding: 2px 0 2px 12px;
-  border-left: 3px solid var(--border, #ccc);
+  border-left: 3px solid var(--accent, #888);
 }
 .sum-md-quote .sum-md-line { white-space: pre-wrap; }
 /* 编辑器里的 blockquote — 和显示态视觉一致 */
 .sum-input blockquote {
   margin: 6px 0;
   padding: 2px 0 2px 12px;
-  border-left: 3px solid var(--border, #ccc);
+  border-left: 3px solid var(--accent, #888);
 }
 .sum-item-tags {
   display: flex;

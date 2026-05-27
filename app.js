@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0403';
+const _PSFOCUS_BUILD = '20260527-0404';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2828,15 +2828,33 @@ const _summaryActions = {
   'concept-goto-summary': (el) => {
     const sid = el.dataset.summaryId;
     if (!sid) return;
+    const s = (state.summaries || []).find(x => x.id === sid);
+    if (!s) { closeSheet(); return; }
     closeSheet();
-    setTimeout(() => {
+    // 清筛选 + 扩可见窗口 + 展开该天, 防止 target 不在 DOM 里点不到
+    summaryState.searchQuery = '';
+    summaryState.filter = 'all';
+    const targetDayKey = _summaryDayKey(s.createdAt);
+    const today0 = startOfDay(new Date()).getTime();
+    const target0 = startOfDay(new Date(s.createdAt || Date.now())).getTime();
+    const daysAgo = Math.max(0, Math.round((today0 - target0) / 86400000));
+    const needDays = daysAgo + 1;
+    if ((summaryState.visibleDaysCount || 7) < needDays) {
+      summaryState.visibleDaysCount = needDays + 5;
+    }
+    if (!summaryState.expandedDays) summaryState.expandedDays = new Set();
+    summaryState.expandedDays.add(targetDayKey);
+    if (summaryState.collapsedDays) summaryState.collapsedDays.delete(targetDayKey);
+    renderAll();
+    // 即时(非 smooth)滚到位置, 老笔记很远也不卡动画
+    requestAnimationFrame(() => {
       const item = document.querySelector('.sum-item[data-summary-id="' + sid + '"]');
       if (item) {
-        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        item.scrollIntoView({ behavior: 'auto', block: 'center' });
         item.classList.add('sum-item-flash');
         setTimeout(() => item.classList.remove('sum-item-flash'), 1400);
       }
-    }, 80);
+    });
   },
   'concept-wrap-mention': (el) => {
     const sid = el.dataset.summaryId;

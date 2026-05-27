@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0401';
+const _PSFOCUS_BUILD = '20260527-0402';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1795,6 +1795,8 @@ function _renderSummaryNoteHtml(text) {
   html = html.replace(/\*\*([^\n]+?)\*\*/g, _PA + '$1' + _PB);
   html = html.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<i>$1</i>');
   html = html.split(_PA).join('<b>').split(_PB).join('</b>');
+  // 吞孤立未配对 ** — 配对的已被 bold regex 吃成 <b></b>; 剩下来的必然 unpaired
+  html = html.replace(/\*\*/g, '');
   // [[xxx]] 概念链接 — 在 #tag 替换之前做, 防止 [[xxx]] 内含 # 被误抓
   html = html.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) =>
     '<span class="concept-link" data-action="concept-open" data-name="' + esc(name.trim()) + '">'
@@ -1990,6 +1992,8 @@ function _mdToEditHtml(md) {
     h = h.replace(/\*\*([^\n]+?)\*\*/g, _PA + '$1' + _PB);
     h = h.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<i>$1</i>');
     h = h.split(_PA).join('<b>').split(_PB).join('</b>');
+    // 吞孤立未配对 ** 防 unpaired 字面跑到编辑器
+    h = h.replace(/\*\*/g, '');
     // [[xxx]] 概念链接 chip — span 内文本就是 [[xxx]], _editHtmlToMd 读 textContent 就 round-trip
     h = h.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) => {
       const n = name.trim();

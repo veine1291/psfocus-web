@@ -1989,9 +1989,6 @@ function _renderSummaryInputBox() {
   // 编辑器 IS 预览:粗体直接显示加粗、标题直接显示大字。底层保存还是 markdown 串。
   // 概要 (title) 输入 — 概念页反链里会高亮显示 (Kayu 2026-05-27)
   return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
-    <input type="text" class="sum-input-title" id="sum-main-input-title"
-      data-action-input="summary-draft-title"
-      value="${esc(draftTitle)}" />
     <div class="sum-input" contenteditable="true"
       data-action-input="summary-input-autosize">${_mdToEditHtml(draft)}</div>
     ${pendingImgs ? `<div class="sum-input-pending">${pendingImgs}</div>` : ''}

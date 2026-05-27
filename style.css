@@ -3898,7 +3898,7 @@ html, body { overscroll-behavior-y: contain; }
 }
 .sum-tb-btn:active { background: var(--bg-active); color: var(--text); }
 .sum-tb-hash { font-size: 16px; font-weight: 600; }
-.sum-tb-img .ico-image { width: 16px; height: 16px; }
+.sum-tb-img .ico-image { width: 14px; height: 14px; }
 .sum-tb-mod {
   width: auto;
   padding: 0 10px;

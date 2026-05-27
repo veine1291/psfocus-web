@@ -3580,6 +3580,22 @@ html, body { overscroll-behavior-y: contain; }
 
 .concept-nav-row .sum-tag-label { color: var(--accent); }
 /* 笔记概要输入 (编辑笔记 sheet 里) */
+/* 主输入框上方的概要输入 */
+.sum-input-title {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  outline: none;
+  padding: 4px 0 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed var(--border-soft);
+  box-sizing: border-box;
+}
+.sum-input-title::placeholder { color: var(--text-faint); font-weight: 400; font-size: 12.5px; }
+.sum-input-title:focus { border-bottom-color: var(--accent); }
 .sum-edit-title-input {
   width: 100%;
   margin-top: 8px;

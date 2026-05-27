@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0602';
+const _PSFOCUS_BUILD = '20260527-0701';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1632,6 +1632,7 @@ let summaryState = {
   pendingImages: [],           // [{ id, cloudFileID, name }]
   pendingModuleValues: {},     // { [modId]: value/valueMs }
   draftNote: '',               // 输入框未发布的笔记草稿 — 防 renderAll 时清空
+  draftTitle: '',              // 概要(title)草稿 — 同 draftNote 持久化
   modulePopoverForDay: null,   // sheet 形式打开时的 dayKey
   modulePickerOpenInPopover: false,
   expandedModuleCards: new Set(),
@@ -1950,9 +1951,14 @@ function _renderSummaryInputBox() {
   </div>` : '';
   const hasPending = Object.keys(summaryState.pendingModuleValues || {}).length > 0;
   const draft = summaryState.draftNote || '';
+  const draftTitle = summaryState.draftTitle || '';
   // 2026-05-27 textarea + 预览框 → contenteditable WYSIWYG。Kayu 要实时看效果不分两块。
   // 编辑器 IS 预览:粗体直接显示加粗、标题直接显示大字。底层保存还是 markdown 串。
+  // 概要 (title) 输入 — 概念页反链里会高亮显示 (Kayu 2026-05-27)
   return `<div class="sum-input-card ${hasPending ? 'has-pending-modules' : ''}">
+    <input type="text" class="sum-input-title" id="sum-main-input-title"
+      data-action-input="summary-draft-title"
+      value="${esc(draftTitle)}" placeholder="概要(可选)— 一句话标题, 概念页上会显示" />
     <div class="sum-input" contenteditable="true"
       data-action-input="summary-input-autosize"
       data-placeholder="现在的想法是…">${_mdToEditHtml(draft)}</div>
@@ -2197,13 +2203,26 @@ function _extractUnlinkedMentions(concept) {
   if (!concept) return [];
   const names = [concept.name].concat(concept.aliases || []).filter(Boolean);
   if (!names.length) return [];
+  // 跳过 [[...]] 区段查找 name 位置 — 否则刚包过的还会显示成 "未链接" 重复
+  const findUnwrappedIdx = (note, name) => {
+    let i = 0;
+    while (i < note.length) {
+      if (note.startsWith('[[', i)) {
+        const end = note.indexOf(']]', i + 2);
+        if (end === -1) { i++; continue; }
+        i = end + 2;
+        continue;
+      }
+      if (note.startsWith(name, i)) return i;
+      i++;
+    }
+    return -1;
+  };
   const out = [];
   for (const s of (state.summaries || [])) {
     const note = s.note || '';
-    const stripped = note.replace(/\[\[[^\]\n]+?\]\]/g, '');
     for (const n of names) {
-      if (stripped.indexOf(n) < 0) continue;
-      const noteIdx = note.indexOf(n, 0);
+      const noteIdx = findUnwrappedIdx(note, n);
       if (noteIdx < 0) continue;
       const before = note.slice(Math.max(0, noteIdx - 30), noteIdx);
       const after  = note.slice(noteIdx + n.length, noteIdx + n.length + 30);
@@ -2946,6 +2965,9 @@ const _summaryActions = {
       };
     });
   },
+  'summary-draft-title': (el) => {
+    summaryState.draftTitle = el.value || '';
+  },
   'summary-search-input': (el, e) => {
     summaryState.searchQuery = el.value || '';
     // IME 拼音组词期间 input 事件每段都会 fire,跳过不触发重渲(等 compositionend 后正常 input 才走)
@@ -3148,6 +3170,12 @@ const _summaryActions = {
         }
       }
     }
+    // 读概要 (title) — 优先 sheet 里的输入,兜底 draftTitle
+    let title = '';
+    const titleEl = document.querySelector('#sheet-body #sum-main-input-title')
+      || document.getElementById('sum-main-input-title');
+    if (titleEl) title = String(titleEl.value || '').trim();
+    if (!title) title = String(summaryState.draftTitle || '').trim();
     if (hasNoteOrImg) {
       const tags = _summaryParseTagsFromText(text);
       for (const tg of tags) _summaryEnsureTag(tg);
@@ -3158,13 +3186,15 @@ const _summaryActions = {
       state.summaries.push({
         id: 'sum-' + Math.random().toString(36).slice(2, 10),
         createdAt: now, updatedAt: now,
-        note: text, tags, images: imgs,
+        note: text, title, tags, images: imgs,
       });
     }
     summaryState.pendingImages = [];
     summaryState.pendingModuleValues = {};
     summaryState.draftNote = '';
+    summaryState.draftTitle = '';
     if (ed) ed.innerHTML = '<div><br></div>';
+    if (titleEl) titleEl.value = '';
     pushState();
     if (typeof closeSheet === 'function') closeSheet();   // 收起浮动输入面板
     renderAll();

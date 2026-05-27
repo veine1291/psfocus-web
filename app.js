@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0405';
+const _PSFOCUS_BUILD = '20260527-0501';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2164,16 +2164,32 @@ function _extractBacklinks(concept) {
   const reAlt = names.map(escRe).join('|');
   const re = new RegExp('\\[\\[(' + reAlt + ')\\]\\]');
   const out = [];
+  // (1) summaries
   for (const s of (state.summaries || [])) {
     const note = s.note || '';
     const m = note.match(re);
     if (!m) continue;
     const idx = m.index;
-    const before = note.slice(Math.max(0, idx - 30), idx);
-    const after  = note.slice(idx + m[0].length, idx + m[0].length + 30);
-    out.push({ summary: s, context: before + m[0] + after, idx });
+    out.push({
+      summary: s,
+      ts: s.createdAt || 0,
+      context: note.slice(Math.max(0, idx - 30), idx) + m[0] + note.slice(idx + m[0].length, idx + m[0].length + 30),
+    });
   }
-  out.sort((a, b) => (b.summary.createdAt || 0) - (a.summary.createdAt || 0));
+  // (2) 别的概念的描述里引用本概念 — Obsidian 标准的概念间双向链接
+  for (const c of (state.concepts || [])) {
+    if (c === concept || c.id === concept.id) continue;
+    const desc = c.description || '';
+    const m = desc.match(re);
+    if (!m) continue;
+    const idx = m.index;
+    out.push({
+      concept: c,
+      ts: c.updatedAt || 0,
+      context: desc.slice(Math.max(0, idx - 30), idx) + m[0] + desc.slice(idx + m[0].length, idx + m[0].length + 30),
+    });
+  }
+  out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   return out;
 }
 function _extractUnlinkedMentions(concept) {
@@ -2789,6 +2805,9 @@ const _summaryActions = {
       el._syncRAF = null;
       c.description = _editHtmlToMd(el);
       c.updatedAt = Date.now();
+      // 描述里的 [[xxx]] 自动建概念 — 概念间互链一等公民
+      const wl = _extractWikilinks(c.description);
+      for (const wn of wl) _ensureConcept(wn);
       pushState();
     });
   },
@@ -3511,25 +3530,25 @@ function _bindSummaryGlobalDispatchers() {
     const el = e.target.closest && e.target.closest('[data-action]');
     if (!el) return;
     const a = el.dataset.action;
-    if (a && a.startsWith('summary-') && _summaryActions[a]) _summaryActions[a](el, e);
+    if (a && (a.startsWith('summary-') || a.startsWith('concept-')) && _summaryActions[a]) _summaryActions[a](el, e);
   });
   document.addEventListener('input', (e) => {
     const el = e.target.closest && e.target.closest('[data-action-input]');
     if (!el) return;
     const a = el.dataset.actionInput;
-    if (a && a.startsWith('summary-') && _summaryActions[a]) _summaryActions[a](el, e);
+    if (a && (a.startsWith('summary-') || a.startsWith('concept-')) && _summaryActions[a]) _summaryActions[a](el, e);
   });
   document.addEventListener('change', (e) => {
     const el = e.target.closest && e.target.closest('[data-action-change],[data-action]');
     if (!el) return;
     const a = el.dataset.actionChange || el.dataset.action;
-    if (a && a.startsWith('summary-') && _summaryActions[a]) _summaryActions[a](el, e);
+    if (a && (a.startsWith('summary-') || a.startsWith('concept-')) && _summaryActions[a]) _summaryActions[a](el, e);
   });
   document.addEventListener('blur', (e) => {
     const el = e.target.closest && e.target.closest('[data-action-blur]');
     if (!el) return;
     const a = el.dataset.actionBlur;
-    if (a && a.startsWith('summary-') && _summaryActions[a]) _summaryActions[a](el, e);
+    if (a && (a.startsWith('summary-') || a.startsWith('concept-')) && _summaryActions[a]) _summaryActions[a](el, e);
   }, true);
 }
 _bindSummaryGlobalDispatchers();
@@ -7641,11 +7660,21 @@ function _openConceptSheet(conceptId) {
   const unlinked = _extractUnlinkedMentions(c);
   const _ctxHtml = (ctx) => esc(ctx).replace(/\[\[([^\]\n]+?)\]\]/g, '<span class="concept-link-ctx">[[$1]]</span>');
   const backlinksHtml = backlinks.length
-    ? backlinks.map(bl => `<button class="concept-backlink" data-action="concept-goto-summary" data-summary-id="${esc(bl.summary.id)}">
-        <div class="concept-backlink-meta">${esc(_summaryDayLabel(bl.summary.createdAt))}</div>
-        <div class="concept-backlink-ctx">…${_ctxHtml(bl.context)}…</div>
-      </button>`).join('')
-    : '<div class="concept-empty">还没有笔记引用 [[' + esc(c.name) + ']]</div>';
+    ? backlinks.map(bl => {
+        if (bl.summary) {
+          return `<button class="concept-backlink" data-action="concept-goto-summary" data-summary-id="${esc(bl.summary.id)}">
+            <div class="concept-backlink-meta">${esc(_summaryDayLabel(bl.summary.createdAt))}</div>
+            <div class="concept-backlink-ctx">…${_ctxHtml(bl.context)}…</div>
+          </button>`;
+        } else if (bl.concept) {
+          return `<button class="concept-backlink concept-backlink-cpt" data-action="concept-open" data-concept-id="${esc(bl.concept.id)}">
+            <div class="concept-backlink-meta">概念 <span class="concept-link-bracket">[[</span>${esc(bl.concept.name)}<span class="concept-link-bracket">]]</span></div>
+            <div class="concept-backlink-ctx">…${_ctxHtml(bl.context)}…</div>
+          </button>`;
+        }
+        return '';
+      }).join('')
+    : '<div class="concept-empty">还没有笔记或概念引用 [[' + esc(c.name) + ']]</div>';
   const unlinkedHtml = unlinked.length
     ? '<div class="concept-section-title">未链接提及 (' + unlinked.length + ')</div>'
       + unlinked.map(u => `<div class="concept-unlinked">

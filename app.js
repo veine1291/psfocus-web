@@ -1823,24 +1823,34 @@ function _renderSummaryNoteHtml(text) {
   const lines = html.split('\n');
   const out = [];
   let listKind = null;
+  let inQuote = false;
   const closeList = () => { if (listKind) { out.push(`</${listKind}>`); listKind = null; } };
+  const closeQuote = () => { if (inQuote) { out.push('</blockquote>'); inQuote = false; } };
   for (const line of lines) {
     if (/^# (.+)$/.test(line)) {
-      closeList();
+      closeList(); closeQuote();
       out.push(`<h3 class="sum-md-h">${line.replace(/^# /, '')}</h3>`);
+    } else if (/^&gt;\s?(.*)$/.test(line)) {
+      // 注意:esc 已把 > 转成 &gt;
+      closeList();
+      if (!inQuote) { out.push('<blockquote class="sum-md-quote">'); inQuote = true; }
+      const inner = line.replace(/^&gt;\s?/, '');
+      out.push(`<div class="sum-md-line">${inner || '<br>'}</div>`);
     } else if (/^- (.+)$/.test(line)) {
+      closeQuote();
       if (listKind !== 'ul') { closeList(); out.push('<ul class="sum-md-ul">'); listKind = 'ul'; }
       out.push(`<li>${line.replace(/^- /, '')}</li>`);
     } else if (/^\d+\. (.+)$/.test(line)) {
+      closeQuote();
       if (listKind !== 'ol') { closeList(); out.push('<ol class="sum-md-ol">'); listKind = 'ol'; }
       out.push(`<li>${line.replace(/^\d+\. /, '')}</li>`);
     } else {
-      closeList();
+      closeList(); closeQuote();
       if (line.trim()) out.push(`<div class="sum-md-line">${line}</div>`);
       else out.push('<div class="sum-md-blank"></div>');
     }
   }
-  closeList();
+  closeList(); closeQuote();
   return out.join('');
 }
 
@@ -1983,6 +1993,7 @@ function _renderSummaryInputBox() {
       <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="head" title="标题">H</button>
       <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ul" title="无序"><span class="ico-list"></span></button>
       <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ol" title="有序">1.</button>
+      <button class="sum-tb-btn sum-tb-quote" data-action="summary-tb-format" data-fmt="quote" title="引用">&#8220;</button>
       <span class="sum-tb-sep"></span>
       <button class="sum-tb-btn sum-tb-mod" data-action="summary-open-mod-sheet" title="管理模块">+ 模块</button>
       <div class="sum-input-spacer"></div>
@@ -2024,27 +2035,42 @@ function _mdToEditHtml(md) {
   const lines = txt.split('\n');
   const blocks = [];
   let listType = null, listItems = [];
+  let quoteLines = null;          // 连续 > 行 → 同一个 <blockquote>
   const flushList = () => {
     if (listType) {
       blocks.push('<' + listType + '>' + listItems.join('') + '</' + listType + '>');
       listType = null; listItems = [];
     }
   };
+  const flushQuote = () => {
+    if (quoteLines) {
+      blocks.push('<blockquote>' + quoteLines.join('') + '</blockquote>');
+      quoteLines = null;
+    }
+  };
   for (const line of lines) {
     if (/^# (.+)$/.test(line)) {
-      flushList(); blocks.push('<h3>' + _inline(line.slice(2)) + '</h3>');
+      flushList(); flushQuote();
+      blocks.push('<h3>' + _inline(line.slice(2)) + '</h3>');
+    } else if (/^>\s?(.*)$/.test(line)) {
+      flushList();
+      if (!quoteLines) quoteLines = [];
+      const inner = line.replace(/^>\s?/, '');
+      quoteLines.push('<div>' + (inner.trim() ? _inline(inner) : '<br>') + '</div>');
     } else if (/^- (.+)$/.test(line)) {
+      flushQuote();
       if (listType !== 'ul') { flushList(); listType = 'ul'; }
       listItems.push('<li>' + _inline(line.slice(2)) + '</li>');
     } else if (/^\d+\. (.+)$/.test(line)) {
+      flushQuote();
       if (listType !== 'ol') { flushList(); listType = 'ol'; }
       listItems.push('<li>' + _inline(line.replace(/^\d+\. /, '')) + '</li>');
     } else {
-      flushList();
+      flushList(); flushQuote();
       blocks.push(line.trim() ? '<div>' + _inline(line) + '</div>' : '<div><br></div>');
     }
   }
-  flushList();
+  flushList(); flushQuote();
   return blocks.join('') || '<div><br></div>';
 }
 
@@ -2082,6 +2108,12 @@ function _editNodeToMd(node) {
       if (li.tagName.toLowerCase() === 'li') { out += i + '. ' + _editHtmlToMd(li) + '\n'; i++; }
     }
     return out;
+  }
+  if (tag === 'blockquote') {
+    // 内部按 div / 文本拆行, 每行前缀 "> "
+    const inner = _editHtmlToMd(node).replace(/\n+$/, '');
+    const lines = inner.split('\n');
+    return lines.map(l => '> ' + l).join('\n') + '\n';
   }
   if (tag === 'div' || tag === 'p') {
     const inner = _editHtmlToMd(node);
@@ -3094,6 +3126,7 @@ const _summaryActions = {
       else if (fmt === 'head')    document.execCommand('formatBlock', false, 'H3');
       else if (fmt === 'ul')      document.execCommand('insertUnorderedList');
       else if (fmt === 'ol')      document.execCommand('insertOrderedList');
+      else if (fmt === 'quote')   document.execCommand('formatBlock', false, 'BLOCKQUOTE');
       else if (fmt === 'mention') _insertTextAtCaret('@');
     } catch (_) {}
     _syncEditorToState(ed);
@@ -3278,12 +3311,14 @@ const _summaryActions = {
             data-action-input="summary-input-autosize">${_mdToEditHtml(s.note || '')}</div>
           <div class="sum-input-toolbar">
             <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
+            <button class="sum-tb-btn sum-tb-wiki" data-action="summary-tb-wikilink" title="加概念链接 [[xxx]]">[[]]</button>
             <span class="sum-tb-sep"></span>
             <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="bold" title="粗体"><b>B</b></button>
             <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="italic" title="斜体"><i>I</i></button>
             <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="head" title="标题">H</button>
             <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ul" title="无序"><span class="ico-list"></span></button>
             <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ol" title="有序">1.</button>
+            <button class="sum-tb-btn sum-tb-quote" data-action="summary-tb-format" data-fmt="quote" title="引用">&#8220;</button>
           </div>
         </div>
         <div style="display:flex;gap:8px;margin-top:14px;">

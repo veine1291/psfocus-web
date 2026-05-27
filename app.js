@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0801';
+const _PSFOCUS_BUILD = '20260527-0802';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2945,15 +2945,19 @@ const _summaryActions = {
     const ed = _summaryInputTa();
     if (!ed) return;
     ed.focus();
-    _insertTextAtCaret('[[]]');
+    // 直接 Range API: 插入 "[[]]" 文本节点, 把光标设到 textNode 偏移 2 (= "[[" 之后, "]]" 之前)
+    // 不能用先插入再 setStart(parent, offset-2) — 那是子节点 offset 不是字符 offset, 落点错
     try {
       const sel = window.getSelection();
-      if (sel.rangeCount) {
-        const r = sel.getRangeAt(0);
-        r.setStart(r.startContainer, Math.max(0, r.startOffset - 2));
-        r.collapse(true);
+      if (sel && sel.rangeCount) {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        const node = document.createTextNode('[[]]');
+        range.insertNode(node);
+        range.setStart(node, 2);
+        range.setEnd(node, 2);
         sel.removeAllRanges();
-        sel.addRange(r);
+        sel.addRange(range);
       }
     } catch (_) {}
     _syncEditorToState(ed);

@@ -3452,13 +3452,18 @@ html, body { overscroll-behavior-y: contain; }
   flex: 1; min-width: 0;
   border: 0;
   background: transparent;   /* 不要白底, 直接平铺在 sheet 背景上 */
+  /* iOS Safari 默认会给 input 加白底圆角 inset 看起来像白卡片, 必须显式去掉 */
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
   font-size: 18px;
   font-weight: 700;
   color: var(--text);
   outline: none;
   padding: 4px 0;
+  box-shadow: none;
 }
-.concept-sheet-fixed-head .concept-title-input:focus { background: transparent; }
+.concept-sheet-fixed-head .concept-title-input:focus { background: transparent; box-shadow: none; }
 /* 概念描述编辑框 — 防文字脱框 */
 .concept-sheet .sum-input {
   word-break: break-word;

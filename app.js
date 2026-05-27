@@ -3329,6 +3329,7 @@ const _summaryActions = {
     `, (body) => {
       const ed = body.querySelector('#sum-edit-note-text');
       if (ed) {
+        ed.addEventListener('paste', _summaryHandlePaste);
         ed.focus();
         _caretToEnd(ed);
       }
@@ -3654,36 +3655,56 @@ function _bindSummaryGlobalDispatchers() {
 }
 _bindSummaryGlobalDispatchers();
 
-// 粘贴图片直接上传(textarea paste handler)
+// 粘贴 — 图片直接上传; 文本/HTML 强制走纯文本插入
+// iPad Safari 上从网页粘贴富文本会带 inline style / <p> / <h1> 等, 会把 contenteditable
+// 撑高超过 max-height (overflow:auto 在 iOS contenteditable 上不总生效),
+// 工具栏就被推到 sheet 可视区外。统一剥光样式 + 粘完后把工具栏 scroll 回视口。
 async function _summaryHandlePaste(ev) {
-  const items = (ev.clipboardData && ev.clipboardData.items) || [];
+  const cd = ev.clipboardData;
+  const items = (cd && cd.items) || [];
   const imgItems = [];
   for (const it of items) if (it.type && it.type.startsWith('image/')) imgItems.push(it);
-  if (!imgItems.length) return;
-  ev.preventDefault();
-  showToast(`上传 ${imgItems.length} 张图…`);
-  let okCount = 0;
-  for (const it of imgItems) {
-    const f = it.getAsFile();
-    if (!f) continue;
-    try {
-      const cloudPath = `psfocus-summary-images/${uid}/${Date.now()}-paste.png`;
-      const res = await tcbApp.uploadFile({ cloudPath, filePath: f });
-      const fileID = res && res.fileID;
-      if (fileID) {
-        summaryState.pendingImages.push({
-          id: 'img-' + Math.random().toString(36).slice(2, 10),
-          cloudFileID: fileID, name: f.name || 'paste.png', uploadedAt: Date.now(),
-        });
-        okCount++;
-      }
-    } catch (err) { console.warn('[sum-paste]', err); }
+  if (imgItems.length) {
+    ev.preventDefault();
+    showToast(`上传 ${imgItems.length} 张图…`);
+    let okCount = 0;
+    for (const it of imgItems) {
+      const f = it.getAsFile();
+      if (!f) continue;
+      try {
+        const cloudPath = `psfocus-summary-images/${uid}/${Date.now()}-paste.png`;
+        const res = await tcbApp.uploadFile({ cloudPath, filePath: f });
+        const fileID = res && res.fileID;
+        if (fileID) {
+          summaryState.pendingImages.push({
+            id: 'img-' + Math.random().toString(36).slice(2, 10),
+            cloudFileID: fileID, name: f.name || 'paste.png', uploadedAt: Date.now(),
+          });
+          okCount++;
+        }
+      } catch (err) { console.warn('[sum-paste]', err); }
+    }
+    if (okCount) { showToast(`已粘贴 ${okCount} 张`); renderAll(); }
+    else { showToast('粘贴失败'); }
+    return;
   }
-  if (okCount) {
-    showToast(`已粘贴 ${okCount} 张`);
-    renderAll();
-  } else {
-    showToast('粘贴失败');
+  // 文本路径:强制纯文本,杜绝富 HTML 进编辑器
+  const text = (cd && (cd.getData('text/plain') || cd.getData('text'))) || '';
+  if (!text) return;  // 没有可识别内容就让浏览器自己处理
+  ev.preventDefault();
+  try { document.execCommand('insertText', false, text); }
+  catch (_) { try { _insertTextAtCaret(text); } catch (__) {} }
+  const ed = ev.currentTarget || ev.target;
+  if (ed) {
+    try { _syncEditorToState(ed); } catch (_) {}
+    // 粘贴后保证工具栏 & 发送键还在视野里
+    setTimeout(() => {
+      try {
+        const card = ed.closest && ed.closest('.sum-input-card');
+        const tb = card && card.querySelector('.sum-input-toolbar');
+        if (tb && tb.scrollIntoView) tb.scrollIntoView({ block: 'end', behavior: 'smooth' });
+      } catch (_) {}
+    }, 60);
   }
 }
 

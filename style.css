@@ -4175,24 +4175,18 @@ html, body { overscroll-behavior-y: contain; }
 .sum-md-h { font-size: 14px; font-weight: 600; margin: 6px 0 2px; color: var(--text-strong); }
 .sum-md-ul, .sum-md-ol { margin: 4px 0; padding-left: 20px; }
 .sum-md-ul li, .sum-md-ol li { margin: 2px 0; }
-/* 引用块 — 左侧竖线 + 轻灰背景 */
+/* 引用块 — 左侧竖线 + 缩进, 不改字色和底色 */
 .sum-md-quote {
   margin: 6px 0;
-  padding: 4px 10px;
-  border-left: 3px solid var(--accent, #888);
-  color: var(--text-mute, #888);
-  background: color-mix(in srgb, var(--accent, #888) 6%, transparent);
-  border-radius: 0 4px 4px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border, #ccc);
 }
 .sum-md-quote .sum-md-line { white-space: pre-wrap; }
 /* 编辑器里的 blockquote — 和显示态视觉一致 */
 .sum-input blockquote {
   margin: 6px 0;
-  padding: 4px 10px;
-  border-left: 3px solid var(--accent, #888);
-  color: var(--text-mute, #888);
-  background: color-mix(in srgb, var(--accent, #888) 6%, transparent);
-  border-radius: 0 4px 4px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border, #ccc);
 }
 .sum-item-tags {
   display: flex;

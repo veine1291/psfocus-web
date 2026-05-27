@@ -3397,20 +3397,19 @@ html, body { overscroll-behavior-y: contain; }
   overscroll-behavior: contain;        /* 防 sheet 跟着一起滑 */
   touch-action: pan-y;                 /* 明确告诉浏览器: 这里只接 Y 方向滑动 */
 }
-/* contenteditable 空时显示 placeholder */
+/* contenteditable 空时显示 placeholder
+   关键:overlay 在第一行(absolute 定位),不要让 ::before 自己占一行,
+   否则 placeholder 在第一行光标在第二行,看起来非常诡异 (Kayu 2026-05-27 报) */
 .sum-input:empty::before,
-.sum-input[data-empty="1"]::before {
-  content: attr(data-placeholder);
-  color: var(--text-faint);
-  pointer-events: none;
-}
-/* 默认 div<br>div 算空 — Chromium contenteditable 初始结构 */
+.sum-input[data-empty="1"]::before,
 .sum-input:has(> div:only-child > br:only-child)::before {
   content: attr(data-placeholder);
   color: var(--text-faint);
   pointer-events: none;
-  display: block;
   position: absolute;
+  top: 4px;
+  left: 0;
+  right: 0;
 }
 /* 编辑器内的格式渲染 */
 .sum-input b, .sum-input strong { font-weight: 700; }
@@ -3453,11 +3452,34 @@ html, body { overscroll-behavior-y: contain; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 16px 10px;
+  padding: 8px 16px 10px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-panel);
-  z-index: 1;
+  z-index: 2;
+  min-height: 48px;
+  box-sizing: border-box;
 }
+/* 紧急关闭浮按钮 — 绝对定位永远贴 sheet-body 右上, 不管 sheet 内部布局怎么坏都能点到关 */
+.concept-sheet-emergency-close {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  width: 36px; height: 36px;
+  border: 0;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  padding: 0;
+}
+.concept-sheet-emergency-close:active { background: rgba(0,0,0,0.75); }
+/* sheet-body 要 position 才能让 emergency 按钮 absolute 定位生效 — 已有 position:fixed, 正好 */
 .concept-sheet-fixed-head .concept-title-input {
   flex: 1; min-width: 0;
   border: 0;

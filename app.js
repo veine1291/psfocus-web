@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260527-0402';
+const _PSFOCUS_BUILD = '20260527-0403';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7621,10 +7621,10 @@ function _openConceptSheet(conceptId) {
   const unlinkedHtml = unlinked.length
     ? '<div class="concept-section-title">未链接提及 (' + unlinked.length + ')</div>'
       + unlinked.map(u => `<div class="concept-unlinked">
-          <div style="flex:1;min-width:0;">
+          <button class="concept-unlinked-main" data-action="concept-goto-summary" data-summary-id="${esc(u.summary.id)}">
             <div class="concept-backlink-meta">${esc(_summaryDayLabel(u.summary.createdAt))}</div>
             <div class="concept-backlink-ctx">…${esc(u.context)}…</div>
-          </div>
+          </button>
           <button class="concept-wrap-btn" data-action="concept-wrap-mention" data-summary-id="${esc(u.summary.id)}" data-name="${esc(u.name)}">+ 链上</button>
         </div>`).join('')
     : '';

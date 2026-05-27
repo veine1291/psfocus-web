@@ -3539,6 +3539,14 @@ html, body { overscroll-behavior-y: contain; }
 }
 
 .concept-nav-row .sum-tag-label { color: var(--accent); }
+.concept-unlinked-main {
+  flex: 1; min-width: 0;
+  text-align: left;
+  border: 0; background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.concept-unlinked-main:active .concept-backlink-ctx { color: var(--accent); }
 .sum-tb-wiki {
   width: auto !important;
   padding: 0 6px;

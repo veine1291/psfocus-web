@@ -1907,6 +1907,15 @@ function openSummaryInputSheet() {
       });
       ed.focus();
       _caretToEnd(ed);
+      // 草稿非空 (用户之前写过/粘过) → 编辑框初始就很高, iOS Safari contenteditable
+      // 的 overflow:auto 不一定生效, 工具栏+发送键会被推出 sheet 可视区。
+      // sheet 打开后把工具栏 scroll 回视野, 保证发送键永远可见
+      setTimeout(() => {
+        try {
+          const tb = body.querySelector('.sum-input-toolbar');
+          if (tb && tb.scrollIntoView) tb.scrollIntoView({ block: 'end', behavior: 'auto' });
+        } catch (_) {}
+      }, 80);
     }
     // 工具栏按钮 mousedown 阻止默认焦点转移 — 编辑器不失焦,选区保住,
     // execCommand 才能正确作用于当前选区(WYSIWYG 标准做法)
@@ -1918,12 +1927,19 @@ function openSummaryInputSheet() {
 }
 
 function _summaryPrefillFilterTagIfEmpty() {
-  if (summaryState.draftNote && summaryState.draftNote.trim()) return;
   const f = summaryState.filter || '';
   if (!f.startsWith('tag:')) return;
   const tagName = f.slice(4);
   if (!tagName) return;
-  summaryState.draftNote = '#' + tagName + ' ';
+  const draft = summaryState.draftNote || '';
+  // 草稿空 → 直接预填 "#tag "
+  if (!draft.trim()) { summaryState.draftNote = '#' + tagName + ' '; return; }
+  // 草稿非空但已经带了 #tag → 不重复加
+  // 用 (^|非词) 边界判断, 防 #日记 被 #日 命中
+  const re = new RegExp('(^|[^A-Za-z0-9_\\u4e00-\\u9fa5])#' + tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_\\u4e00-\\u9fa5])');
+  if (re.test(draft)) return;
+  // 草稿非空且没带 — 前缀加上, 用户在 tag 筛选下打开输入框就期望发到这个 tag
+  summaryState.draftNote = '#' + tagName + ' ' + draft;
 }
 
 function _renderSummaryTagBar() {

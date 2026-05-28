@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0916';
+const _PSFOCUS_BUILD = '20260528-0917';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7322,8 +7322,12 @@ function openTaskDetail(id) {
 function bindTaskDetailEvents(body, id) {
   const t = state.tasks.find(x => x.id === id);
   if (!t) return;
-  body.querySelector('[data-action="task-detail-close"]').onclick = closeSheet;
-  body.querySelector('[data-action="task-detail-more"]').onclick = (ev) => { ev.stopPropagation(); openTaskDetailMenu(id, ev.currentTarget); };
+  // task-detail-close × 按钮早就在'sheet 设计语言去掉×'的清理里删了, 但这里 binding 还在
+  // → querySelector null → .onclick 抛 TypeError 整个详情打不开 (Kayu 2026-05-28 报)
+  const closeBtn = body.querySelector('[data-action="task-detail-close"]');
+  if (closeBtn) closeBtn.onclick = closeSheet;
+  const moreBtn = body.querySelector('[data-action="task-detail-more"]');
+  if (moreBtn) moreBtn.onclick = (ev) => { ev.stopPropagation(); openTaskDetailMenu(id, ev.currentTarget); };
 
   // 标题
   const titleEl = body.querySelector('.dp-title-input');

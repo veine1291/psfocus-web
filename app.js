@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0908';
+const _PSFOCUS_BUILD = '20260528-0909';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11223,16 +11223,19 @@ function openProjectPicker(currentProjectId, anchor, onPick) {
 
 function openCreateTaskSheet(opts) {
   opts = opts || {};
+  // _restore: 来自时间选择 sheet 回来时把闭包状态带回来 — 否则 sheet body innerHTML 被替换
+  // 后用户敲过的标题/备注/图/子待办全丢了 (Kayu 2026-05-28 报: 点加时间会崩 / sheet 抽搐)
+  const _r = opts._restore || null;
   const cl = getCurrentList();
-  // 默认项目:当前清单是 project/tasklist 才挂;否则 null。可由项目 pill 切换
-  let pickedProjectId = cl.kind === 'project' ? cl.project?.id : null;
+  let pickedProjectId = _r ? _r.pickedProjectId
+    : (cl.kind === 'project' ? cl.project?.id : null);
 
   // 时间默认值:opts.startTs / endTs(精确时刻,从时间轴拖拽来)优先;否则按选中日 9:00
   // 兼容老 opts.startDay/endDay(日期,从月视图拖拽来)
   let startTs = opts.startTs || null;
   let endTs   = opts.endTs   || null;
   let allDayDefault = false;
-  if (!startTs) {
+  if (!startTs && !_r) {
     const startDay = opts.startDay || (ui.tab === 'calendar' ? (ui.calSelectedDay || ui.calCursor) : null);
     const endDay   = opts.endDay   || startDay;
     if (startDay) {
@@ -11242,8 +11245,8 @@ function openCreateTaskSheet(opts) {
       allDayDefault = true;
     }
   }
-  // 用 schedule 形式持有(对齐桌面)
-  let sched = startTs ? {
+  // 用 schedule 形式持有(对齐桌面)— _restore 时直接拿存好的 sched
+  let sched = _r ? _r.sched : (startTs ? {
     id: 'sl-' + Math.random().toString(36).slice(2, 10),
     kind: (endTs && endTs > startTs) ? 'range' : 'date',
     start: startTs,
@@ -11251,7 +11254,7 @@ function openCreateTaskSheet(opts) {
     allDay: allDayDefault,
     repeat: 'none',
     reminderOffset: null,
-  } : null;
+  } : null);
 
   function schedPillHtml() {
     if (!sched) return '';
@@ -11311,11 +11314,16 @@ function openCreateTaskSheet(opts) {
     const titleEl = body.querySelector('#qe-title');
     const noteEl  = body.querySelector('#qe-note');
     const imgList = body.querySelector('#qe-img-list');
-    // 暂存待上传成功的图(创建时再写到 task.images)
-    const pendingImages = [];
+    // 暂存待上传成功的图(创建时再写到 task.images) — _restore 时把之前那批带回来
+    const pendingImages = _r && Array.isArray(_r.pendingImages) ? _r.pendingImages.slice() : [];
     // 暂存子待办 + 完成状态(创建时再落库)
-    const pendingSubs = [];
-    let pendingDone = false;
+    const pendingSubs = _r && Array.isArray(_r.pendingSubs) ? _r.pendingSubs.slice() : [];
+    let pendingDone = _r ? !!_r.pendingDone : false;
+    // 标题/备注 回填
+    if (_r) {
+      if (titleEl && _r.title) titleEl.value = _r.title;
+      if (noteEl  && _r.note ) noteEl.value  = _r.note;
+    }
     const refreshImgs = () => {
       imgList.innerHTML = pendingImages.map(im => `
         <div class="dp-image-cell" data-img-id="${esc(im.id)}">
@@ -11349,10 +11357,21 @@ function openCreateTaskSheet(opts) {
       refreshImgs();
     });
     // 同步 focus(仍在 FAB / 拖拽点击手势内)→ iOS 打开抽屉即自动弹键盘,不用再点一下标题框
+    // _restore 时也 focus, 但光标移到末尾 (用户继续打字)
     titleEl.focus();
+    if (_r && _r.title) {
+      try { titleEl.setSelectionRange(_r.title.length, _r.title.length); } catch (_) {}
+    }
+    // 回填的图片要立即渲染
+    if (_r && pendingImages.length) refreshImgs();
 
     // 标题勾选框 — 点一下 = 创建为已完成
     const checkBtn = body.querySelector('#qe-check');
+    if (_r && pendingDone) {
+      checkBtn.classList.add('done');
+      checkBtn.textContent = '✓';
+      titleEl.classList.add('done');
+    }
     checkBtn.onclick = () => {
       pendingDone = !pendingDone;
       checkBtn.classList.toggle('done', pendingDone);
@@ -11381,6 +11400,8 @@ function openCreateTaskSheet(opts) {
         if (i >= 0) { pendingSubs.splice(i, 1); refreshSubs(); }
       });
     };
+    // 回填的子待办立即渲染
+    if (_r && pendingSubs.length) refreshSubs();
     const subAddEl = body.querySelector('#qe-sub-add');
     subAddEl.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
@@ -11413,14 +11434,32 @@ function openCreateTaskSheet(opts) {
         </button>`;
       bindBarHandlers();
     }
+    function _captureRestore() {
+      return {
+        title: titleEl ? titleEl.value : '',
+        note:  noteEl  ? noteEl.value  : '',
+        pickedProjectId,
+        sched,
+        pendingImages: pendingImages.slice(),
+        pendingSubs:   pendingSubs.slice(),
+        pendingDone,
+      };
+    }
     function bindBarHandlers() {
       const xBtn = body.querySelector('[data-action="qe-remove-sched"]');
       if (xBtn) xBtn.onclick = () => { sched = null; refreshSchedRow(); };
       const addBtn = body.querySelector('[data-action="qe-add-sched"]');
-      if (addBtn) addBtn.onclick = () => openQuickTimePickerSheet(sched, (newSched) => {
-        sched = newSched;
-        refreshSchedRow();
-      });
+      if (addBtn) addBtn.onclick = () => {
+        // 时间选 sheet 会用 innerHTML 覆盖当前 sheet → 当前 DOM 输入值会丢, 闭包变量也跟着断
+        // 必须在打开 picker 前把状态全部 snapshot, picker save/cancel 回调里用 _restore 重开 task sheet
+        const _stash = _captureRestore();
+        openQuickTimePickerSheet(sched, (newSched) => {
+          // newSched 可能是新值 / null (清时间) / undefined (取消, 但当前 picker 取消不调 onSave —
+          // 还是会出现 task sheet 关掉的情况, 见下面 picker 的 cancel 修改)
+          _stash.sched = (newSched === undefined) ? sched : newSched;
+          openCreateTaskSheet({ _restore: _stash });
+        });
+      };
     }
     bindBarHandlers();
 
@@ -11553,10 +11592,9 @@ function openQuickTimePickerSheet(currentSched, onSave) {
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content">
-      <div class="section-title" style="padding:0 0 12px;">设置时间</div>
       <div class="form-row"><label>日期</label><input type="date" id="qt-date" value="${esc(dateStr)}"></div>
       <div class="form-row" style="margin-top:8px;"><label>开始</label><input type="time" id="qt-start" value="${esc(timeStr)}" ${allDay?'disabled':''}></div>
-      <div class="form-row" style="margin-top:8px;"><label>结束</label><input type="time" id="qt-end" value="${esc(endStr)}" placeholder="可选" ${allDay?'disabled':''}></div>
+      <div class="form-row" style="margin-top:8px;"><label>结束</label><input type="time" id="qt-end" value="${esc(endStr)}" ${allDay?'disabled':''}></div>
       <div class="form-row" style="margin-top:8px;"><label>全天</label><label class="form-toggle"><input type="checkbox" id="qt-allday" ${allDay?'checked':''}><span></span></label></div>
       <div class="form-row" style="margin-top:8px;"><label>重复</label>
         <select id="qt-repeat">
@@ -11573,7 +11611,12 @@ function openQuickTimePickerSheet(currentSched, onSave) {
     const startEl = body.querySelector('#qt-start');
     const endEl = body.querySelector('#qt-end');
     allDayEl.onchange = () => { startEl.disabled = endEl.disabled = allDayEl.checked; };
-    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    // 取消也要回调 onSave (传 currentSched = 不变), 这样消费方 (如 openCreateTaskSheet) 能重开
+    // 自己的 sheet 不丢 draft。不调 onSave → sheet 关掉 task draft 全没了
+    body.querySelector('[data-action="cancel"]').onclick = () => {
+      closeSheet();
+      if (typeof onSave === 'function') onSave(currentSched);
+    };
     body.querySelector('[data-action="save"]').onclick = () => {
       const dStr = body.querySelector('#qt-date').value;
       const sStr = body.querySelector('#qt-start').value;

@@ -3279,7 +3279,7 @@ const _summaryActions = {
       return `<div class="sum-tb-menu-item" data-fmt-id="${def.id}">
         <span class="sum-tb-menu-item-preview">${def.preview}</span>
         <span class="sum-tb-menu-item-label">${esc(def.label)}</span>
-        <button type="button" class="sum-tb-pin ${isPin ? 'pinned' : ''}" data-pin-id="${def.id}" title="${isPin ? '取消固定到工具栏' : '固定到工具栏 — 常驻显示'}">📌</button>
+        <button type="button" class="sum-tb-pin ${isPin ? 'pinned' : ''}" data-pin-id="${def.id}" title="${isPin ? '取消固定到工具栏' : '固定到工具栏 — 常驻显示'}"><span class="ico-pin"></span></button>
       </div>`;
     }).join('');
     body.innerHTML = `<div class="sum-tb-menu">${rows}</div>`;

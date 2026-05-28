@@ -1995,20 +1995,11 @@ function _renderSummaryInputBox() {
     ${todayModsHtml}
     <div class="sum-input-toolbar">
       <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
-      <button class="sum-tb-btn sum-tb-wiki" data-action="summary-tb-wikilink" title="加概念链接 [[xxx]]">[[]]</button>
       <label class="sum-tb-btn sum-tb-img" title="上传图片">
         <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
         <span class="ico-image"></span>
       </label>
-      <span class="sum-tb-sep"></span>
-      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="bold" title="粗体"><b>B</b></button>
-      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="italic" title="斜体"><i>I</i></button>
-      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="head" title="标题">H</button>
-      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ul" title="无序"><span class="ico-list"></span></button>
-      <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ol" title="有序">1.</button>
-      <button class="sum-tb-btn sum-tb-quote" data-action="summary-tb-format" data-fmt="quote" title="引用">&#8220;</button>
-      <span class="sum-tb-sep"></span>
-      <button class="sum-tb-btn sum-tb-mod" data-action="summary-open-mod-sheet" title="管理模块">+ 模块</button>
+      <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
       <div class="sum-input-spacer"></div>
       <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
     </div>
@@ -2042,6 +2033,11 @@ function _mdToEditHtml(md) {
       const n = name.trim();
       return '<span class="concept-link concept-link-edit" data-action="concept-open" data-name="'
         + n.replace(/"/g, '&quot;') + '">[[' + n + ']]</span>';
+    });
+    // #xxx tag chip — contenteditable=false 让它整体作为一个原子单元 (backspace 一下就整块删)
+    // 落到 md 时 _editNodeToMd 走 span fallback 读 textContent = "#xxx" 还原成普通 #xxx 文本
+    h = h.replace(/(^|[^&\w一-龥])#([^\s#,。、,<&]+)/g, (m, before, tag) => {
+      return before + '<span class="sum-md-tag tag-chip-edit" contenteditable="false">#' + tag + '</span>';
     });
     return h;
   };
@@ -2790,6 +2786,177 @@ function _renderSummaryModuleCard(m, dayKey) {
   </div>`;
 }
 
+// ===== Tag 联想 (输入 # 立即弹, 模糊匹配, 选中后插入 chip) =====
+// state + helpers, action 里在 input 事件后调 _tagSuggestUpdate(editor)
+let _tagSuggest = { open: false, query: '', editor: null, selectedIdx: 0, items: [] };
+
+// 找当前光标所在的 #xxx token, 返回 {range, text} 或 null
+function _tagSuggestCurrentToken(editor) {
+  if (!editor) return null;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const r = sel.getRangeAt(0);
+  if (!r.collapsed) return null;
+  if (!editor.contains(r.startContainer)) return null;
+  const node = r.startContainer;
+  if (node.nodeType !== 3) return null;
+  const text = node.textContent || '';
+  const caret = r.startOffset;
+  // 从光标向前走找最近的 #, 不能跨空白
+  let i = caret - 1;
+  while (i >= 0 && !/[\s　#]/.test(text[i])) i--;
+  // 找到 # 还是空白?要求是 # 且前面是行首/空白/非词字符
+  if (i < 0 || text[i] !== '#') {
+    // i 可能停在空格, 看看再往前是不是 #
+    // 但 token 不允许有空格, 直接 fail
+    return null;
+  }
+  // # 前一个字符必须是空白 / 行首 / 标点 (避免 a#b 这种误命中)
+  if (i > 0) {
+    const prev = text[i - 1];
+    if (/[A-Za-z0-9_一-龥]/.test(prev)) return null;
+  }
+  const tagText = text.slice(i + 1, caret);
+  if (/\s/.test(tagText)) return null;
+  const range = document.createRange();
+  range.setStart(node, i);
+  range.setEnd(node, caret);
+  return { range, text: tagText, node, startOffset: i, endOffset: caret };
+}
+
+function _tagSuggestMatching(query) {
+  const all = ((state && state.summaryTags) || []).map(t => t.name).filter(Boolean);
+  if (!query) return all.slice().sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')).slice(0, 30);
+  const q = query.toLowerCase();
+  const scored = [];
+  for (const name of all) {
+    const lower = name.toLowerCase();
+    const segs = name.split('/');
+    const lastSeg = segs[segs.length - 1].toLowerCase();
+    // 评分:整名以 query 开头 0, 末段以 query 开头 1, 整名/段含 query 2
+    let score = -1;
+    if (lower.startsWith(q)) score = 0;
+    else if (lastSeg.startsWith(q)) score = 1;
+    else if (lower.includes(q)) score = 2;
+    else if (segs.some(s => s.toLowerCase().includes(q))) score = 3;
+    if (score >= 0) scored.push({ name, score });
+  }
+  scored.sort((a, b) => a.score - b.score || a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  return scored.slice(0, 30).map(x => x.name);
+}
+
+function _tagSuggestClose() {
+  if (!_tagSuggest.open) return;
+  _tagSuggest.open = false;
+  _tagSuggest.editor = null;
+  const host = document.getElementById('tag-suggest-host');
+  if (host) host.innerHTML = '';
+}
+
+function _tagSuggestRender(editor) {
+  let host = document.getElementById('tag-suggest-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'tag-suggest-host';
+    document.body.appendChild(host);
+  }
+  if (!_tagSuggest.open || !_tagSuggest.items.length) {
+    host.innerHTML = '';
+    return;
+  }
+  const items = _tagSuggest.items.map((name, i) => {
+    const isSel = i === _tagSuggest.selectedIdx;
+    return `<button type="button" class="tag-suggest-item ${isSel ? 'active' : ''}" data-tag-suggest-pick="${esc(name)}">
+      <span class="tag-suggest-hash">#</span><span class="tag-suggest-name">${esc(name)}</span>
+    </button>`;
+  }).join('');
+  host.innerHTML = `<div class="tag-suggest-popup">${items}</div>`;
+  // 定位:editor 上方, 跟键盘 + 工具栏错开
+  const editorRect = editor.getBoundingClientRect();
+  const popup = host.querySelector('.tag-suggest-popup');
+  popup.style.left = Math.max(8, editorRect.left) + 'px';
+  popup.style.bottom = Math.max(8, window.innerHeight - editorRect.top + 8) + 'px';
+  popup.style.maxWidth = Math.min(window.innerWidth - 16, Math.max(220, editorRect.width)) + 'px';
+  // 绑定 click — mousedown 阻止默认免得 editor 失焦
+  host.querySelectorAll('[data-tag-suggest-pick]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.preventDefault());
+    btn.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+    btn.addEventListener('click', () => _tagSuggestPick(btn.dataset.tagSuggestPick));
+  });
+}
+
+function _tagSuggestUpdate(editor) {
+  const token = _tagSuggestCurrentToken(editor);
+  if (!token) { _tagSuggestClose(); return; }
+  _tagSuggest.editor = editor;
+  _tagSuggest.query = token.text;
+  _tagSuggest.items = _tagSuggestMatching(token.text);
+  _tagSuggest.selectedIdx = 0;
+  _tagSuggest.open = true;
+  _tagSuggestRender(editor);
+}
+
+function _tagSuggestPick(tagName) {
+  const editor = _tagSuggest.editor;
+  if (!editor || !tagName) { _tagSuggestClose(); return; }
+  const token = _tagSuggestCurrentToken(editor);
+  if (!token) { _tagSuggestClose(); return; }
+  // 删 token 文本, 插 chip span + 尾巴 space
+  const r = document.createRange();
+  r.setStart(token.node, token.startOffset);
+  r.setEnd(token.node, token.endOffset);
+  r.deleteContents();
+  const chip = document.createElement('span');
+  chip.className = 'sum-md-tag tag-chip-edit';
+  chip.setAttribute('contenteditable', 'false');
+  chip.textContent = '#' + tagName;
+  r.insertNode(chip);
+  // 在 chip 后插 space + 移光标到 space 之后
+  const space = document.createTextNode(' ');
+  chip.parentNode.insertBefore(space, chip.nextSibling);
+  const sel = window.getSelection();
+  const nr = document.createRange();
+  nr.setStart(space, 1);
+  nr.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(nr);
+  // 同步到 state (chip 用 textContent '#xxx', _editHtmlToMd 走 span fallback 读 textContent → 还原成 #xxx)
+  if (typeof _syncEditorToState === 'function') _syncEditorToState(editor);
+  _tagSuggestClose();
+  editor.focus();
+}
+
+// 全局 keydown / pointerdown 兜底关 popup
+document.addEventListener('keydown', (e) => {
+  if (!_tagSuggest.open) return;
+  if (e.key === 'Escape') { e.preventDefault(); _tagSuggestClose(); return; }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _tagSuggest.selectedIdx = (_tagSuggest.selectedIdx + 1) % _tagSuggest.items.length;
+    _tagSuggestRender(_tagSuggest.editor);
+    return;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _tagSuggest.selectedIdx = (_tagSuggest.selectedIdx - 1 + _tagSuggest.items.length) % _tagSuggest.items.length;
+    _tagSuggestRender(_tagSuggest.editor);
+    return;
+  }
+  if (e.key === 'Enter') {
+    if (_tagSuggest.items.length) {
+      e.preventDefault();
+      _tagSuggestPick(_tagSuggest.items[_tagSuggest.selectedIdx]);
+    }
+  }
+}, true);
+document.addEventListener('pointerdown', (e) => {
+  if (!_tagSuggest.open) return;
+  const popup = document.querySelector('.tag-suggest-popup');
+  if (popup && popup.contains(e.target)) return;
+  if (_tagSuggest.editor && _tagSuggest.editor.contains(e.target)) return;
+  _tagSuggestClose();
+}, true);
+
 // === actions ===
 const _summaryActions = {
   'summary-set-tab': (el) => {
@@ -2986,6 +3153,53 @@ const _summaryActions = {
       else renderAll();
     }
   },
+  // 工具栏的 ⋯ → 弹 popover, 列出格式化按钮 + [[]] + 模块
+  // flomo 风格的折叠 — 把不常用的二级动作收进来 (Kayu 2026-05-28)
+  'summary-tb-more': (el) => {
+    const _runFmt = (fmt) => {
+      const ed = _summaryInputTa();
+      if (!ed) return;
+      ed.focus();
+      try {
+        if (fmt === 'bold')         document.execCommand('bold');
+        else if (fmt === 'italic')  document.execCommand('italic');
+        else if (fmt === 'head')    document.execCommand('formatBlock', false, 'H3');
+        else if (fmt === 'ul')      document.execCommand('insertUnorderedList');
+        else if (fmt === 'ol')      document.execCommand('insertOrderedList');
+        else if (fmt === 'quote')   document.execCommand('formatBlock', false, 'BLOCKQUOTE');
+      } catch (_) {}
+      _syncEditorToState(ed);
+    };
+    const _wikilink = () => {
+      const ed = _summaryInputTa();
+      if (!ed) return;
+      ed.focus();
+      try {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount) {
+          const r = sel.getRangeAt(0);
+          r.deleteContents();
+          const node = document.createTextNode('[[]]');
+          r.insertNode(node);
+          r.setStart(node, 2); r.setEnd(node, 2);
+          sel.removeAllRanges(); sel.addRange(r);
+        }
+      } catch (_) {}
+      _syncEditorToState(ed);
+    };
+    const items = [
+      { label: '概念链接 [[…]]',  action: () => { _wikilink();          closePopover(); } },
+      { label: '引用',           action: () => { _runFmt('quote');     closePopover(); } },
+      { label: '标题',           action: () => { _runFmt('head');      closePopover(); } },
+      { label: '粗体',           action: () => { _runFmt('bold');      closePopover(); } },
+      { label: '斜体',           action: () => { _runFmt('italic');    closePopover(); } },
+      { label: '无序列表',        action: () => { _runFmt('ul');        closePopover(); } },
+      { label: '有序列表',        action: () => { _runFmt('ol');        closePopover(); } },
+      { divider: true },
+      { label: '+ 模块',         action: () => { closePopover(); if (_summaryActions['summary-open-mod-sheet']) _summaryActions['summary-open-mod-sheet'](el); } },
+    ];
+    showPopover(items, { anchor: el, side: 'right' });
+  },
   'summary-tb-wikilink': (el) => {
     const ed = _summaryInputTa();
     if (!ed) return;
@@ -3107,6 +3321,7 @@ const _summaryActions = {
     el._syncRAF = requestAnimationFrame(() => {
       el._syncRAF = null;
       _syncEditorToState(el);
+      _tagSuggestUpdate(el);
     });
   },
   'summary-tb-tag': () => {
@@ -10933,28 +11148,23 @@ function openCreateTaskSheet(opts) {
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="dp-detail">
-      <div class="dp-head">
-        <span class="dp-head-kind">新建任务</span>
-        <button class="dp-head-close" data-action="cancel" title="关闭">×</button>
-      </div>
       <div class="dp-time-bar" id="qe-time-bar">
         ${schedPillHtml()}
-        <button class="dp-add-sched-btn" data-action="qe-add-sched" title="加时间">
-          <span class="ico-plus"></span>
-          <span>${sched ? '改时间' : '加时间'}</span>
+        <button class="dp-add-sched-btn" data-action="qe-add-sched" title="${sched ? '改时间' : '加时间'}">
+          <span class="ico-calendar"></span>
         </button>
       </div>
       <div class="dp-title-row">
         <button class="dp-check" id="qe-check" title="创建为已完成"></button>
-        <input type="text" class="dp-title-input" id="qe-title" placeholder="任务标题">
+        <input type="text" class="dp-title-input" id="qe-title">
       </div>
       <div class="dp-section dp-merged-section">
-        <textarea class="dp-note-input" id="qe-note" rows="3" placeholder="备注、笔记…  输入 #xxx 自动加标签"></textarea>
+        <textarea class="dp-note-input" id="qe-note" rows="3"></textarea>
         <div class="dp-merged-row">
-          <div class="dp-merged-tags"><span class="dp-merged-tags-empty">输入 #标签 自动加</span></div>
+          <div class="dp-merged-tags"></div>
           <label class="dp-merged-add-img" title="上传图片">
             <input type="file" accept="image/*" multiple id="qe-img-input" hidden>
-            <span class="ico-plus"></span>
+            <span class="ico-image"></span>
           </label>
         </div>
         <div id="qe-img-list" class="dp-image-grid" style="min-height:0;"></div>
@@ -10962,7 +11172,7 @@ function openCreateTaskSheet(opts) {
       <div class="dp-section">
         <div class="dp-section-title">子待办 <span class="dp-section-count" id="qe-sub-count">0</span></div>
         <div class="dp-sub-add">
-          <input type="text" class="dp-sub-add-input" id="qe-sub-add" placeholder="加个子任务,回车确认">
+          <input type="text" class="dp-sub-add-input" id="qe-sub-add">
         </div>
         <ul class="dp-sub-list" id="qe-sub-list"></ul>
       </div>
@@ -11060,9 +11270,8 @@ function openCreateTaskSheet(opts) {
       const bar = body.querySelector('#qe-time-bar');
       bar.innerHTML = `
         ${schedPillHtml()}
-        <button class="dp-add-sched-btn" data-action="qe-add-sched" title="加时间">
-          <span class="ico-plus"></span>
-          <span>${sched ? '改时间' : '加时间'}</span>
+        <button class="dp-add-sched-btn" data-action="qe-add-sched" title="${sched ? '改时间' : '加时间'}">
+          <span class="ico-calendar"></span>
         </button>`;
       bindBarHandlers();
     }
@@ -11633,35 +11842,31 @@ const _PSF_STANDALONE = window.navigator.standalone === true
       return;
     }
 
-    // 键盘开了 + 焦点在 sheet 里 — 算需要 lift 的绝对值
-    // 关键:先清空 transform 拿到真位置, 不会因为前次 lift 而读到偏移过的位置
+    // 键盘开了 + 焦点在 sheet 里 — 整个 sheet body 上抬一个键盘高度, 让 sheet 底部
+    // (= 工具栏底部) 跟键盘 (含 iOS 输入法附加栏) 顶部贴齐, 不留空白。
+    // 然后用 scrollIntoView 把焦点元素滚进可视区, 防止被工具栏自身遮住。
+    // (Kayu 2026-05-28: 之前用 input rect 计算 lift, 工具栏在 input 下方就被键盘吃掉)
     applying = true;
-    const prevTransform = body.style.transform;
-    const prevTransition = body.style.transition;
-    body.style.transition = 'none';
-    body.style.transform = '';
-    // force reflow
-    void body.offsetHeight;
-    const rect = ae.getBoundingClientRect();
-    const visibleBottom = vv.height + vv.offsetTop;
-    const overflow = rect.bottom - visibleBottom;
-    const newOffset = overflow > 0 ? -(overflow + 12) : 0;
+    const newOffset = -kbHeight;
 
-    if (newOffset === 0) {
-      // 不需要 lift — 让 transform 保持清空状态, lastOffset = 0
-      body.style.transition = prevTransition;
-      lastOffset = 0;
-      requestAnimationFrame(() => { applying = false; });
-    } else {
-      // 需要 lift — apply 绝对偏移
-      body.style.transition = 'transform .18s ease';
-      body.style.transform = `translateY(${newOffset}px)`;
-      lastOffset = newOffset;
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        body.style.transition = '';
-        applying = false;
-      }));
+    if (newOffset === lastOffset) {
+      applying = false;
+      return;
     }
+    body.style.transition = 'transform .18s ease';
+    body.style.transform = `translateY(${newOffset}px)`;
+    lastOffset = newOffset;
+    // 抬完了再把焦点滚进视野 — 工具栏紧贴键盘, focus 通常本来就在工具栏上面所以可见;
+    // 不可见的情况 (sheet 很高,focus 被 sheet 内部 scroll 隐藏) scrollIntoView 兜底
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      body.style.transition = '';
+      applying = false;
+      try {
+        if (ae && typeof ae.scrollIntoView === 'function') {
+          ae.scrollIntoView({ block: 'center', behavior: 'auto' });
+        }
+      } catch (_) {}
+    }));
   };
   vv.addEventListener('resize', apply);
   vv.addEventListener('scroll', apply);

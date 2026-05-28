@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0910';
+const _PSFOCUS_BUILD = '20260528-0911';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11476,70 +11476,183 @@ function openCreateTaskSheet(opts) {
 // 简易时间选择 sheet — 改/加 schedule(只设第一个,不做多 schedule 编辑)
 function openQuickTimePickerSheet(currentSched, onSave) {
   const now = currentSched && currentSched.start ? new Date(currentSched.start) : new Date();
-  const allDay = currentSched ? !!currentSched.allDay : false;
-  const dateStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
-  const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const endTs = currentSched && currentSched.end || null;
-  const endStr = endTs ? `${pad(new Date(endTs).getHours())}:${pad(new Date(endTs).getMinutes())}` : '';
-  const repeat = currentSched ? (currentSched.repeat || 'none') : 'none';
-  const repeatOpts = [
-    { v: 'none', l: '不重复' },
-    { v: 'daily', l: '每天' },
-    { v: 'weekly', l: '每周' },
-    { v: 'monthly', l: '每月' },
-    { v: 'workday', l: '工作日' },
-  ];
-  showSheet(`
-    <div class="sheet-handle"></div>
-    <div class="sheet-content">
-      <div class="form-row"><label>日期</label><input type="date" id="qt-date" value="${esc(dateStr)}"></div>
-      <div class="form-row" style="margin-top:8px;"><label>开始</label><input type="time" id="qt-start" value="${esc(timeStr)}" ${allDay?'disabled':''}></div>
-      <div class="form-row" style="margin-top:8px;"><label>结束</label><input type="time" id="qt-end" value="${esc(endStr)}" ${allDay?'disabled':''}></div>
-      <div class="form-row" style="margin-top:8px;"><label>全天</label><label class="form-toggle"><input type="checkbox" id="qt-allday" ${allDay?'checked':''}><span></span></label></div>
-      <div class="form-row" style="margin-top:8px;"><label>重复</label>
-        <select id="qt-repeat">
-          ${repeatOpts.map(o => `<option value="${o.v}" ${o.v===repeat?'selected':''}>${o.l}</option>`).join('')}
-        </select>
+  // 状态 (跟桌面 schedule-add modal 一致): mode (日期/时间段) + start/end + allDay + repeat + reminderOffset
+  let mode = currentSched && currentSched.kind === 'range' ? 'range' : 'date';
+  let start = currentSched ? currentSched.start : (now.getTime() - now.getTime() % 60000);
+  let end   = currentSched && currentSched.end ? currentSched.end : (start + 60 * 60000);
+  let allDay = currentSched ? !!currentSched.allDay : false;
+  let repeat = currentSched ? (currentSched.repeat || 'none') : 'none';
+  let reminderOffset = currentSched && currentSched.reminderOffset != null ? currentSched.reminderOffset : null;
+
+  function _dtLocalValue(ts) {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function _dateOnlyValue(ts) {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+
+  function _render() {
+    const repeatOn   = repeat && repeat !== 'none';
+    const reminderOn = reminderOffset != null;
+    const startVal = allDay ? _dateOnlyValue(start) : _dtLocalValue(start);
+    const endVal   = allDay ? _dateOnlyValue(end)   : _dtLocalValue(end);
+    return `
+      <div class="sheet-handle"></div>
+      <div class="sa-sheet">
+        <div class="sa-title">加时间</div>
+        <div class="sa-tabs">
+          <button class="sa-tab ${mode === 'date'  ? 'active' : ''}" data-sa-mode="date">日期</button>
+          <button class="sa-tab ${mode === 'range' ? 'active' : ''}" data-sa-mode="range">时间段</button>
+        </div>
+        <div class="sa-body">
+          ${mode === 'date' ? `
+            <div class="sa-row">
+              <div class="sa-row-label">日期 / 时间</div>
+              <div class="sa-input-wrap">
+                <span class="ico-calendar sa-input-ico"></span>
+                <input type="${allDay ? 'date' : 'datetime-local'}" class="sa-input" id="sa-start" value="${esc(startVal)}">
+              </div>
+            </div>
+          ` : `
+            <div class="sa-range-row">
+              <div class="sa-row" style="flex:1;">
+                <div class="sa-row-label">开始</div>
+                <div class="sa-input-wrap">
+                  <span class="ico-calendar sa-input-ico"></span>
+                  <input type="${allDay ? 'date' : 'datetime-local'}" class="sa-input" id="sa-start" value="${esc(startVal)}">
+                </div>
+              </div>
+              <div class="sa-row" style="flex:1;">
+                <div class="sa-row-label">结束</div>
+                <div class="sa-input-wrap">
+                  <span class="ico-calendar sa-input-ico"></span>
+                  <input type="${allDay ? 'date' : 'datetime-local'}" class="sa-input" id="sa-end" value="${esc(endVal)}">
+                </div>
+              </div>
+            </div>
+          `}
+          <div class="sa-toggle-row">
+            <span class="sa-toggle-label">全天</span>
+            <label class="form-toggle"><input type="checkbox" id="sa-allday" ${allDay?'checked':''}><span></span></label>
+          </div>
+          <div class="sa-toggle-row">
+            <span class="sa-toggle-label">重复</span>
+            <label class="form-toggle"><input type="checkbox" id="sa-repeat-toggle" ${repeatOn?'checked':''}><span></span></label>
+          </div>
+          ${repeatOn ? `
+            <div class="sa-toggle-row sa-sub-row">
+              <span class="sa-toggle-label">规则</span>
+              <select class="sa-select" id="sa-repeat-rule">
+                <option value="daily"   ${repeat==='daily'?'selected':''}>每天</option>
+                <option value="weekly"  ${repeat==='weekly'?'selected':''}>每周</option>
+                <option value="monthly" ${repeat==='monthly'?'selected':''}>每月</option>
+                <option value="workday" ${repeat==='workday'?'selected':''}>工作日</option>
+              </select>
+            </div>
+          ` : ''}
+          <div class="sa-toggle-row">
+            <span class="sa-toggle-label">提醒</span>
+            <label class="form-toggle"><input type="checkbox" id="sa-reminder-toggle" ${reminderOn?'checked':''}><span></span></label>
+          </div>
+          ${reminderOn ? `
+            <div class="sa-toggle-row sa-sub-row">
+              <span class="sa-toggle-label">时间</span>
+              <select class="sa-select" id="sa-reminder-offset">
+                <option value="0"    ${reminderOffset===0?'selected':''}>准时</option>
+                <option value="5"    ${reminderOffset===5?'selected':''}>提前 5 分钟</option>
+                <option value="15"   ${reminderOffset===15?'selected':''}>提前 15 分钟</option>
+                <option value="30"   ${reminderOffset===30?'selected':''}>提前 30 分钟</option>
+                <option value="60"   ${reminderOffset===60?'selected':''}>提前 1 小时</option>
+                <option value="1440" ${reminderOffset===1440?'selected':''}>提前 1 天</option>
+              </select>
+            </div>
+          ` : ''}
+        </div>
+        <div class="sa-actions">
+          <button class="sa-btn sa-btn-cancel" data-action="cancel">取消</button>
+          <button class="sa-btn sa-btn-save" data-action="save">添加</button>
+        </div>
       </div>
-    </div>
-    <div class="sheet-actions">
-      <button data-action="cancel">取消</button>
-      <button class="primary" data-action="save">保存</button>
-    </div>
-  `, (body) => {
-    const allDayEl = body.querySelector('#qt-allday');
-    const startEl = body.querySelector('#qt-start');
-    const endEl = body.querySelector('#qt-end');
-    allDayEl.onchange = () => { startEl.disabled = endEl.disabled = allDayEl.checked; };
-    // 取消也要回调 onSave (传 currentSched = 不变), 这样消费方 (如 openCreateTaskSheet) 能重开
-    // 自己的 sheet 不丢 draft。不调 onSave → sheet 关掉 task draft 全没了
+    `;
+  }
+
+  function _readInputs(body) {
+    const startEl = body.querySelector('#sa-start');
+    const endEl   = body.querySelector('#sa-end');
+    if (startEl && startEl.value) {
+      start = allDay
+        ? combineDateAndTime(startEl.value, '')
+        : new Date(startEl.value).getTime();
+    }
+    if (endEl && endEl.value) {
+      end = allDay
+        ? combineDateAndTime(endEl.value, '')
+        : new Date(endEl.value).getTime();
+    }
+  }
+
+  function _rerender() {
+    const body = $('sheet-body');
+    if (!body) return;
+    _readInputs(body);
+    body.innerHTML = _render();
+    _bind(body);
+  }
+
+  function _bind(body) {
+    body.querySelectorAll('[data-sa-mode]').forEach(b => b.onclick = () => {
+      _readInputs(body);
+      mode = b.dataset.saMode;
+      if (mode === 'range' && end <= start) end = start + 60 * 60000;
+      _rerender();
+    });
+    const allDayEl = body.querySelector('#sa-allday');
+    if (allDayEl) allDayEl.onchange = () => {
+      _readInputs(body);
+      allDay = !!allDayEl.checked;
+      _rerender();
+    };
+    const repeatToggle = body.querySelector('#sa-repeat-toggle');
+    if (repeatToggle) repeatToggle.onchange = () => {
+      _readInputs(body);
+      repeat = repeatToggle.checked ? 'daily' : 'none';
+      _rerender();
+    };
+    const repeatRule = body.querySelector('#sa-repeat-rule');
+    if (repeatRule) repeatRule.onchange = () => { repeat = repeatRule.value; };
+    const reminderToggle = body.querySelector('#sa-reminder-toggle');
+    if (reminderToggle) reminderToggle.onchange = () => {
+      _readInputs(body);
+      reminderOffset = reminderToggle.checked ? 0 : null;
+      _rerender();
+    };
+    const reminderOffsetEl = body.querySelector('#sa-reminder-offset');
+    if (reminderOffsetEl) reminderOffsetEl.onchange = () => {
+      reminderOffset = parseInt(reminderOffsetEl.value, 10);
+    };
     body.querySelector('[data-action="cancel"]').onclick = () => {
       closeSheet();
-      if (typeof onSave === 'function') onSave(currentSched);
+      if (typeof onSave === 'function') onSave(currentSched);  // 不变
     };
     body.querySelector('[data-action="save"]').onclick = () => {
-      const dStr = body.querySelector('#qt-date').value;
-      const sStr = body.querySelector('#qt-start').value;
-      const eStr = body.querySelector('#qt-end').value;
-      const ad = allDayEl.checked;
-      const rp = body.querySelector('#qt-repeat').value;
-      if (!dStr) { closeSheet(); onSave(null); return; }
-      const startMs = combineDateAndTime(dStr, ad ? '' : (sStr || '09:00'));
-      let endMs = null;
-      if (!ad && eStr) endMs = combineDateAndTime(dStr, eStr);
-      const newSched = {
+      _readInputs(body);
+      const out = {
         id: (currentSched && currentSched.id) || ('sl-' + Math.random().toString(36).slice(2, 10)),
-        kind: (endMs && endMs > startMs) ? 'range' : 'date',
-        start: startMs,
-        end: endMs || undefined,
-        allDay: ad,
-        repeat: rp,
-        reminderOffset: null,
+        kind: mode === 'range' ? 'range' : 'date',
+        start,
+        allDay,
+        repeat,
+        reminderOffset,
       };
+      if (mode === 'range') out.end = end;
       closeSheet();
-      onSave(newSched);
+      onSave(out);
     };
-  });
+  }
+
+  showSheet(_render(), _bind);
 }
 
 // =========================================================

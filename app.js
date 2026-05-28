@@ -11424,7 +11424,10 @@ function openCreateTaskSheet(opts) {
     }
     bindBarHandlers();
 
-    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    // 之前 dp-head 里有 [data-action="cancel"] × 按钮, 现已删 (sheet 设计语言规则: 不要 × 按钮)
+    // 这里 querySelector 拿不到, 不能再 .onclick → null TypeError 把整个 sheet 打开流程崩了
+    const cancelBtn = body.querySelector('[data-action="cancel"]');
+    if (cancelBtn) cancelBtn.onclick = closeSheet;
     body.querySelector('[data-action="qe-pick-project"]').onclick = (ev) => {
       ev.stopPropagation();
       openProjectPicker(pickedProjectId, ev.currentTarget, (newPid) => {

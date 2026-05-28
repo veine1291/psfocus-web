@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0923';
+const _PSFOCUS_BUILD = '20260528-0924';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2998,11 +2998,16 @@ function _tagSuggestRender(editor) {
   popup.style.left = Math.max(8, editorRect.left) + 'px';
   popup.style.bottom = Math.max(8, window.innerHeight - editorRect.top + 8) + 'px';
   popup.style.maxWidth = Math.min(window.innerWidth - 16, Math.max(220, editorRect.width)) + 'px';
-  // 绑定 click — mousedown 阻止默认免得 editor 失焦
+  // 绑定 — mouse (desktop) 用 mousedown preventDefault 防 editor 失焦, click 拾取
+  // touch (mobile) 用 touchend preventDefault 拾取 (touchstart 不要 preventDefault,
+  //   否则 iOS Safari 会取消之后的 click 又跳过我们的 touchend pick — 之前就这么坏的)
   host.querySelectorAll('[data-tag-suggest-pick]').forEach(btn => {
     btn.addEventListener('mousedown', e => e.preventDefault());
-    btn.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
     btn.addEventListener('click', () => _tagSuggestPick(btn.dataset.tagSuggestPick));
+    btn.addEventListener('touchend', (e) => {
+      e.preventDefault();   // 跳过 synth click, 防双触
+      _tagSuggestPick(btn.dataset.tagSuggestPick);
+    }, { passive: false });
   });
 }
 

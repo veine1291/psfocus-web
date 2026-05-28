@@ -5153,27 +5153,28 @@ html, body { overscroll-behavior-y: contain; }
 #tag-suggest-host { position: relative; z-index: 200; }
 .tag-suggest-popup {
   position: fixed;
-  background: var(--bg-section);
+  background: var(--bg-panel, #fff);
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.16), 0 2px 6px rgba(0,0,0,.06);
   padding: 6px;
-  max-height: 240px;
+  max-height: 260px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
   z-index: 200;
   -webkit-overflow-scrolling: touch;
+  min-width: 200px;
 }
 .tag-suggest-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 10px 12px;
   border: 0;
   background: transparent;
-  border-radius: 6px;
+  border-radius: 10px;
   font-size: 14px;
   color: var(--text);
   text-align: left;
@@ -5181,10 +5182,29 @@ html, body { overscroll-behavior-y: contain; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
 }
+/* active (键盘选中 或 鼠标 hover) — 主题色软底 + 字加重 */
+.tag-suggest-item:hover,
 .tag-suggest-item:active,
-.tag-suggest-item.active { background: var(--bg-hover); }
-.tag-suggest-hash { color: var(--accent); font-weight: 600; }
+.tag-suggest-item.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.tag-suggest-item.active .tag-suggest-name { color: var(--accent); font-weight: 500; }
+/* # 符号 — chip 化, 跟 tag chip 视觉对应 */
+.tag-suggest-hash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 20px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
 .tag-suggest-name { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .sum-md-line { white-space: pre-wrap; }
 .sum-md-blank { height: 0.5em; }

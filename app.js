@@ -11967,12 +11967,13 @@ const _PSF_STANDALONE = window.navigator.standalone === true
     const ae = document.activeElement;
     const focused = ae && body.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
 
-    // 没键盘 或 焦点不在 sheet 里 → 复位
+    // 没键盘 或 焦点不在 sheet 里 → 复位 (transform + padding-bottom 都清, 让 css 默认值 calc(20+safe-bottom) 回来)
     if (kbHeight < 50 || !focused) {
       if (lastOffset !== 0) {
         applying = true;
-        body.style.transition = 'transform .18s ease';
+        body.style.transition = 'transform .18s ease, padding-bottom .18s ease';
         body.style.transform = '';
+        body.style.paddingBottom = '';
         lastOffset = 0;
         requestAnimationFrame(() => requestAnimationFrame(() => {
           body.style.transition = '';
@@ -11982,10 +11983,11 @@ const _PSF_STANDALONE = window.navigator.standalone === true
       return;
     }
 
-    // 键盘开了 + 焦点在 sheet 里 — 整个 sheet body 上抬一个键盘高度, 让 sheet 底部
-    // (= 工具栏底部) 跟键盘 (含 iOS 输入法附加栏) 顶部贴齐, 不留空白。
-    // 然后用 scrollIntoView 把焦点元素滚进可视区, 防止被工具栏自身遮住。
-    // (Kayu 2026-05-28: 之前用 input rect 计算 lift, 工具栏在 input 下方就被键盘吃掉)
+    // 键盘开了 + 焦点在 sheet 里 — 整个 sheet body 上抬一个键盘高度, sheet 底跟键盘顶贴齐。
+    // 但 .sheet-body 默认 padding-bottom = calc(20px + safe-bottom), 工具栏在这个 padding 之上
+    // 还有 20-50px 空白(iPhone 有 home indicator 时尤其明显)。键盘开起来这片本来就被键盘盖了,
+    // 不需要 safe-area, 所以把 padding-bottom 临时压成 0; 键盘关了再还原。
+    // (Kayu 2026-05-28 报: 工具栏底部跟输入法之间总有空白)
     applying = true;
     const newOffset = -kbHeight;
 
@@ -11993,8 +11995,9 @@ const _PSF_STANDALONE = window.navigator.standalone === true
       applying = false;
       return;
     }
-    body.style.transition = 'transform .18s ease';
+    body.style.transition = 'transform .18s ease, padding-bottom .18s ease';
     body.style.transform = `translateY(${newOffset}px)`;
+    body.style.paddingBottom = '0px';
     lastOffset = newOffset;
     // 抬完了再把焦点滚进视野 — 工具栏紧贴键盘, focus 通常本来就在工具栏上面所以可见;
     // 不可见的情况 (sheet 很高,focus 被 sheet 内部 scroll 隐藏) scrollIntoView 兜底

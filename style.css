@@ -737,6 +737,107 @@ html, body { overscroll-behavior-y: contain; }
   margin-top: 12px;
 }
 .qe-img-list:empty { margin-top: 0; }
+/* 时间段行 — qe-content 内, note 下方; 可水平滚动多 pill */
+.qe-sched-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  align-items: center;
+}
+.qe-sched-row:empty { margin-top: 0; }
+/* 0 个时间段时的初始 pill: 灰底 + 灰字 + 虚线 */
+.qe-pill-add-sched {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.qe-pill-add-sched .ico-calendar {
+  width: 14px; height: 14px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+}
+/* 已有时间段 pill: accent 软底 + accent 字色 */
+.qe-sched-pill {
+  display: inline-flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-radius: 14px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.qe-sched-pill-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 4px 5px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.qe-sched-pill-label .ico-calendar {
+  width: 14px; height: 14px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.qe-sched-pill-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 28px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: .55;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.qe-sched-pill-x:active { opacity: 1; }
+/* 末尾"+" 小圆按钮: 跟 pill 高度一致, 圆 */
+.qe-sched-add-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+}
+.qe-sched-add-mini:active { background: var(--bg-hover); color: var(--text); }
+.qe-sched-add-mini .ico-plus {
+  width: 12px; height: 12px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+}
 .qe-img-cell {
   position: relative;
   width: 64px;

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0911';
+const _PSFOCUS_BUILD = '20260528-0912';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11248,15 +11248,24 @@ function openCreateTaskSheet(opts) {
       allDayDefault = true;
     }
   }
-  let sched = _r ? _r.sched : (startTs ? {
-    id: 'sl-' + Math.random().toString(36).slice(2, 10),
-    kind: (endTs && endTs > startTs) ? 'range' : 'date',
-    start: startTs,
-    end: endTs || undefined,
-    allDay: allDayDefault,
-    repeat: 'none',
-    reminderOffset: null,
-  } : null);
+  // 多 schedule 支持 (Kayu 2026-05-28): 一个任务可以挂多个时间段
+  // _restore 时把数组带回来; 没 restore 时初始 = [今天] 或 opts 指定的那个
+  let schedules;
+  if (_r && Array.isArray(_r.schedules)) {
+    schedules = _r.schedules.slice();
+  } else if (startTs) {
+    schedules = [{
+      id: 'sl-' + Math.random().toString(36).slice(2, 10),
+      kind: (endTs && endTs > startTs) ? 'range' : 'date',
+      start: startTs,
+      end: endTs || undefined,
+      allDay: allDayDefault,
+      repeat: 'none',
+      reminderOffset: null,
+    }];
+  } else {
+    schedules = [];
+  }
 
   // 紧凑日期标签 — 今天/明天/5月29日 形式, 跟滴答清单一致
   function _compactDateLabel(s) {
@@ -11286,36 +11295,38 @@ function openCreateTaskSheet(opts) {
     return p ? (p.name || '未命名') : '收件箱';
   }
 
-  function schedPillHtml() {
-    if (!sched) return '';
-    return `<span class="dp-sched-pill">
-      <span class="ico-clock"></span>
-      <span class="dp-sched-text">${esc(fmtSchedule(sched))}</span>
-      <button class="dp-sched-x" data-action="qe-remove-sched" title="删除时间">×</button>
-    </span>`;
-  }
-
-  function projPillHtml() {
-    const p = pickedProjectId ? state.projects.find(x => x.id === pickedProjectId) : null;
-    const c = p ? (p.color || '') : '';
-    const lbl = p ? (p.name || '未命名') : '收件箱';
-    return `${c ? `<span class="dp-project-dot" style="background:${esc(c)}"></span>` : '<span class="ico-folder"></span>'}<span>${esc(lbl)}</span>`;
+  // 渲染整个时间段行 — 0/1/N 都给清晰显示, 每个 pill 可独立编辑/删除, 末尾"+" 加新时间段
+  function _renderSchedRowHtml() {
+    if (!schedules.length) {
+      return `<button class="qe-pill qe-pill-add-sched" data-action="qe-sched-add" title="加日期 / 时间">
+        <span class="ico-calendar"></span>
+        <span>+ 加日期</span>
+      </button>`;
+    }
+    const pills = schedules.map((s, i) => `<span class="qe-sched-pill">
+      <button class="qe-sched-pill-label" data-action="qe-sched-edit" data-idx="${i}" title="编辑此时间">
+        <span class="ico-calendar"></span>
+        <span>${esc(_compactDateLabel(s))}</span>
+      </button>
+      <button class="qe-sched-pill-x" data-action="qe-sched-remove" data-idx="${i}" title="删除此时间">×</button>
+    </span>`).join('');
+    return pills + `<button class="qe-sched-add-mini" data-action="qe-sched-add" title="再加一个时间段">
+      <span class="ico-plus"></span>
+    </button>`;
   }
 
   // 滴答清单风:整 sheet 单一色, 无 panel 分栏 / 无 ×按钮 / 无勾选框 / 无 sub-todos 区
   // (sub-todos 放到任务详情里加, 创建时尽量简洁)
+  // 多 schedule: date 不在 qe-bar 里, 单独成行 (qe-sched-row), 放在 note 下面
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="qe-content">
       <input type="text" class="qe-title" id="qe-title" placeholder="准备做什么?">
       <textarea class="qe-note" id="qe-note" rows="2" placeholder="描述"></textarea>
       <div id="qe-img-list" class="qe-img-list"></div>
+      <div id="qe-sched-row" class="qe-sched-row">${_renderSchedRowHtml()}</div>
     </div>
     <div class="qe-bar">
-      <button class="qe-pill" data-action="qe-edit-sched" id="qe-pill-date" title="日期 / 时间">
-        <span class="ico-calendar"></span>
-        <span class="qe-pill-label" id="qe-date-label">${esc(_compactDateLabel(sched))}</span>
-      </button>
       <button class="qe-pill" data-action="qe-pick-project" id="qe-pill-folder" title="项目 / 清单">
         <span class="ico-folder"></span>
         <span class="qe-pill-label" id="qe-folder-label">${esc(_projectLabel())}</span>
@@ -11378,7 +11389,7 @@ function openCreateTaskSheet(opts) {
         title: titleEl ? titleEl.value : '',
         note:  noteEl  ? noteEl.value  : '',
         pickedProjectId,
-        sched,
+        schedules: schedules.slice(),
         pendingImages: pendingImages.slice(),
       };
     }
@@ -11386,15 +11397,53 @@ function openCreateTaskSheet(opts) {
       const lbl = body.querySelector('#qe-folder-label');
       if (lbl) lbl.textContent = _projectLabel();
     }
-
-    // 日期 pill 点 → 时间 picker; save/cancel/clear 都用 _restore 把 task sheet 重开,不丢 draft
-    body.querySelector('[data-action="qe-edit-sched"]').onclick = () => {
-      const _stash = _captureRestore();
-      openQuickTimePickerSheet(sched, (newSched) => {
-        _stash.sched = (newSched === undefined) ? sched : newSched;
-        openCreateTaskSheet({ _restore: _stash });
+    // 时间段 in-place 刷新 — × 删除不需要重开 sheet (no picker 涉及)
+    function _refreshSchedRow() {
+      const row = body.querySelector('#qe-sched-row');
+      if (row) {
+        row.innerHTML = _renderSchedRowHtml();
+        _bindSchedRowHandlers();
+      }
+    }
+    function _bindSchedRowHandlers() {
+      // 加新时间段 → snapshot 状态, 打开 picker, save 后 reopen task sheet 并 append
+      body.querySelectorAll('[data-action="qe-sched-add"]').forEach(b => b.onclick = () => {
+        const _stash = _captureRestore();
+        openQuickTimePickerSheet(null, (newSched) => {
+          if (newSched && newSched !== null && typeof newSched === 'object' && newSched.start) {
+            _stash.schedules.push(newSched);
+          }
+          openCreateTaskSheet({ _restore: _stash });
+        });
       });
-    };
+      // 编辑某一段 → snapshot, 打开 picker (pre-fill), save 后 reopen task sheet 替换该 idx
+      body.querySelectorAll('[data-action="qe-sched-edit"]').forEach(b => b.onclick = () => {
+        const idx = parseInt(b.dataset.idx, 10);
+        const cur = schedules[idx];
+        if (!cur) return;
+        const _stash = _captureRestore();
+        openQuickTimePickerSheet(cur, (newSched) => {
+          if (newSched && newSched.start) {
+            // 用返回的新值替换该 idx (id 沿用旧的, picker 已经处理)
+            if (_stash.schedules[idx]) _stash.schedules[idx] = newSched;
+            else _stash.schedules.push(newSched);
+          }
+          // newSched 为 currentSched (cancel) 时, _stash.schedules[idx] 不变
+          openCreateTaskSheet({ _restore: _stash });
+        });
+      });
+      // 删除某一段 → in-place 更新 schedules + 重渲 row
+      body.querySelectorAll('[data-action="qe-sched-remove"]').forEach(b => b.onclick = (ev) => {
+        ev.stopPropagation();
+        const idx = parseInt(b.dataset.idx, 10);
+        if (idx >= 0 && idx < schedules.length) {
+          schedules.splice(idx, 1);
+          _refreshSchedRow();
+        }
+      });
+    }
+    _bindSchedRowHandlers();
+
     // 文件夹 pill 点 → 项目 picker (overlay, 不替换 sheet, 不需要 _restore)
     body.querySelector('[data-action="qe-pick-project"]').onclick = (ev) => {
       ev.stopPropagation();
@@ -11403,7 +11452,7 @@ function openCreateTaskSheet(opts) {
         _updateFolderPill();
       });
     };
-    // 更多 — 从模板创建
+    // 更多 — 从模板创建. 模板带的时间从第一段 schedule 拿 (够用), 多段不传给模板
     body.querySelector('[data-action="qe-more"]').onclick = (ev) => {
       ev.stopPropagation();
       const menuItems = [];
@@ -11411,8 +11460,9 @@ function openCreateTaskSheet(opts) {
       if (hasUsable) {
         menuItems.push({ label: '从模板创建', icon: 'ico-template', action: () => {
           closePopover();
-          const carryStart = sched && Number.isFinite(sched.start) ? sched.start : undefined;
-          const carryEnd   = sched && Number.isFinite(sched.end)   ? sched.end   : undefined;
+          const s0 = schedules[0];
+          const carryStart = s0 && Number.isFinite(s0.start) ? s0.start : undefined;
+          const carryEnd   = s0 && Number.isFinite(s0.end)   ? s0.end   : undefined;
           const carryProj  = pickedProjectId || undefined;
           closeSheet();
           openCreateFromTemplatePicker({ startTs: carryStart, endTs: carryEnd, projectId: carryProj });
@@ -11434,8 +11484,11 @@ function openCreateTaskSheet(opts) {
         const tg = mm[1].trim();
         if (tg && !tags.includes(tg)) tags.push(tg);
       }
-      const startMs = sched && sched.start || null;
-      const endMs   = sched && sched.end   || null;
+      // 多段:legacy 字段 (start/end/allDay/dueAt) 镜像第一段 — 老桌面端依赖 (sync 见 _syncLegacyFromSchedules)
+      schedules.sort((a, b) => (a.start || 0) - (b.start || 0));
+      const s0 = schedules[0] || null;
+      const startMs = s0 ? s0.start : null;
+      const endMs   = s0 ? (s0.end || null) : null;
       const newTask = {
         id: genId('t'),
         title,
@@ -11450,11 +11503,11 @@ function openCreateTaskSheet(opts) {
         dueAt: startMs,
         start:  startMs,
         end:    endMs && endMs > startMs ? endMs : null,
-        allDay: sched ? !!sched.allDay : false,
+        allDay: s0 ? !!s0.allDay : false,
         color: '',
         tags,
         subtasks: [],
-        schedules: sched ? [sched] : [],
+        schedules: schedules.slice(),
         images: pendingImages.slice(),
         completedOccurrences: [],
         kanbanColumn: null,

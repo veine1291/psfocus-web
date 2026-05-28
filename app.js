@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0918';
+const _PSFOCUS_BUILD = '20260528-0919';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -6959,7 +6959,7 @@ function bindTaskCards(view) {
       e.stopPropagation();
       toggleTaskDone(id);
     });
-    card.addEventListener('click', () => openTaskDetail(id));
+    card.addEventListener('click', () => openTaskDetail(id, { mode: 'p1' }));
   });
 }
 
@@ -7102,16 +7102,26 @@ function renderGanttView(view, cl) {
       </div>
     </div>`;
   view.querySelectorAll('.gantt-row[data-task-id]').forEach(row => {
-    row.addEventListener('click', () => openTaskDetail(row.dataset.taskId));
+    row.addEventListener('click', () => openTaskDetail(row.dataset.taskId, { mode: 'p1' }));
   });
 }
 
 // =========================================================
 // ===== 任务详情抽屉 =====
 // =========================================================
-function openTaskDetail(id) {
+// 任务详情两种模式 (Kayu 2026-05-28 第 2 轮):
+//   p1 = 只查看小抽屉 (60svh, 没退出按钮, 没底栏, inputs readonly)
+//   p2 = 输入态全屏 (95svh, 左上角 ← 退出, 底栏有 tag/sub/img/收起 图标)
+// 全局保留 — 关闭 sheet 后下次开同一任务记住偏好;但每次从外部打开(列表点)默认 p1
+let _taskDetailMode = 'p1';
+// _restoreFocus = 重渲后要把光标聚回哪个 input (p1→p2 切换用)
+let _taskDetailRestoreFocus = null;
+
+function openTaskDetail(id, opts) {
   const t = state.tasks.find(x => x.id === id);
   if (!t) return;
+  if (opts && opts.mode) _taskDetailMode = opts.mode;
+  const _mode = _taskDetailMode;
   // 保留 sheet 已打开时的滚动位置(子任务勾选/添加/删除等局部操作不要回顶)
   const _sheetEl = $('sheet');
   const _wasOpen = _sheetEl && !_sheetEl.classList.contains('hidden');
@@ -7268,12 +7278,18 @@ function openTaskDetail(id) {
     <div class="sheet-handle"></div>
     <div class="dp-detail td-detail">
 
-      <!-- 顶部行: 文件夹 pill + 更多 -->
+      <!-- 顶部行: ← 退出 (P2) + 文件夹 pill + 🚩 flag + 更多 -->
       <div class="td-top">
+        <button class="td-back" data-action="td-collapse" title="返回小抽屉">
+          <span class="ico-chevron-left"></span>
+        </button>
         <button class="td-folder dp-project-pill" data-action="dp-pick-project">
           ${projColor ? `<span class="dp-project-dot" style="background:${esc(projColor)}"></span>` : '<span class="ico-folder"></span>'}
           <span>${esc(projLabel)}</span>
           <span class="ico-chevron-down td-folder-chev"></span>
+        </button>
+        <button class="td-flag ${t.flagged ? 'on' : ''}" data-action="td-toggle-flag" title="${t.flagged ? '取消标记' : '标记重要'}">
+          <span class="ico-flag"></span>
         </button>
         <button class="td-more dp-more-btn" data-action="task-detail-more" title="更多">
           <span class="ico-more"></span>
@@ -7320,8 +7336,14 @@ function openTaskDetail(id) {
       </datalist>
     </div>
 
-    <!-- 底部图标条 -->
+    <!-- 底部图标条 (P2 才显示, P1 整条隐藏) -->
     <div class="td-bar">
+      <button class="td-bar-btn" data-action="td-bar-tag" title="加标签 (note 里输 #)">
+        <span class="ico-tag"></span>
+      </button>
+      <button class="td-bar-btn" data-action="td-bar-sub" title="加子待办">
+        <span class="ico-list"></span>
+      </button>
       <label class="td-bar-btn" title="附件 / 上传图片">
         <input type="file" accept="image/*" multiple data-action="dp-task-add-images" hidden>
         <span class="ico-image"></span>
@@ -7332,6 +7354,37 @@ function openTaskDetail(id) {
       </button>
     </div>
   `;
+  // 应用模式 class 到 #sheet — 控制 sheet-body max-height / 隐藏 back/bar 等
+  sheet.classList.remove('td-p1', 'td-p2');
+  sheet.classList.add('td-' + _mode);
+  // P1 模式: input 加 readonly + 监听 focus → 切到 P2
+  if (_mode === 'p1') {
+    body.querySelectorAll('.dp-title-input, .dp-note-input, .dp-sub-add-input').forEach(el => {
+      el.setAttribute('readonly', '');
+      el.addEventListener('focus', () => {
+        // 记下当前焦点元素 — 重渲后聚回去
+        if (el.classList.contains('dp-title-input'))   _taskDetailRestoreFocus = 'title';
+        else if (el.classList.contains('dp-note-input')) _taskDetailRestoreFocus = 'note';
+        else if (el.classList.contains('dp-sub-add-input')) _taskDetailRestoreFocus = 'sub';
+        _taskDetailMode = 'p2';
+        openTaskDetail(id);
+      }, { once: true });
+    });
+  } else if (_taskDetailRestoreFocus) {
+    // P2 模式 + 上一次有要恢复的焦点 → 聚过去
+    const target = body.querySelector(
+      _taskDetailRestoreFocus === 'title' ? '.dp-title-input' :
+      _taskDetailRestoreFocus === 'note'  ? '.dp-note-input'  :
+      _taskDetailRestoreFocus === 'sub'   ? '.dp-sub-add-input' : null
+    );
+    _taskDetailRestoreFocus = null;
+    if (target) setTimeout(() => {
+      target.focus();
+      try {
+        if (target.value) target.setSelectionRange(target.value.length, target.value.length);
+      } catch (_) {}
+    }, 30);
+  }
   body.style.transform = '';
   body.style.transition = '';
   sheet.classList.remove('hidden');
@@ -7352,6 +7405,39 @@ function bindTaskDetailEvents(body, id) {
   if (closeBtn) closeBtn.onclick = closeSheet;
   const moreBtn = body.querySelector('[data-action="task-detail-more"]');
   if (moreBtn) moreBtn.onclick = (ev) => { ev.stopPropagation(); openTaskDetailMenu(id, ev.currentTarget); };
+  // 第 2 轮新加 ──────────────────────
+  // ← 返回 (P2 → P1)
+  const backBtn = body.querySelector('[data-action="td-collapse"]');
+  if (backBtn) backBtn.onclick = () => { _taskDetailMode = 'p1'; openTaskDetail(id); };
+  // 🚩 flag toggle
+  const flagBtn = body.querySelector('[data-action="td-toggle-flag"]');
+  if (flagBtn) flagBtn.onclick = () => {
+    t.flagged = !t.flagged;
+    t.updatedAt = Date.now();
+    pushState();
+    flagBtn.classList.toggle('on', !!t.flagged);
+    flagBtn.title = t.flagged ? '取消标记' : '标记重要';
+    renderAll();  // 列表里 flag 标记也要刷
+  };
+  // 🏷 工具栏 tag — 切到 P2 (如已 P2 就不切), focus note, 插 # 到末尾
+  const barTag = body.querySelector('[data-action="td-bar-tag"]');
+  if (barTag) barTag.onclick = () => {
+    if (_taskDetailMode === 'p1') { _taskDetailRestoreFocus = 'note'; _taskDetailMode = 'p2'; openTaskDetail(id); return; }
+    const noteEl = body.querySelector('.dp-note-input');
+    if (!noteEl) return;
+    noteEl.focus();
+    const v = noteEl.value || '';
+    const needSpace = v && !/\s$/.test(v);
+    noteEl.value = v + (needSpace ? ' #' : '#');
+    try { noteEl.setSelectionRange(noteEl.value.length, noteEl.value.length); } catch (_) {}
+  };
+  // ≡ 工具栏 sub — 切到 P2, focus sub-add 输入框
+  const barSub = body.querySelector('[data-action="td-bar-sub"]');
+  if (barSub) barSub.onclick = () => {
+    if (_taskDetailMode === 'p1') { _taskDetailRestoreFocus = 'sub'; _taskDetailMode = 'p2'; openTaskDetail(id); return; }
+    const subEl = body.querySelector('.dp-sub-add-input');
+    if (subEl) { subEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); setTimeout(() => subEl.focus(), 80); }
+  };
 
   // 标题
   const titleEl = body.querySelector('.dp-title-input');

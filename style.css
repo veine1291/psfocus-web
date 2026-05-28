@@ -692,6 +692,93 @@ html, body { overscroll-behavior-y: contain; }
   padding: 0 16px 16px;
 }
 
+/* ===== 任务详情 P1/P2 折叠态切换 (Kayu 2026-05-28 第 2 轮) =====
+ * P1 = 只查看小抽屉 (60svh, 无 back / 无 bar / inputs readonly)
+ * P2 = 输入态全屏 (95svh, 左上角 ← 退出, 有底栏)
+ * 切换路径: 点 title/note/sub-add 任一 input → P1 升 P2; 点 ← → P2 降 P1 */
+#sheet.td-p1 .sheet-body { max-height: 60svh; }
+#sheet.td-p2 .sheet-body { max-height: 95svh; }
+/* back button: P1 隐, P2 显 */
+#sheet.td-p1 .td-back { display: none; }
+/* 底部图标条: P1 隐, P2 显 */
+#sheet.td-p1 .td-bar { display: none; }
+/* P1 隐藏所有编辑性 UI (× 删 / + 加 / 列表 add input 等) */
+#sheet.td-p1 .dp-sched-x,
+#sheet.td-p1 .td-add-sched,
+#sheet.td-p1 .td-sub-add,
+#sheet.td-p1 [data-action="dp-remove-tag"],
+#sheet.td-p1 .dp-image-del,
+#sheet.td-p1 .dp-sub-del {
+  display: none;
+}
+/* P1 状态: input 看起来像普通文本, 鼠标指针提示可点 */
+#sheet.td-p1 .td-title,
+#sheet.td-p1 .td-note,
+#sheet.td-p1 .dp-sub-add-input {
+  cursor: pointer;
+}
+/* ← 退出按钮 (P2 only) */
+.td-back {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--bg-section);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  padding: 0;
+}
+.td-back:active { background: var(--bg-hover); }
+.td-back .ico-chevron-left {
+  width: 16px; height: 16px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+}
+/* 🚩 flag (优先级) toggle 按钮 */
+.td-flag {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--bg-section);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  padding: 0;
+  transition: background .12s, color .12s;
+}
+.td-flag:active { background: var(--bg-hover); }
+.td-flag.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.td-flag .ico-flag {
+  width: 16px; height: 16px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+}
+/* 底栏新加的 tag/list 图标 */
+.td-bar-btn .ico-tag,
+.td-bar-btn .ico-list {
+  width: 18px; height: 18px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+}
+
 /* ===== 滴答清单风任务详情 sheet (Kayu 2026-05-28 第 1 轮) ===== */
 /* 注: 保留 .dp-detail 兼容旧 css; td-* 是新结构 */
 .td-detail {

@@ -165,6 +165,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .ico-x           { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg>");          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg>"); }
 .ico-today       { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='12' x2='15' y2='15'/></svg>");          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='12' x2='15' y2='15'/></svg>"); }
 .ico-filter      { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><polygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'/></svg>");          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><polygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'/></svg>"); }
+.ico-volume      { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><polygon points='11 5 6 9 2 9 2 15 6 15 11 19 11 5'/><path d='M15.54 8.46a5 5 0 0 1 0 7.07'/><path d='M19.07 4.93a10 10 0 0 1 0 14.14'/></svg>");          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><polygon points='11 5 6 9 2 9 2 15 6 15 11 19 11 5'/><path d='M15.54 8.46a5 5 0 0 1 0 7.07'/><path d='M19.07 4.93a10 10 0 0 1 0 14.14'/></svg>"); }
 
 /* =========================================================
    登录屏
@@ -573,6 +574,150 @@ html, body { overscroll-behavior-y: contain; }
 }
 .nav-folder-children .nav-row { padding-left: 8px; }
 .nav-folder-head.collapsed + .nav-folder-children { display: none; }
+
+/* =========================================================
+   全屏笔记编辑页 (Kayu 2026-05-29) — 长文本不适合 sheet
+   ========================================================= */
+.sum-editor-page {
+  position: fixed;
+  inset: 0;
+  z-index: 70;          /* 比 sheet (60) 高, 比 toast (~100) 低 */
+  background: var(--bg);
+  display: flex;
+}
+.sum-editor-page.hidden { display: none; }
+.sum-editor-page-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+/* 全屏页打开时锁住 body 滚动, 防止背景的 list 跟着动 */
+body.sum-editor-open { overflow: hidden; }
+
+/* 顶栏 — ← 返回 + 标题 + 发布/保存 */
+.sep-topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: calc(8px + var(--safe-top, env(safe-area-inset-top, 0px))) 8px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+.sep-topbar-btn {
+  flex-shrink: 0;
+  width: 40px; height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 10px;
+}
+.sep-topbar-btn:active { background: var(--bg-section); }
+.sep-topbar-btn .ico-chevron-left { width: 20px; height: 20px; background: currentColor; }
+.sep-topbar-title {
+  flex: 1 1 auto;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-strong);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sep-topbar-publish {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 6px;
+}
+
+/* 滚动区 — 标题 + 日期 + 大编辑器 */
+.sep-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sep-title-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 17px;
+  font-weight: 600;
+  outline: none;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sep-title-input::placeholder { color: var(--text-faint); font-weight: 400; }
+.sep-date-row {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.sep-date-ico { width: 14px; height: 14px; background: currentColor; flex-shrink: 0; }
+.sep-date-input {
+  flex: 1 1 auto;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  color: var(--text);
+  font-size: 13px;
+  border-radius: 8px;
+  outline: none;
+}
+/* 大编辑器 — 复用 .sum-input 排版但放大 */
+.sep-card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 240px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+}
+.sep-card .sum-input.sep-editor {
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: none;
+  font-size: 16px;
+  line-height: 1.65;
+  padding: 4px;
+}
+
+/* 底部工具栏 — 固定贴底, 跟 sheet 的 sum-input-toolbar 类似 */
+.sep-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px calc(8px + var(--safe-bottom, env(safe-area-inset-bottom, 0px)));
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sep-toolbar::-webkit-scrollbar { display: none; }
+.sep-toolbar .sum-tb-btn { flex-shrink: 0; }
 
 /* =========================================================
    底部抽屉(任务详情/新建)
@@ -3568,6 +3713,93 @@ html, body { overscroll-behavior-y: contain; }
   -webkit-appearance: none;
   appearance: none;
 }
+/* 冥想倒计时铃声选择 (Kayu 2026-05-29) */
+.med-bell-section {
+  width: 100%;
+  max-width: 320px;
+  margin-top: 6px;
+}
+.med-bell-label {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+  letter-spacing: 0.3px;
+}
+.med-bell-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-section);
+  padding: 4px;
+}
+.med-bell-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.med-bell-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.med-bell-pick {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.med-bell-radio {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--border-soft);
+  border-radius: 50%;
+  position: relative;
+  transition: border-color .12s;
+}
+.med-bell-radio.on { border-color: var(--accent); }
+.med-bell-radio.on::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+.med-bell-name {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+.med-bell-desc {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.med-bell-preview {
+  flex-shrink: 0;
+  width: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.med-bell-preview:hover { color: var(--accent); }
+.med-bell-preview:active { transform: scale(0.92); }
+.med-bell-preview .ico-volume { width: 16px; height: 16px; }
+
 .med-actions {
   margin-top: 8px;
 }

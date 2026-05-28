@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0925';
+const _PSFOCUS_BUILD = '20260529-0926';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1944,6 +1944,150 @@ function openSummaryInputSheet() {
   });
 }
 
+// ============================================================
+// 全屏笔记编辑页 (Kayu 2026-05-29) — 长文本 sheet 体验差, 改全屏
+// 跟 sheet 不一样:
+//  - 全屏 fixed 覆盖, 不动 ui.tab
+//  - 顶栏: 返回 + 标题 + 发布/保存
+//  - 数据进:mode='new' 用 summaryState.draftNote / draftTitle / pendingImages
+//          mode='edit' 用 _summaryEditorPage.editing 保存原 note + tempMd 编辑中
+//  - 数据出:发布 → 走 summary-submit; 保存 → 改原笔记并 pushState
+// ============================================================
+let _summaryEditorPage = {
+  open: false,
+  mode: 'new',          // 'new' | 'edit'
+  noteId: null,         // 编辑时的 summary id
+  editingTitle: '',     // 编辑模式下的 title 临时值
+  editingMd: '',        // 编辑模式下的 note md 临时值
+  editingCreatedAt: 0,  // 编辑模式下的 createdAt 临时值
+};
+
+function openSummaryEditorPage(opts) {
+  const mode = (opts && opts.mode) || 'new';
+  _summaryEditorPage.open = true;
+  _summaryEditorPage.mode = mode;
+  if (mode === 'edit') {
+    const id = opts.id;
+    const s = (state.summaries || []).find(x => x.id === id);
+    if (!s) { _summaryEditorPage.open = false; return; }
+    _summaryEditorPage.noteId = id;
+    _summaryEditorPage.editingTitle = s.title || '';
+    _summaryEditorPage.editingMd = s.note || '';
+    _summaryEditorPage.editingCreatedAt = s.createdAt || Date.now();
+  } else {
+    // new: 复用 draft (跟 sheet 一致, 用户跨次进出保留)
+    _summaryEditorPage.noteId = null;
+    _summaryPrefillFilterTagIfEmpty();
+  }
+  _renderSummaryEditorPage();
+}
+function closeSummaryEditorPage(opts) {
+  // opts.discardDraft = true 时清空草稿 (发布后)
+  const page = document.getElementById('sum-editor-page');
+  if (page) page.classList.add('hidden');
+  document.body.classList.remove('sum-editor-open');
+  _summaryEditorPage.open = false;
+  _summaryEditorPage.noteId = null;
+  _summaryEditorPage.editingTitle = '';
+  _summaryEditorPage.editingMd = '';
+  // sheet 上的 #sheet 隐藏跟此独立, 不动
+}
+
+function _renderSummaryEditorPage() {
+  const page = document.getElementById('sum-editor-page');
+  const body = document.getElementById('sum-editor-page-body');
+  if (!page || !body) return;
+  const isEdit = _summaryEditorPage.mode === 'edit';
+  // 编辑模式下当前值取 editingTitle/editingMd; 新建模式下 取 draft
+  const title = isEdit ? _summaryEditorPage.editingTitle : (summaryState.draftTitle || '');
+  const md    = isEdit ? _summaryEditorPage.editingMd    : (summaryState.draftNote || '');
+  const pendingImgs = isEdit ? '' : summaryState.pendingImages.map(im => `<div class="sum-pending-img" data-img-id="${esc(im.id)}">
+    <img data-cloud-file-id="${esc(im.cloudFileID)}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+    <button class="sum-pending-img-x" data-action="summary-pending-img-del" data-img-id="${esc(im.id)}">×</button>
+  </div>`).join('');
+  // 编辑模式下顶栏多显示日期 picker
+  const dtStr = isEdit ? (() => {
+    const pad = n => String(n).padStart(2, '0');
+    const d = new Date(_summaryEditorPage.editingCreatedAt || Date.now());
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  })() : '';
+  // 今日待录入模块 (只新建模式显)
+  const todayKey = _todayKey();
+  const todayMods = !isEdit ? _summaryModulesForDay(todayKey).filter(m => m.kind === 'rating' || m.kind === 'duration') : [];
+  const inputModsCollapsed = !!summaryState.inputModsCollapsed;
+  const todayModsHtml = todayMods.length ? `<div class="sum-input-day-mods ${inputModsCollapsed ? 'collapsed' : ''}">
+    <button class="sum-input-day-mods-head" data-action="summary-toggle-input-mods" type="button">
+      <span class="sum-input-day-mods-chev">${inputModsCollapsed ? '▶' : '▼'}</span>
+      <span class="sum-input-day-mods-label">今日 · 待录入 <span class="sum-input-day-mods-count">(${todayMods.length})</span></span>
+    </button>
+    ${inputModsCollapsed ? '' : `<div class="sum-input-day-mods-body">
+      ${todayMods.map(m => _renderSummaryModuleEditor(m, todayKey)).join('')}
+    </div>`}
+  </div>` : '';
+  body.innerHTML = `
+    <header class="sep-topbar">
+      <button class="sep-topbar-btn" data-action="summary-editor-page-close" aria-label="返回">
+        <span class="ico-chevron-left"></span>
+      </button>
+      <div class="sep-topbar-title">${isEdit ? '编辑笔记' : '新建摘要'}</div>
+      <button class="sep-topbar-publish" data-action="${isEdit ? 'summary-editor-page-save' : 'summary-editor-page-publish'}">
+        ${isEdit ? '保存' : '发布'}
+      </button>
+    </header>
+    <div class="sep-scroll">
+      <input id="sum-main-input-title" type="text" class="sep-title-input"
+        placeholder="概要(可选)" value="${esc(title)}" data-action-input="summary-draft-title">
+      ${isEdit ? `<div class="sep-date-row">
+        <span class="ico-calendar sep-date-ico"></span>
+        <input id="sum-editor-page-date" type="datetime-local" class="sep-date-input" value="${esc(dtStr)}">
+      </div>` : ''}
+      <div class="sum-input-card sep-card">
+        <div class="sum-input sep-editor" contenteditable="true"
+          data-action-input="summary-input-autosize">${_mdToEditHtml(md)}</div>
+        ${pendingImgs ? `<div class="sum-input-pending">${pendingImgs}</div>` : ''}
+        ${todayModsHtml}
+      </div>
+    </div>
+    <div class="sep-toolbar">
+      <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
+      ${isEdit ? '' : `<label class="sum-tb-btn sum-tb-img" title="上传图片">
+        <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
+        <span class="ico-image"></span>
+      </label>`}
+      ${_sumTbPinnedButtonsHtml()}
+      <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
+    </div>
+  `;
+  page.classList.remove('hidden');
+  document.body.classList.add('sum-editor-open');
+  // 自动聚焦编辑器
+  const ed = body.querySelector('.sum-input.sep-editor');
+  if (ed) {
+    ed.addEventListener('paste', _summaryHandlePaste);
+    ed.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const a = isEdit ? 'summary-editor-page-save' : 'summary-editor-page-publish';
+        if (_summaryActions[a]) _summaryActions[a]();
+      }
+    });
+    setTimeout(() => { try { ed.focus(); _caretToEnd(ed); } catch (_) {} }, 30);
+  }
+  // 编辑模式下的日期 picker change → 同步到 _summaryEditorPage.editingCreatedAt
+  const dateInp = body.querySelector('#sum-editor-page-date');
+  if (dateInp) {
+    dateInp.addEventListener('change', () => {
+      const ts = Date.parse(dateInp.value);
+      if (Number.isFinite(ts)) _summaryEditorPage.editingCreatedAt = ts;
+    });
+  }
+  // 工具栏按钮 mousedown 阻止失焦 (保选区)
+  body.querySelectorAll('.sep-toolbar .sum-tb-btn').forEach(b => {
+    b.addEventListener('mousedown', e => e.preventDefault());
+  });
+  if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(body);
+}
+
 function _summaryPrefillFilterTagIfEmpty() {
   const f = summaryState.filter || '';
   if (!f.startsWith('tag:')) return;
@@ -2070,6 +2214,24 @@ function _sumTbPinnedButtonsHtml() {
 
 // 工具栏 inline 重画 — pin/unpin 后调, 不重画整个 sheet
 function _rerenderSumToolbar() {
+  // 全屏编辑页 — 它有自己的 .sep-toolbar (顶栏才有发布键, 底栏没 submit)
+  const sepTb = document.querySelector('#sum-editor-page-body .sep-toolbar');
+  if (sepTb && _summaryEditorPage.open) {
+    const isEdit = _summaryEditorPage.mode === 'edit';
+    sepTb.innerHTML = `
+      <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
+      ${isEdit ? '' : `<label class="sum-tb-btn sum-tb-img" title="上传图片">
+        <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
+        <span class="ico-image"></span>
+      </label>`}
+      ${_sumTbPinnedButtonsHtml()}
+      <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
+    `;
+    sepTb.querySelectorAll('.sum-tb-btn').forEach(b => {
+      b.addEventListener('mousedown', e => e.preventDefault());
+    });
+    return;
+  }
   const tb = document.querySelector('#sheet-body .sum-input-toolbar')
     || document.querySelector('.sum-input-toolbar');
   if (!tb) return;
@@ -2265,6 +2427,9 @@ function _syncEditorToState(ed) {
     const cid = ed.dataset.conceptId;
     const c = (state.concepts || []).find(x => x.id === cid);
     if (c) { c.description = md; c.updatedAt = Date.now(); }
+  } else if (ed.classList && ed.classList.contains('sep-editor') && _summaryEditorPage.open && _summaryEditorPage.mode === 'edit') {
+    // 全屏编辑页 · 编辑模式 → 写到 editingMd
+    _summaryEditorPage.editingMd = md;
   } else {
     summaryState.draftNote = md;
   }
@@ -3547,7 +3712,62 @@ const _summaryActions = {
     });
   },
   'summary-draft-title': (el) => {
-    summaryState.draftTitle = el.value || '';
+    // 全屏编辑页 · 编辑模式 → 写到 editingTitle; 否则同步到 draftTitle
+    if (_summaryEditorPage.open && _summaryEditorPage.mode === 'edit') {
+      _summaryEditorPage.editingTitle = el.value || '';
+    } else {
+      summaryState.draftTitle = el.value || '';
+    }
+  },
+  // ===== 全屏笔记编辑页 (Kayu 2026-05-29) =====
+  'summary-editor-page-close': () => {
+    // 返回前先把编辑器最新值同步到 state (防 RAF 还没跑就退出)
+    const ed = document.querySelector('#sum-editor-page-body .sum-input.sep-editor');
+    if (ed) _syncEditorToState(ed);
+    closeSummaryEditorPage();
+  },
+  // 发布 — 新建模式: 复用现有 summary-submit (它会读 .sum-input + #sum-main-input-title)
+  'summary-editor-page-publish': () => {
+    // 先 sync 一次保最新
+    const ed = document.querySelector('#sum-editor-page-body .sum-input.sep-editor');
+    if (ed) _syncEditorToState(ed);
+    const before = (state.summaries || []).length;
+    if (_summaryActions['summary-submit']) _summaryActions['summary-submit']();
+    // 发成功 (summaries +1 或被 toast'空') → 关页面
+    // 简单粗暴:summaries 数量比 before 多就视为成功
+    const after = (state.summaries || []).length;
+    if (after > before) closeSummaryEditorPage();
+  },
+  // 保存 — 编辑模式: 直接改原 summary
+  'summary-editor-page-save': () => {
+    const id = _summaryEditorPage.noteId;
+    const s = (state.summaries || []).find(x => x.id === id);
+    if (!s) { closeSummaryEditorPage(); return; }
+    const ed = document.querySelector('#sum-editor-page-body .sum-input.sep-editor');
+    if (ed) _syncEditorToState(ed);
+    const nextNote = _summaryEditorPage.editingMd || (s.note || '');
+    const nextTitle = _summaryEditorPage.editingTitle || '';
+    let nextCreatedAt = s.createdAt;
+    const dateInp = document.getElementById('sum-editor-page-date');
+    if (dateInp && dateInp.value) {
+      const ts = Date.parse(dateInp.value);
+      if (Number.isFinite(ts)) nextCreatedAt = ts;
+    } else if (Number.isFinite(_summaryEditorPage.editingCreatedAt)) {
+      nextCreatedAt = _summaryEditorPage.editingCreatedAt;
+    }
+    s.note = nextNote;
+    s.title = nextTitle;
+    s.createdAt = nextCreatedAt;
+    s.updatedAt = Date.now();
+    // 重新解析 tags + 概念
+    s.tags = _summaryParseTagsFromText(nextNote);
+    for (const tg of s.tags) _summaryEnsureTag(tg);
+    const wikiLinks = _extractWikilinks(nextNote);
+    for (const wn of wikiLinks) _ensureConcept(wn);
+    pushState();
+    closeSummaryEditorPage();
+    renderAll();
+    if (typeof showToast === 'function') showToast('已保存');
   },
   'summary-search-input': (el, e) => {
     summaryState.searchQuery = el.value || '';
@@ -3869,15 +4089,20 @@ const _summaryActions = {
     pushState();
     renderAll();
   },
-  // 打开编辑笔记 sheet — datetime-local 改日期 + textarea 改内容
+  // 打开编辑笔记 — 现在改用全屏页 (Kayu 2026-05-29 反馈)
+  // 仍保留旧 sheet 实现作为 _legacy 留作 fallback (理论上无人触发)
   'summary-item-edit': (el) => {
+    const id = el.dataset.id;
+    closeSheet();
+    openSummaryEditorPage({ mode: 'edit', id });
+  },
+  'summary-item-edit-legacy-sheet': (el) => {
     const id = el.dataset.id;
     const s = (state.summaries || []).find(x => x.id === id);
     if (!s) return;
     const pad = n => String(n).padStart(2, '0');
     const dt = new Date(s.createdAt || Date.now());
     const dtLocal = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-    // 初始化 _editingNoteMd —— 编辑过程中 summary-input-autosize 同步进来
     summaryState._editingNoteMd = s.note || '';
     showSheet(`
       <div class="sheet-handle"></div>
@@ -4305,6 +4530,70 @@ let _meditationModeUI = 'count-up';  // 模式 tab 选择 (count-up / count-down
 let _meditationTargetMin = 15;       // 倒计时目标分钟数 (默认 15)
 let _meditationTickerId = null;      // setInterval id
 
+// 倒计时结束铃声 (Web Audio API 合成 — 不依赖外部文件)
+// 持久化到 localStorage,跨刷新保留;不同步到云端(per-device 偏好)
+const _MED_BELLS = [
+  { id: 'bowl',  label: '颂钵',
+    desc: '低沉绵长,经典冥想钵',
+    // 合成参数: 一个主频 + 一个泛音,慢衰减
+    play: () => _playMedTone({ freqs: [196, 392, 588], gains: [0.45, 0.22, 0.10], decay: 5.5, type: 'sine' }) },
+  { id: 'bell',  label: '钟声',
+    desc: '明亮清晰,寺院钟',
+    play: () => _playMedTone({ freqs: [440, 880, 1320], gains: [0.40, 0.20, 0.08], decay: 3.5, type: 'sine' }) },
+  { id: 'chime', label: '风铃',
+    desc: '高频短促',
+    play: () => _playMedTone({ freqs: [1568, 2349], gains: [0.30, 0.18], decay: 1.8, type: 'sine' }) },
+  { id: 'wood',  label: '木鱼',
+    desc: '低频闷响',
+    play: () => _playMedTone({ freqs: [110, 165], gains: [0.50, 0.20], decay: 0.25, type: 'triangle' }) },
+  { id: 'none',  label: '静音',
+    desc: '不播放',
+    play: () => {} },
+];
+function _medBellGetId() {
+  try { return localStorage.getItem('psfocus_medBell') || 'bowl'; } catch (_) { return 'bowl'; }
+}
+function _medBellSetId(id) {
+  try { localStorage.setItem('psfocus_medBell', id); } catch (_) {}
+}
+let _medAudioCtx = null;
+function _medGetAudioCtx() {
+  if (_medAudioCtx) return _medAudioCtx;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try { _medAudioCtx = new AC(); } catch (_) { return null; }
+  return _medAudioCtx;
+}
+// 加成式合成 — 同时叠几个正弦/三角波,指数衰减包络,模拟敲击+衰减声
+function _playMedTone({ freqs, gains, decay, type = 'sine' }) {
+  const ctx = _medGetAudioCtx();
+  if (!ctx) return;
+  // iOS Safari: AudioContext 默认 suspended, 必须 resume (用户交互内调用 OK)
+  if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+  const now = ctx.currentTime;
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(1.0, now);
+  master.connect(ctx.destination);
+  for (let i = 0; i < freqs.length; i++) {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freqs[i], now);
+    // ADSR 简化版: 快 attack (10ms), 长 exponential decay
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(gains[i] || 0.2, now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + decay);
+    osc.connect(g);
+    g.connect(master);
+    osc.start(now);
+    osc.stop(now + decay + 0.05);
+  }
+}
+function _playMedBellById(id) {
+  const b = _MED_BELLS.find(x => x.id === id) || _MED_BELLS[0];
+  if (b && b.play) b.play();
+}
+
 function _meditationMsForDay(dayKey) {
   if (!Array.isArray(state.meditationSessions)) return 0;
   // 跟 _summaryFocusMsForDay 同款:dayKey 形如 "YYYY-MM-DD", 拆数字避免时区误判
@@ -4403,7 +4692,11 @@ function _meditationStop(autoComplete) {
   meditationState.targetMs = null;
   pushState();
   renderAll();
-  if (autoComplete) showToast('冥想结束 · ' + _fmtDurShort(dur));
+  if (autoComplete) {
+    showToast('冥想结束 · ' + _fmtDurShort(dur));
+    // 倒计时到点自动播放选中的铃声 (用户主动按"结束"不播 — 不打扰)
+    _playMedBellById(_medBellGetId());
+  }
 }
 
 function renderTimerTab(view) {
@@ -4452,6 +4745,27 @@ function renderTimerTab(view) {
           <input type="number" class="med-custom-input" id="med-custom-input" min="1" max="240" value="${_meditationTargetMin}" data-action-input="med-custom-min">
           <span class="med-custom-unit">分钟</span>
         </div>
+        ${(() => {
+          const curBellId = _medBellGetId();
+          return `<div class="med-bell-section">
+            <div class="med-bell-label">结束铃声</div>
+            <div class="med-bell-list">
+              ${_MED_BELLS.map(b => {
+                const active = curBellId === b.id;
+                return `<div class="med-bell-row ${active ? 'active' : ''}">
+                  <button class="med-bell-pick" data-action="med-bell-pick" data-bell="${esc(b.id)}">
+                    <span class="med-bell-radio ${active ? 'on' : ''}"></span>
+                    <span class="med-bell-name">${esc(b.label)}</span>
+                    <span class="med-bell-desc">${esc(b.desc)}</span>
+                  </button>
+                  ${b.id === 'none' ? '' : `<button class="med-bell-preview" data-action="med-bell-preview" data-bell="${esc(b.id)}" title="试听" aria-label="试听">
+                    <span class="ico-volume"></span>
+                  </button>`}
+                </div>`;
+              }).join('')}
+            </div>
+          </div>`;
+        })()}
       ` : ''}
 
       <div class="med-actions">
@@ -4514,6 +4828,21 @@ function renderTimerTab(view) {
     state.meditationSessions = (state.meditationSessions || []).filter(x => x.id !== id);
     pushState();
     renderAll();
+  });
+  // 铃声选择 — 点行换 (radio 行为)
+  view.querySelectorAll('[data-action="med-bell-pick"]').forEach(b => b.onclick = () => {
+    const id = b.dataset.bell;
+    if (!id) return;
+    _medBellSetId(id);
+    // 选 "静音" 不试听 (无意义); 其它选中即试听一次, 让用户立刻听到效果
+    if (id !== 'none') _playMedBellById(id);
+    renderAll();
+  });
+  // 试听按钮 — 单独的扬声器图标, 不改选择
+  view.querySelectorAll('[data-action="med-bell-preview"]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    const id = b.dataset.bell;
+    if (id) _playMedBellById(id);
   });
 }
 
@@ -12366,7 +12695,7 @@ function bindGlobalEvents() {
     fab.addEventListener('mouseleave', cancel);
     fab.addEventListener('click', (e) => {
       if (longPressed) { e.preventDefault(); e.stopPropagation(); longPressed = false; return; }
-      if (ui.tab === 'summary') openSummaryInputSheet();
+      if (ui.tab === 'summary') openSummaryEditorPage({ mode: 'new' });
       else if (ui.tab === 'ledger') openLedgerAddSheet();
       else openCreateTaskSheet();
     });

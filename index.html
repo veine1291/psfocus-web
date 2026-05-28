@@ -10,7 +10,7 @@
   <!-- 不能用 no-store,会禁掉 iOS / Chrome 的 BFCache,导致每次切回 tab 都要全量 reload -->
   <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
   <title>PS Focus</title>
-  <link rel="stylesheet" href="style.css?v=20260528-0925">
+  <link rel="stylesheet" href="style.css?v=20260529-0926">
 </head>
 <body>
 
@@ -114,11 +114,16 @@
   <div class="sheet-body" id="sheet-body"></div>
 </div>
 
+<!-- 全屏笔记编辑页 (新建摘要 / 编辑笔记) — 长文本不适合用 sheet, 单独全屏 -->
+<div id="sum-editor-page" class="sum-editor-page hidden">
+  <div id="sum-editor-page-body" class="sum-editor-page-body"></div>
+</div>
+
 <!-- Toast -->
 <div id="toast" class="toast hidden"></div>
 
 <!-- 腾讯云 CloudBase SDK(暴露 window.cloudbase) -->
 <script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js?v=1"></script>
-<script src="app.js?v=20260528-0925"></script>
+<script src="app.js?v=20260529-0926"></script>
 </body>
 </html>

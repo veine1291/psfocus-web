@@ -1619,6 +1619,15 @@ function renderTab(tab) {
 // ===== 摘要 tab(类 flomo)— 移动端完整实现,跟桌面 main.js 同款架构
 // ============================================================
 
+// 「加子任务」输入框的模式:true = 把新加的当成检查事项 (checklistItem:true, 重复每次重置),
+// false = 普通子任务。全局共享, 跨 reload 保留, 跟桌面端 _addAsChecklistItem 行为对齐
+let _addAsChecklistItem = (() => {
+  try { return localStorage.getItem('psfocus_addAsChecklist') === '1'; } catch (_) { return false; }
+})();
+function _saveAddAsChecklist() {
+  try { localStorage.setItem('psfocus_addAsChecklist', _addAsChecklistItem ? '1' : '0'); } catch (_) {}
+}
+
 // === state ===
 let summaryState = {
   tab: 'summary',              // 'summary' | 'data'
@@ -2786,6 +2795,35 @@ function _renderSummaryModuleCard(m, dayKey) {
   </div>`;
 }
 
+// Sheet 里的摘要输入卡 — 上传/删图后单独刷新预览块, 不触发 renderAll
+// (renderAll 只重画主视图, sheet 是独立 overlay, pendingImages 不会跟着更新)
+function _refreshSumPendingImagesInSheet() {
+  const card = document.querySelector('#sheet-body .sum-input-card')
+    || document.querySelector('.sum-input-card');
+  if (!card) return;
+  const imgs = summaryState.pendingImages || [];
+  const existing = card.querySelector(':scope > .sum-input-pending');
+  if (!imgs.length) {
+    if (existing) existing.remove();
+    return;
+  }
+  const html = imgs.map(im => `<div class="sum-pending-img" data-img-id="${esc(im.id)}">
+    <img data-cloud-file-id="${esc(im.cloudFileID)}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+    <button class="sum-pending-img-x" data-action="summary-pending-img-del" data-img-id="${esc(im.id)}">×</button>
+  </div>`).join('');
+  if (existing) {
+    existing.innerHTML = html;
+  } else {
+    const wrap = document.createElement('div');
+    wrap.className = 'sum-input-pending';
+    wrap.innerHTML = html;
+    const editor = card.querySelector(':scope > .sum-input');
+    if (editor) editor.insertAdjacentElement('afterend', wrap);
+    else card.insertAdjacentElement('afterbegin', wrap);
+  }
+  if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(card);
+}
+
 // ===== Tag 联想 (输入 # 立即弹, 模糊匹配, 选中后插入 chip) =====
 // state + helpers, action 里在 input 事件后调 _tagSuggestUpdate(editor)
 let _tagSuggest = { open: false, query: '', editor: null, selectedIdx: 0, items: [] };
@@ -3380,11 +3418,13 @@ const _summaryActions = {
     }
     el.value = '';
     if (okCount) showToast(`已加 ${okCount} 张`);
+    _refreshSumPendingImagesInSheet();   // 关键: sheet 里的预览要刷, renderAll 只动主视图
     renderAll();
   },
   'summary-pending-img-del': (el) => {
     const id = el.dataset.imgId;
     summaryState.pendingImages = summaryState.pendingImages.filter(x => x.id !== id);
+    _refreshSumPendingImagesInSheet();
     renderAll();
   },
   'summary-rating-pending': (el) => {
@@ -6404,15 +6444,11 @@ function openTimelineNodeAddSheet(projId) {
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="dp-detail">
-      <div class="dp-head">
-        <span class="dp-head-kind">加时间轴节点</span>
-        <button class="dp-head-close" data-action="cancel" title="关闭">×</button>
+      <div class="dp-section">
+        <input type="text" class="dp-title-input" id="tl-new-title">
       </div>
       <div class="dp-section">
-        <input type="text" class="dp-title-input" id="tl-new-title" placeholder="节点标题">
-      </div>
-      <div class="dp-section">
-        <textarea class="dp-note-input" id="tl-new-note" rows="3" placeholder="备注"></textarea>
+        <textarea class="dp-note-input" id="tl-new-note" rows="3"></textarea>
       </div>
       <div class="dp-section">
         <div class="dp-section-title">时间</div>
@@ -6504,15 +6540,11 @@ function openTimelineNodeEditSheet(projId, nodeId) {
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="dp-detail">
-      <div class="dp-head">
-        <span class="dp-head-kind">编辑节点</span>
-        <button class="dp-head-close" data-action="cancel" title="关闭">×</button>
+      <div class="dp-section">
+        <input type="text" class="dp-title-input" id="tl-edit-title" value="${esc(n.title || '')}">
       </div>
       <div class="dp-section">
-        <input type="text" class="dp-title-input" id="tl-edit-title" placeholder="节点标题" value="${esc(n.title || '')}">
-      </div>
-      <div class="dp-section">
-        <textarea class="dp-note-input" id="tl-edit-note" rows="3" placeholder="备注">${esc(n.note || '')}</textarea>
+        <textarea class="dp-note-input" id="tl-edit-note" rows="3">${esc(n.note || '')}</textarea>
       </div>
       <div class="dp-section">
         <div class="dp-section-title">时间</div>
@@ -6949,12 +6981,12 @@ function openTaskDetail(id) {
       ${focusedHtml}
 
       <div class="dp-section dp-merged-section">
-        <textarea class="dp-note-input" rows="3" placeholder="备注、笔记…  输入 #xxx 自动加标签;粘贴图片直接上传">${esc(t.note || '')}</textarea>
+        <textarea class="dp-note-input" rows="3">${esc(t.note || '')}</textarea>
         <div class="dp-merged-row">
-          <div class="dp-merged-tags">${tagChipsHtml || '<span class="dp-merged-tags-empty">暂无标签</span>'}</div>
+          <div class="dp-merged-tags">${tagChipsHtml}</div>
           <label class="dp-merged-add-img" title="上传图片">
             <input type="file" accept="image/*" multiple data-action="dp-task-add-images" hidden>
-            <span class="ico-plus"></span>
+            <span class="ico-image"></span>
           </label>
         </div>
         ${images.length ? `<div class="dp-image-grid">${imagesHtml}</div>` : ''}
@@ -6966,7 +6998,8 @@ function openTaskDetail(id) {
       <div class="dp-section">
         <div class="dp-section-title">子待办 <span class="dp-section-count">${subItemsRaw.length}</span></div>
         <div class="dp-sub-add">
-          <input type="text" class="dp-sub-add-input" placeholder="加个子任务,回车确认">
+          <input type="text" class="dp-sub-add-input ${_addAsChecklistItem ? 'as-checklist' : ''}">
+          <button type="button" class="dp-sub-add-mode ${_addAsChecklistItem ? 'active' : ''}" data-action="toggle-add-as-checklist" title="${_addAsChecklistItem ? '当前:加检查事项(每次重复重置)— 点击切回普通子任务' : '当前:加普通子任务(持久)— 点击切到加检查事项'}">≡</button>
         </div>
         ${subsHtml}
       </div>
@@ -7243,7 +7276,7 @@ function bindTaskDetailEvents(body, id) {
     const maxOrder = state.tasks
       .filter(x => x.parentTaskId === t.id)
       .reduce((m, x) => Math.max(m, x.order || 0), 0);
-    state.tasks.push({
+    const newSub = {
       id: genId('t'),
       title: v,
       done: false,
@@ -7257,9 +7290,20 @@ function bindTaskDetailEvents(body, id) {
       completedOccurrences: [],
       order: maxOrder + 100,
       kanbanColumn: null,
-    });
+    };
+    // toggle 开了 → 标记为检查事项 (重复任务每次 occurrence 重置)
+    if (_addAsChecklistItem) newSub.checklistItem = true;
+    state.tasks.push(newSub);
     pushState(); openTaskDetail(id); renderAll();
   });
+  // ≡ 切换:加普通子任务 vs 加检查事项 (持久, 跟桌面共用 _addAsChecklistItem)
+  const subModeBtn = body.querySelector('.dp-sub-add-mode');
+  if (subModeBtn) subModeBtn.onclick = (ev) => {
+    ev.preventDefault();
+    _addAsChecklistItem = !_addAsChecklistItem;
+    _saveAddAsChecklist();
+    openTaskDetail(id);
+  };
 
   // 项目 pill — 切换所属清单/项目
   body.querySelector('[data-action="dp-pick-project"]').onclick = (ev) => {
@@ -11172,7 +11216,8 @@ function openCreateTaskSheet(opts) {
       <div class="dp-section">
         <div class="dp-section-title">子待办 <span class="dp-section-count" id="qe-sub-count">0</span></div>
         <div class="dp-sub-add">
-          <input type="text" class="dp-sub-add-input" id="qe-sub-add">
+          <input type="text" class="dp-sub-add-input ${_addAsChecklistItem ? 'as-checklist' : ''}" id="qe-sub-add">
+          <button type="button" class="dp-sub-add-mode ${_addAsChecklistItem ? 'active' : ''}" data-action="toggle-add-as-checklist" id="qe-sub-add-mode" title="${_addAsChecklistItem ? '当前:加检查事项(每次重复重置)— 点击切回普通子任务' : '当前:加普通子任务(持久)— 点击切到加检查事项'}">≡</button>
         </div>
         <ul class="dp-sub-list" id="qe-sub-list"></ul>
       </div>
@@ -11241,8 +11286,9 @@ function openCreateTaskSheet(opts) {
     const refreshSubs = () => {
       subCount.textContent = pendingSubs.length;
       subList.innerHTML = pendingSubs.map(s => `
-        <li class="dp-sub ${s.done ? 'done' : ''}" data-sub-id="${esc(s.id)}">
+        <li class="dp-sub ${s.done ? 'done' : ''}" data-sub-id="${esc(s.id)}"${s.checklistItem ? ' data-sub-checklist="1"' : ''}>
           <button class="dp-sub-check ${s.done ? 'done' : ''}" data-qe-sub-toggle="${esc(s.id)}">${s.done ? '✓' : ''}</button>
+          ${s.checklistItem ? '<span class="dp-sub-checklist-mark" title="检查事项 — 每次重复都会重置">≡</span>' : ''}
           <span class="dp-sub-title">${esc(s.title)}</span>
           <button class="dp-sub-del" data-qe-sub-del="${esc(s.id)}" title="删除">×</button>
         </li>`).join('');
@@ -11261,10 +11307,22 @@ function openCreateTaskSheet(opts) {
       e.preventDefault();
       const v = subAddEl.value.trim();
       if (!v) return;
-      pendingSubs.push({ id: genId('t'), title: v, done: false });
+      pendingSubs.push({ id: genId('t'), title: v, done: false, checklistItem: _addAsChecklistItem });
       subAddEl.value = '';
       refreshSubs();
     });
+    // ≡ 切换:加普通子任务 vs 加检查事项 (持久, 跟桌面共用 _addAsChecklistItem)
+    const subModeBtn = body.querySelector('#qe-sub-add-mode');
+    if (subModeBtn) subModeBtn.onclick = (ev) => {
+      ev.preventDefault();
+      _addAsChecklistItem = !_addAsChecklistItem;
+      _saveAddAsChecklist();
+      subModeBtn.classList.toggle('active', _addAsChecklistItem);
+      subAddEl.classList.toggle('as-checklist', _addAsChecklistItem);
+      subModeBtn.title = _addAsChecklistItem
+        ? '当前:加检查事项(每次重复重置)— 点击切回普通子任务'
+        : '当前:加普通子任务(持久)— 点击切到加检查事项';
+    };
 
     function refreshSchedRow() {
       const bar = body.querySelector('#qe-time-bar');
@@ -11360,7 +11418,7 @@ function openCreateTaskSheet(opts) {
       // 子待办 → 独立 task + parentTaskId(对齐详情/桌面模型)
       let subOrder = 100;
       for (const s of pendingSubs) {
-        state.tasks.push({
+        const child = {
           id: s.id,
           title: s.title,
           note: '',
@@ -11381,7 +11439,9 @@ function openCreateTaskSheet(opts) {
           completedOccurrences: [],
           kanbanColumn: null,
           order: subOrder,
-        });
+        };
+        if (s.checklistItem) child.checklistItem = true;
+        state.tasks.push(child);
         subOrder += 100;
       }
       pushState(); closeSheet(); renderAll();

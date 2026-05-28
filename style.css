@@ -582,7 +582,8 @@ html, body { overscroll-behavior-y: contain; }
   position: fixed;
   inset: 0;
   z-index: 70;          /* 比 sheet (60) 高, 比 toast (~100) 低 */
-  background: var(--bg);
+  /* 必须不透明!之前用 var(--bg) 是没定义的变量, 退化成透明 → 底层 view bleed through */
+  background: var(--bg-page);
   display: flex;
 }
 .sum-editor-page.hidden { display: none; }
@@ -637,7 +638,7 @@ body.sum-editor-open { overflow: hidden; }
   border: 0;
   border-radius: 16px;
   background: var(--accent);
-  color: var(--bg);
+  color: var(--text-on-accent);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -4351,7 +4352,7 @@ body.sum-editor-open { overflow: hidden; }
 }
 .sf-chip.active {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--text-on-accent);
   border-color: var(--accent);
 }
 .sf-custom-row {
@@ -4410,10 +4411,10 @@ body.sum-editor-open { overflow: hidden; }
 .sf-tag-chip .sf-tag-hash { color: var(--text-faint); margin-right: 2px; }
 .sf-tag-chip.active {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--text-on-accent);
   border-color: var(--accent);
 }
-.sf-tag-chip.active .sf-tag-hash { color: var(--bg); opacity: 0.85; }
+.sf-tag-chip.active .sf-tag-hash { color: var(--text-on-accent); opacity: 0.85; }
 .sf-actions {
   display: flex;
   align-items: center;
@@ -4437,7 +4438,7 @@ body.sum-editor-open { overflow: hidden; }
   border: 0;
   border-radius: 12px;
   background: var(--accent);
-  color: var(--bg);
+  color: var(--text-on-accent);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;

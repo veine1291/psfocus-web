@@ -3267,24 +3267,22 @@ const _summaryActions = {
       else renderAll();
     }
   },
-  // 工具栏的 ⋯ → 自定义 popover (不能用 showPopover, 要每行带 preview + pin toggle)
-  // 点 row 主体 → 应用格式, 点右边图钉 → toggle pin 状态 (不应用)
+  // 工具栏的 ⋯ → 自定义 popover, 双排 grid 只显示 styled preview + 图钉, 不显示文字
+  // 手机屏幕窄, 加文字放不下; preview 已经能直观看出格式效果
   'summary-tb-more': (el) => {
     const pop = $('popover'), body = $('popover-body');
     body.classList.remove('popover-left');
-    body.classList.add('popover-anchored');
+    body.classList.add('popover-anchored', 'popover-tb-more');
     const pinned = _sumTbPinned();
     const rows = _SUM_TB_DEFS.map(def => {
       const isPin = pinned.includes(def.id);
-      return `<div class="sum-tb-menu-item" data-fmt-id="${def.id}">
+      return `<div class="sum-tb-menu-item" data-fmt-id="${def.id}" title="${esc(def.label)}">
         <span class="sum-tb-menu-item-preview">${def.preview}</span>
-        <span class="sum-tb-menu-item-label">${esc(def.label)}</span>
-        <button type="button" class="sum-tb-pin ${isPin ? 'pinned' : ''}" data-pin-id="${def.id}" title="${isPin ? '取消固定到工具栏' : '固定到工具栏 — 常驻显示'}"><span class="ico-pin"></span></button>
+        <button type="button" class="sum-tb-pin ${isPin ? 'pinned' : ''}" data-pin-id="${def.id}" title="${isPin ? '取消固定' : '固定到工具栏'}"><span class="ico-pin"></span></button>
       </div>`;
     }).join('');
-    body.innerHTML = `<div class="sum-tb-menu">${rows}</div>`;
+    body.innerHTML = `<div class="sum-tb-menu sum-tb-menu-grid">${rows}</div>`;
     pop.classList.remove('hidden');
-    // 行主体点 → 应用 fmt
     body.querySelectorAll('.sum-tb-menu-item').forEach(row => {
       row.addEventListener('click', (e) => {
         if (e.target.closest('[data-pin-id]')) return;
@@ -3293,7 +3291,6 @@ const _summaryActions = {
         closePopover();
       });
     });
-    // pin 图钉点 → toggle, 立刻刷新工具栏 + 自身样式 (不关 popover)
     body.querySelectorAll('[data-pin-id]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3304,15 +3301,16 @@ const _summaryActions = {
       });
     });
     pop.querySelector('.popover-mask').onclick = closePopover;
-    // 定位: anchor 上方 — 工具栏在键盘附近, popover 弹上面
+    // 定位: anchor 上方 — 必须把 top/right 显式 auto, 不然默认 css 的 top 跟我设的 bottom 同时生效
+    // 元素会从顶拉到底铺满, 出现 "显示错误" (Kayu 2026-05-28 报)
     requestAnimationFrame(() => {
       const ar = el.getBoundingClientRect();
       const br = body.getBoundingClientRect();
       body.style.position = 'fixed';
-      body.style.top = '';
+      body.style.top = 'auto';
+      body.style.right = 'auto';
       body.style.bottom = Math.max(8, window.innerHeight - ar.top + 8) + 'px';
       body.style.left = Math.max(8, Math.min(window.innerWidth - br.width - 8, ar.left)) + 'px';
-      body.style.right = '';
     });
   },
   // 工具栏 inline pinned 按钮的点 → 应用 fmt

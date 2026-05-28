@@ -3929,6 +3929,17 @@ html, body { overscroll-behavior-y: contain; }
 .sum-tb-btn:active { background: var(--bg-active); color: var(--text); }
 .sum-tb-hash { font-size: 16px; font-weight: 600; }
 .sum-tb-img .ico-image { width: 14px; height: 14px; }
+/* sum-tb-btn 里的 ico-* 都需要明确尺寸 + currentColor 染色 (mask 需要), 之前漏了 ico-more 导致 ⋯ 按钮空白 */
+.sum-tb-btn .ico-more,
+.sum-tb-btn .ico-list,
+.sum-tb-btn .ico-pin {
+  width: 14px; height: 14px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+}
 /* ===== 工具栏可固定 / 更多菜单 styled preview ===== */
 .sum-tb-prev {
   display: inline-flex;
@@ -3954,13 +3965,22 @@ html, body { overscroll-behavior-y: contain; }
 .sum-tb-prev-mod { color: var(--accent); font-size: 11px; width: auto; padding: 0 4px; }
 /* 工具栏里 pinned 按钮 — 跟其它工具栏按钮统一 30x30, preview 居中 */
 .sum-tb-pinned { padding: 0; }
-/* 更多 popover 菜单结构 */
+/* 更多 popover 菜单结构 — 默认 column list (desktop fallback), grid 模式给 mobile */
 .sum-tb-menu {
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding: 4px;
   min-width: 200px;
+}
+/* 手机端: 双排 grid 只显示 icon + pin, 不显示文字 (label) — 屏幕窄放不下 */
+.sum-tb-menu.sum-tb-menu-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 4px;
+  min-width: 180px;
+  max-width: 220px;
 }
 .sum-tb-menu-item {
   display: flex;
@@ -3974,6 +3994,21 @@ html, body { overscroll-behavior-y: contain; }
 .sum-tb-menu-item:active { background: var(--bg-hover); }
 .sum-tb-menu-item-preview { flex: 0 0 auto; }
 .sum-tb-menu-item-label { flex: 1; text-align: left; font-size: 13px; color: var(--text); }
+/* grid 模式: label 隐藏, item 紧凑居中 */
+.sum-tb-menu-grid .sum-tb-menu-item {
+  padding: 6px 6px;
+  justify-content: space-between;
+  gap: 4px;
+}
+.sum-tb-menu-grid .sum-tb-menu-item-label { display: none; }
+.sum-tb-menu-grid .sum-tb-menu-item-preview { flex: 1; justify-content: center; display: flex; }
+.sum-tb-menu-grid .sum-tb-pin { width: 24px; height: 24px; }
+/* popover 主体在 tb-more 模式下也限宽, 跟 grid 一起紧凑显示 */
+.popover-body.popover-tb-more {
+  min-width: 180px;
+  max-width: 220px;
+  padding: 0;
+}
 .sum-tb-pin {
   flex: 0 0 auto;
   border: 0;

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0921';
+const _PSFOCUS_BUILD = '20260528-0922';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7618,15 +7618,15 @@ function bindTaskDetailEvents(body, id) {
     pushState(); openTaskDetail(id); renderAll();
   });
 
-  // 子任务 — toggle / 删除 / 添加 / 编辑标题(支持桌面 parentTaskId 模型 + 老 mobile t.subtasks)
-  body.querySelectorAll('[data-sub-id]').forEach(row => {
+  // 子任务行 binding — 抽成函数, 新加 sub 后 surgically append 时复用
+  function _bindOneSubRow(row) {
     const sid = row.dataset.subId;
     const source = row.dataset.subSource;
-    row.querySelector('[data-action="toggle-sub"]').onclick = () => {
+    const toggleBtn = row.querySelector('[data-action="toggle-sub"]');
+    if (toggleBtn) toggleBtn.onclick = () => {
       if (source === 'task') {
         const child = state.tasks.find(x => x.id === sid);
         if (!child) { pushState(); openTaskDetail(id); return; }
-        // 检查事项 + 父重复 → per-occurrence map(各次出现独立勾选)
         if (child.checklistItem === true && _isRecurringTaskM(t)) {
           const occ = _currentOccurrenceForTaskM(t);
           if (occ != null) {
@@ -7634,7 +7634,6 @@ function bindTaskDetailEvents(body, id) {
             pushState(); openTaskDetail(id); return;
           }
         }
-        // 普通子任务 → 老路径
         child.done = !child.done; child.doneAt = child.done ? Date.now() : null; child.updatedAt = Date.now();
       } else {
         const s = (t.subtasks || []).find(x => x.id === sid);
@@ -7642,7 +7641,8 @@ function bindTaskDetailEvents(body, id) {
       }
       pushState(); openTaskDetail(id);
     };
-    row.querySelector('[data-action="del-sub"]').onclick = () => {
+    const delBtn = row.querySelector('[data-action="del-sub"]');
+    if (delBtn) delBtn.onclick = () => {
       if (source === 'task') {
         state.tasks = state.tasks.filter(x => x.id !== sid);
       } else {
@@ -7650,10 +7650,9 @@ function bindTaskDetailEvents(body, id) {
       }
       pushState(); openTaskDetail(id); renderAll();
     };
-    // 单击标题就修改 — contenteditable + blur 保存,Enter 也保存
     const titleEl = row.querySelector('[data-action="edit-sub-title"]');
     if (titleEl) {
-      const save = () => {
+      titleEl.onblur = () => {
         const v = (titleEl.textContent || '').trim();
         if (source === 'task') {
           const child = state.tasks.find(x => x.id === sid);
@@ -7663,19 +7662,18 @@ function bindTaskDetailEvents(body, id) {
           if (s && v && s.title !== v) { s.title = v; pushState(); }
         }
       };
-      titleEl.addEventListener('blur', save);
-      titleEl.addEventListener('keydown', (e) => {
+      titleEl.onkeydown = (e) => {
         if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); }
-      });
+      };
     }
-  });
+  }
+  body.querySelectorAll('[data-sub-id]').forEach(_bindOneSubRow);
   const addSubInput = body.querySelector('.dp-sub-add-input');
   addSubInput.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const v = addSubInput.value.trim();
     if (!v) return;
     e.preventDefault();   // 防输入法换行
-    // 新子任务用桌面模型(独立 task + parentTaskId),跟桌面同步
     const maxOrder = state.tasks
       .filter(x => x.parentTaskId === t.id)
       .reduce((m, x) => Math.max(m, x.order || 0), 0);
@@ -7697,10 +7695,37 @@ function bindTaskDetailEvents(body, id) {
     if (_addAsChecklistItem) newSub.checklistItem = true;
     state.tasks.push(newSub);
     pushState();
-    // 标记 — 重渲后让 sub-add input 重新聚焦, 直接接着输下一条 (Kayu 2026-05-28)
-    _taskDetailRestoreFocus = 'sub';
-    openTaskDetail(id);
-    renderAll();
+    // 局部刷新:append <li> 到 sub list, 不重渲整个 sheet — 输入框焦点自然保住,
+    // 可以连续 Enter 输下一条 (Kayu 2026-05-28)
+    let subList = body.querySelector('.dp-sub-list');
+    if (!subList) {
+      // 之前没子待办 (显示 .dp-empty), 先把 empty 换成 ul
+      const empty = body.querySelector('.td-subs .dp-empty');
+      if (empty) {
+        const ul = document.createElement('ul');
+        ul.className = 'dp-sub-list';
+        empty.replaceWith(ul);
+        subList = ul;
+      } else {
+        // 兜底:整体重渲
+        _taskDetailRestoreFocus = 'sub';
+        openTaskDetail(id);
+        renderAll();
+        return;
+      }
+    }
+    const newLiHtml = `<li class="dp-sub" data-sub-id="${esc(newSub.id)}" data-sub-source="task"${newSub.checklistItem ? ' data-sub-checklist="1"' : ''}>
+      <button class="dp-sub-check" data-action="toggle-sub"></button>
+      ${newSub.checklistItem ? '<span class="dp-sub-checklist-mark" title="检查事项 — 每次重复都会重置">≡</span>' : ''}
+      <span class="dp-sub-title" contenteditable="true" spellcheck="false" data-action="edit-sub-title">${esc(newSub.title)}</span>
+      <button class="dp-sub-del" data-action="del-sub" title="删除">×</button>
+    </li>`;
+    subList.insertAdjacentHTML('beforeend', newLiHtml);
+    const newLi = subList.lastElementChild;
+    if (newLi) _bindOneSubRow(newLi);
+    addSubInput.value = '';
+    addSubInput.focus();   // input 自然没 blur 过, focus 双保险
+    renderAll();           // 主视图任务计数同步
   });
   // ≡ 切换:加普通子任务 vs 加检查事项 (持久, 跟桌面共用 _addAsChecklistItem)
   const subModeBtn = body.querySelector('.dp-sub-add-mode');

@@ -700,8 +700,13 @@ html, body { overscroll-behavior-y: contain; }
 #sheet.td-p2 .sheet-body { max-height: 95svh; }
 /* back button: P1 隐, P2 显 */
 #sheet.td-p1 .td-back { display: none; }
-/* 底部图标条: P1 隐, P2 显 */
-#sheet.td-p1 .td-bar { display: none; }
+/* 底部图标条:
+ * P1 = 🏷 / ≡ / 📎 都显 (点了自动切 P2 进编辑), 只隐藏 ⌄ 收起 (符合"P1 没有关闭/退出 UI"原则)
+ * P2 = 全显 + ⌄ */
+#sheet.td-p1 .td-bar [data-action="close-sheet"] { display: none; }
+#sheet.td-p1 .td-bar-spacer { display: none; }
+/* P1 顶栏对齐: bar 顶部分隔线柔和点 */
+#sheet.td-p1 .td-bar { border-top: 0; }
 /* P1 隐藏所有编辑性 UI (× 删 / + 加 / 列表 add input 等) */
 #sheet.td-p1 .dp-sched-x,
 #sheet.td-p1 .td-add-sched,

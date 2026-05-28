@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0915';
+const _PSFOCUS_BUILD = '20260528-0916';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1090,6 +1090,7 @@ function emptyState() {
     events: [], sessions: [], tags: [], smartLists: [], templates: [],
     summaries: [], summaryTags: [], summaryDayModules: {},
     concepts: [],   // Obsidian-style [[xxx]] 双向链接 (2026-05-27)
+    meditationSessions: [],   // 冥想计时记录 (Kayu 2026-05-28) — 跟 sessions (专注) 分开存
     settings: {}, currentSession: null,
   };
 }
@@ -1223,6 +1224,7 @@ function sanitizeState(s) {
     tags: arr(s.tags), smartLists: arr(s.smartLists), templates: arr(s.templates),
     summaries, summaryTags, summaryDayModules,
     concepts,
+    meditationSessions: arr(s.meditationSessions),   // 冥想计时记录 (Kayu 2026-05-28)
     settings,
   };
 }
@@ -1336,7 +1338,7 @@ const TAB_DEFS = {
   summary:  { label: '摘要', icon: 'ico-pencil' },
   ledger:   { label: '账本', icon: 'ico-wallet' },
   stats:    { label: '统计', icon: 'ico-history' },
-  timer:    { label: '计时', icon: 'ico-clock' },
+  timer:    { label: '冥想', icon: 'ico-clock' },
   settings: { label: '设置', icon: 'ico-settings' },
 };
 function getMobileTabOrder() {
@@ -2694,6 +2696,11 @@ function _renderSummaryDayHeaderModules(dayKey) {
   const focusMs = _summaryFocusMsForDay(dayKey);
   // 始终显示专注 chip — 0 显示 "—"(用户:"专注时长 0 也要记录")
   parts.push(`<span class="sum-day-mod sum-day-mod-focus">专注 ${focusMs > 0 ? _summaryFmtDurationMs(focusMs) : '—'}</span>`);
+  // 冥想 chip — 当天有记录才显示 (跟专注 chip 一行排;用户:"如果冥想计时器有记录就记录在摘要")
+  const medMs = _meditationMsForDay(dayKey);
+  if (medMs > 0) {
+    parts.push(`<span class="sum-day-mod sum-day-mod-meditation">冥想 ${_summaryFmtDurationMs(medMs)}</span>`);
+  }
   const mods = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
   for (const m of mods) {
     let txt = '';
@@ -4056,21 +4063,230 @@ async function _summaryHandlePaste(ev) {
   }
 }
 
+// ===== 冥想计时器 (Kayu 2026-05-28) =====
+// 数据走 state.meditationSessions[] = [{id, startedAt, duration, kind, targetMs?}]
+// kind: 'count-up' 正计时 / 'count-down' 倒计时
+// UI 状态(不持久, 关闭刷新即重置):
+let meditationState = {
+  running: false,
+  kind: 'count-up',   // 启动时锁定; 未启动时跟随 UI tab
+  startedAt: null,
+  targetMs: null,
+};
+let _meditationModeUI = 'count-up';  // 模式 tab 选择 (count-up / count-down)
+let _meditationTargetMin = 15;       // 倒计时目标分钟数 (默认 15)
+let _meditationTickerId = null;      // setInterval id
+
+function _meditationMsForDay(dayKey) {
+  if (!Array.isArray(state.meditationSessions)) return 0;
+  // 跟 _summaryFocusMsForDay 同款:dayKey 形如 "YYYY-MM-DD", 拆数字避免时区误判
+  const [y, m, d] = String(dayKey).split('-').map(Number);
+  if (!y) return 0;
+  const day0 = new Date(y, m - 1, d, 0, 0, 0).getTime();
+  const day1 = day0 + 86400000;
+  let sum = 0;
+  for (const s of state.meditationSessions) {
+    if (!s || !s.startedAt) continue;
+    if (s.startedAt < day0 || s.startedAt >= day1) continue;
+    // 异常防御:>4 小时单次冥想不正常 (大概率忘按停止)
+    if ((s.duration || 0) > 4 * 3600000) continue;
+    sum += s.duration || 0;
+  }
+  return sum;
+}
+
+function _fmtClock(ms) {
+  ms = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(ms / 60);
+  const s = ms % 60;
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+function _fmtDurShort(ms) {
+  if (!ms || ms < 60000) return Math.round((ms || 0) / 1000) + ' 秒';
+  const totalMin = Math.round(ms / 60000);
+  if (totalMin < 60) return totalMin + ' 分钟';
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m ? `${h} 小时 ${m} 分` : `${h} 小时`;
+}
+
+function _meditationStartTicker() {
+  if (_meditationTickerId) return;
+  _meditationTickerId = setInterval(() => {
+    if (!meditationState.running) {
+      clearInterval(_meditationTickerId);
+      _meditationTickerId = null;
+      return;
+    }
+    // 倒计时到点自动结束
+    if (meditationState.kind === 'count-down') {
+      const elapsed = Date.now() - meditationState.startedAt;
+      if (elapsed >= meditationState.targetMs) {
+        _meditationStop(true);   // auto-saved
+        return;
+      }
+    }
+    // 只更新显示元素, 不重渲整个 tab
+    const el = document.querySelector('#med-display');
+    if (el) {
+      const elapsed = Date.now() - meditationState.startedAt;
+      const showMs = meditationState.kind === 'count-down'
+        ? Math.max(0, meditationState.targetMs - elapsed)
+        : elapsed;
+      el.textContent = _fmtClock(showMs);
+    }
+  }, 500);
+}
+
+function _meditationStart(kind, targetMs) {
+  meditationState.running = true;
+  meditationState.kind = kind;
+  meditationState.startedAt = Date.now();
+  meditationState.targetMs = kind === 'count-down' ? targetMs : null;
+  _meditationStartTicker();
+  renderAll();
+}
+
+function _meditationStop(autoComplete) {
+  if (!meditationState.running) return;
+  const now = Date.now();
+  let dur = now - meditationState.startedAt;
+  // 倒计时自动完成 → 写满 target;手动结束 → 写实际经过 (无论 count-up/down)
+  if (autoComplete && meditationState.kind === 'count-down') dur = meditationState.targetMs;
+  if (dur < 1000) {
+    // 不足 1 秒 → 不记录, 直接复位
+    meditationState.running = false;
+    meditationState.startedAt = null;
+    meditationState.targetMs = null;
+    renderAll();
+    return;
+  }
+  if (!Array.isArray(state.meditationSessions)) state.meditationSessions = [];
+  state.meditationSessions.push({
+    id: 'med-' + Math.random().toString(36).slice(2, 10),
+    startedAt: meditationState.startedAt,
+    duration: dur,
+    kind: meditationState.kind,
+    targetMs: meditationState.targetMs || undefined,
+    completed: !!autoComplete,
+  });
+  meditationState.running = false;
+  meditationState.startedAt = null;
+  meditationState.targetMs = null;
+  pushState();
+  renderAll();
+  if (autoComplete) showToast('冥想结束 · ' + _fmtDurShort(dur));
+}
+
 function renderTimerTab(view) {
   const day0 = startOfDay(new Date()).getTime();
-  const todaySessions = (state.sessions || []).filter(s => s.startedAt && s.startedAt >= day0);
-  const totalMin = Math.round(todaySessions.reduce((a, s) => a + (s.duration || 0)/60000, 0));
+  const todaySessions = (state.meditationSessions || [])
+    .filter(s => s && s.startedAt && s.startedAt >= day0)
+    .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  const totalMs = todaySessions.reduce((a, s) => a + (s.duration || 0), 0);
+  const running = meditationState.running;
+  // 显示时钟 — running 时由 ticker 更新; 静止时根据模式预览
+  let displayMs;
+  if (running) {
+    const elapsed = Date.now() - meditationState.startedAt;
+    displayMs = meditationState.kind === 'count-down'
+      ? Math.max(0, meditationState.targetMs - elapsed)
+      : elapsed;
+  } else {
+    displayMs = _meditationModeUI === 'count-down' ? _meditationTargetMin * 60000 : 0;
+  }
+  const presets = [5, 10, 15, 20, 30, 45];
   view.innerHTML = `
-    <div style="padding:32px 18px; text-align:center;">
-      <div style="font-size:48px; line-height:1; color:var(--text-faint); margin-bottom:8px;"><span class="ico-clock" style="width:48px;height:48px;"></span></div>
-      <div style="font-size:18px; color:var(--text-strong); margin-bottom:6px;">计时</div>
-      <div style="font-size:13px; color:var(--text-dim); line-height:1.6;">完整计时功能在桌面端使用。<br>这里展示今天的统计快照。</div>
-    </div>
-    <div class="stat-grid">
-      <div class="stat-card"><div class="stat-num">${totalMin}<span> 分钟</span></div><div class="stat-label">今日专注</div></div>
-      <div class="stat-card"><div class="stat-num">${todaySessions.length}</div><div class="stat-label">专注次数</div></div>
+    <div class="med-tab">
+      <div class="med-today">
+        <span class="med-today-label">今日冥想</span>
+        <span class="med-today-value">${totalMs > 0 ? _fmtDurShort(totalMs) : '—'}</span>
+        ${todaySessions.length ? `<span class="med-today-count">${todaySessions.length} 次</span>` : ''}
+      </div>
+
+      ${!running ? `
+        <div class="med-mode-tabs">
+          <button class="med-mode ${_meditationModeUI === 'count-up' ? 'active' : ''}" data-action="med-mode" data-mode="count-up">正计时</button>
+          <button class="med-mode ${_meditationModeUI === 'count-down' ? 'active' : ''}" data-action="med-mode" data-mode="count-down">倒计时</button>
+        </div>
+      ` : `
+        <div class="med-running-label">${meditationState.kind === 'count-down' ? '倒计时进行中' : '正计时进行中'}</div>
+      `}
+
+      <div class="med-display" id="med-display">${_fmtClock(displayMs)}</div>
+
+      ${!running && _meditationModeUI === 'count-down' ? `
+        <div class="med-presets">
+          ${presets.map(m => `<button class="med-preset ${_meditationTargetMin === m ? 'active' : ''}" data-action="med-preset" data-min="${m}">${m} 分钟</button>`).join('')}
+        </div>
+        <div class="med-custom-row">
+          <span class="med-custom-label">或自定义</span>
+          <input type="number" class="med-custom-input" id="med-custom-input" min="1" max="240" value="${_meditationTargetMin}" data-action-input="med-custom-min">
+          <span class="med-custom-unit">分钟</span>
+        </div>
+      ` : ''}
+
+      <div class="med-actions">
+        ${running
+          ? `<button class="med-action-btn med-stop" data-action="med-stop">结束</button>`
+          : `<button class="med-action-btn med-start" data-action="med-start">开始</button>`}
+      </div>
+
+      ${todaySessions.length ? `
+        <div class="med-history">
+          <div class="med-history-title">今日记录</div>
+          ${todaySessions.map(s => {
+            const t = new Date(s.startedAt);
+            const pad = n => String(n).padStart(2, '0');
+            const timeLabel = pad(t.getHours()) + ':' + pad(t.getMinutes());
+            const kindLabel = s.kind === 'count-down' ? '倒计时' : '正计时';
+            return `<div class="med-history-row">
+              <span class="med-history-time">${timeLabel}</span>
+              <span class="med-history-kind">${kindLabel}</span>
+              <span class="med-history-dur">${_fmtDurShort(s.duration)}</span>
+              <button class="med-history-del" data-action="med-delete" data-id="${esc(s.id)}" title="删除这条记录">×</button>
+            </div>`;
+          }).join('')}
+        </div>
+      ` : ''}
     </div>
   `;
+  if (running) _meditationStartTicker();
+
+  // 直接绑定 — med-* action 不走 _summaryActions 全局 dispatcher
+  view.querySelectorAll('[data-action="med-mode"]').forEach(b => b.onclick = () => {
+    if (meditationState.running) return;
+    _meditationModeUI = b.dataset.mode;
+    renderAll();
+  });
+  view.querySelectorAll('[data-action="med-preset"]').forEach(b => b.onclick = () => {
+    _meditationTargetMin = parseInt(b.dataset.min, 10);
+    renderAll();
+  });
+  const customInp = view.querySelector('#med-custom-input');
+  if (customInp) customInp.addEventListener('input', () => {
+    const v = parseInt(customInp.value, 10);
+    if (Number.isFinite(v) && v >= 1 && v <= 240) {
+      _meditationTargetMin = v;
+      // 不 renderAll, 实时跟随输入; 切模式时再刷
+    }
+  });
+  const startBtn = view.querySelector('[data-action="med-start"]');
+  if (startBtn) startBtn.onclick = () => {
+    const kind = _meditationModeUI;
+    const targetMs = kind === 'count-down' ? Math.max(1, _meditationTargetMin) * 60000 : null;
+    _meditationStart(kind, targetMs);
+  };
+  const stopBtn = view.querySelector('[data-action="med-stop"]');
+  if (stopBtn) stopBtn.onclick = () => {
+    _meditationStop(false);
+  };
+  view.querySelectorAll('[data-action="med-delete"]').forEach(b => b.onclick = () => {
+    const id = b.dataset.id;
+    state.meditationSessions = (state.meditationSessions || []).filter(x => x.id !== id);
+    pushState();
+    renderAll();
+  });
 }
 
 // =========================================================

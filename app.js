@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0909';
+const _PSFOCUS_BUILD = '20260528-0910';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11223,29 +11223,31 @@ function openProjectPicker(currentProjectId, anchor, onPick) {
 
 function openCreateTaskSheet(opts) {
   opts = opts || {};
-  // _restore: 来自时间选择 sheet 回来时把闭包状态带回来 — 否则 sheet body innerHTML 被替换
-  // 后用户敲过的标题/备注/图/子待办全丢了 (Kayu 2026-05-28 报: 点加时间会崩 / sheet 抽搐)
+  // _restore: 时间选择 sheet 回来时带回闭包状态 — sheet body innerHTML 替换会丢
   const _r = opts._restore || null;
   const cl = getCurrentList();
   let pickedProjectId = _r ? _r.pickedProjectId
     : (cl.kind === 'project' ? cl.project?.id : null);
 
-  // 时间默认值:opts.startTs / endTs(精确时刻,从时间轴拖拽来)优先;否则按选中日 9:00
-  // 兼容老 opts.startDay/endDay(日期,从月视图拖拽来)
+  // 滴答清单风:新建任务默认建立在今天 (allDay) — 用户不点日期 pill 也有一个默认值。
+  // opts.startTs/startDay (从日历视图拖拽进来) 仍然优先, _restore 用回存的 sched
   let startTs = opts.startTs || null;
   let endTs   = opts.endTs   || null;
   let allDayDefault = false;
   if (!startTs && !_r) {
     const startDay = opts.startDay || (ui.tab === 'calendar' ? (ui.calSelectedDay || ui.calCursor) : null);
-    const endDay   = opts.endDay   || startDay;
     if (startDay) {
       startTs = combineDateAndTime(tsToDateInput(startDay), '09:00');
+      const endDay = opts.endDay || startDay;
       const isRange = endDay && startOfDay(new Date(endDay)).getTime() !== startOfDay(new Date(startDay)).getTime();
       endTs = isRange ? combineDateAndTime(tsToDateInput(endDay), '17:00') : null;
       allDayDefault = true;
+    } else {
+      // 真的没指定 → 默认今天 allDay (Kayu 2026-05-28: 滴答清单"默认建立在今天")
+      startTs = startOfDay(new Date()).getTime();
+      allDayDefault = true;
     }
   }
-  // 用 schedule 形式持有(对齐桌面)— _restore 时直接拿存好的 sched
   let sched = _r ? _r.sched : (startTs ? {
     id: 'sl-' + Math.random().toString(36).slice(2, 10),
     kind: (endTs && endTs > startTs) ? 'range' : 'date',
@@ -11255,6 +11257,34 @@ function openCreateTaskSheet(opts) {
     repeat: 'none',
     reminderOffset: null,
   } : null);
+
+  // 紧凑日期标签 — 今天/明天/5月29日 形式, 跟滴答清单一致
+  function _compactDateLabel(s) {
+    if (!s || !s.start) return '无日期';
+    const d = new Date(s.start);
+    const today0 = startOfDay(new Date()).getTime();
+    const ddiff = Math.round((startOfDay(d).getTime() - today0) / 86400000);
+    let dayLabel;
+    if (ddiff === 0) dayLabel = '今天';
+    else if (ddiff === 1) dayLabel = '明天';
+    else if (ddiff === -1) dayLabel = '昨天';
+    else if (d.getFullYear() === new Date().getFullYear()) dayLabel = `${d.getMonth()+1}月${d.getDate()}日`;
+    else dayLabel = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+    if (s.allDay) return dayLabel;
+    const pad = n => String(n).padStart(2, '0');
+    const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (s.end && s.end > s.start) {
+      const e = new Date(s.end);
+      const sameDay = startOfDay(e).getTime() === startOfDay(d).getTime();
+      const et = `${pad(e.getHours())}:${pad(e.getMinutes())}`;
+      return sameDay ? `${dayLabel} ${t}-${et}` : `${dayLabel} ${t}…`;
+    }
+    return `${dayLabel} ${t}`;
+  }
+  function _projectLabel() {
+    const p = pickedProjectId ? state.projects.find(x => x.id === pickedProjectId) : null;
+    return p ? (p.name || '未命名') : '收件箱';
+  }
 
   function schedPillHtml() {
     if (!sched) return '';
@@ -11272,74 +11302,56 @@ function openCreateTaskSheet(opts) {
     return `${c ? `<span class="dp-project-dot" style="background:${esc(c)}"></span>` : '<span class="ico-folder"></span>'}<span>${esc(lbl)}</span>`;
   }
 
+  // 滴答清单风:整 sheet 单一色, 无 panel 分栏 / 无 ×按钮 / 无勾选框 / 无 sub-todos 区
+  // (sub-todos 放到任务详情里加, 创建时尽量简洁)
   showSheet(`
     <div class="sheet-handle"></div>
-    <div class="dp-detail">
-      <div class="dp-time-bar" id="qe-time-bar">
-        ${schedPillHtml()}
-        <button class="dp-add-sched-btn" data-action="qe-add-sched" title="${sched ? '改时间' : '加时间'}">
-          <span class="ico-calendar"></span>
-        </button>
-      </div>
-      <div class="dp-title-row">
-        <button class="dp-check" id="qe-check" title="创建为已完成"></button>
-        <input type="text" class="dp-title-input" id="qe-title">
-      </div>
-      <div class="dp-section dp-merged-section">
-        <textarea class="dp-note-input" id="qe-note" rows="3"></textarea>
-        <div class="dp-merged-row">
-          <div class="dp-merged-tags"></div>
-          <label class="dp-merged-add-img" title="上传图片">
-            <input type="file" accept="image/*" multiple id="qe-img-input" hidden>
-            <span class="ico-image"></span>
-          </label>
-        </div>
-        <div id="qe-img-list" class="dp-image-grid" style="min-height:0;"></div>
-      </div>
-      <div class="dp-section">
-        <div class="dp-section-title">子待办 <span class="dp-section-count" id="qe-sub-count">0</span></div>
-        <div class="dp-sub-add">
-          <input type="text" class="dp-sub-add-input ${_addAsChecklistItem ? 'as-checklist' : ''}" id="qe-sub-add">
-          <button type="button" class="dp-sub-add-mode ${_addAsChecklistItem ? 'active' : ''}" data-action="toggle-add-as-checklist" id="qe-sub-add-mode" title="${_addAsChecklistItem ? '当前:加检查事项(每次重复重置)— 点击切回普通子任务' : '当前:加普通子任务(持久)— 点击切到加检查事项'}">≡</button>
-        </div>
-        <ul class="dp-sub-list" id="qe-sub-list"></ul>
-      </div>
+    <div class="qe-content">
+      <input type="text" class="qe-title" id="qe-title" placeholder="准备做什么?">
+      <textarea class="qe-note" id="qe-note" rows="2" placeholder="描述"></textarea>
+      <div id="qe-img-list" class="qe-img-list"></div>
     </div>
-    <div class="dp-footer">
-      <button class="dp-project-pill" id="qe-proj-pill" data-action="qe-pick-project">${projPillHtml()}</button>
-      <button class="dp-more-btn" data-action="qe-more" title="更多"><span class="ico-more"></span></button>
-      <button class="dp-more-btn dp-more-btn-primary" data-action="save" title="保存"><span class="ico-check"></span></button>
+    <div class="qe-bar">
+      <button class="qe-pill" data-action="qe-edit-sched" id="qe-pill-date" title="日期 / 时间">
+        <span class="ico-calendar"></span>
+        <span class="qe-pill-label" id="qe-date-label">${esc(_compactDateLabel(sched))}</span>
+      </button>
+      <button class="qe-pill" data-action="qe-pick-project" id="qe-pill-folder" title="项目 / 清单">
+        <span class="ico-folder"></span>
+        <span class="qe-pill-label" id="qe-folder-label">${esc(_projectLabel())}</span>
+      </button>
+      <label class="qe-icon-btn" title="图片">
+        <input type="file" accept="image/*" multiple id="qe-img-input" hidden>
+        <span class="ico-image"></span>
+      </label>
+      <button class="qe-icon-btn" data-action="qe-more" title="更多"><span class="ico-more"></span></button>
+      <div class="qe-spacer"></div>
+      <button class="qe-send" data-action="save" title="保存"><span class="ico-check"></span></button>
     </div>
   `, (body) => {
     const titleEl = body.querySelector('#qe-title');
     const noteEl  = body.querySelector('#qe-note');
     const imgList = body.querySelector('#qe-img-list');
-    // 暂存待上传成功的图(创建时再写到 task.images) — _restore 时把之前那批带回来
     const pendingImages = _r && Array.isArray(_r.pendingImages) ? _r.pendingImages.slice() : [];
-    // 暂存子待办 + 完成状态(创建时再落库)
-    const pendingSubs = _r && Array.isArray(_r.pendingSubs) ? _r.pendingSubs.slice() : [];
-    let pendingDone = _r ? !!_r.pendingDone : false;
-    // 标题/备注 回填
     if (_r) {
       if (titleEl && _r.title) titleEl.value = _r.title;
       if (noteEl  && _r.note ) noteEl.value  = _r.note;
     }
     const refreshImgs = () => {
       imgList.innerHTML = pendingImages.map(im => `
-        <div class="dp-image-cell" data-img-id="${esc(im.id)}">
-          <img class="dp-image" data-cloud-file-id="${esc(im.cloudFileID)}" alt="${esc(im.name||'')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
-          <button class="dp-image-del" data-img-id="${esc(im.id)}" title="删除">×</button>
+        <div class="qe-img-cell" data-img-id="${esc(im.id)}">
+          <img class="qe-img" data-cloud-file-id="${esc(im.cloudFileID)}" alt="${esc(im.name||'')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+          <button class="qe-img-del" data-img-id="${esc(im.id)}" title="删除">×</button>
         </div>
       `).join('');
-      // 异步换 src
       bindCloudTimelineImages(imgList);
-      // 删除按钮
-      imgList.querySelectorAll('.dp-image-del').forEach(b => b.onclick = (ev) => {
+      imgList.querySelectorAll('.qe-img-del').forEach(b => b.onclick = (ev) => {
         ev.stopPropagation();
         const i = pendingImages.findIndex(x => x.id === b.dataset.imgId);
         if (i >= 0) { pendingImages.splice(i, 1); refreshImgs(); }
       });
     };
+    if (_r && pendingImages.length) refreshImgs();
     body.querySelector('#qe-img-input').addEventListener('change', async (e) => {
       const files = Array.from(e.target.files || []);
       if (!files.length) return;
@@ -11356,84 +11368,11 @@ function openCreateTaskSheet(opts) {
       e.target.value = '';
       refreshImgs();
     });
-    // 同步 focus(仍在 FAB / 拖拽点击手势内)→ iOS 打开抽屉即自动弹键盘,不用再点一下标题框
-    // _restore 时也 focus, 但光标移到末尾 (用户继续打字)
     titleEl.focus();
     if (_r && _r.title) {
       try { titleEl.setSelectionRange(_r.title.length, _r.title.length); } catch (_) {}
     }
-    // 回填的图片要立即渲染
-    if (_r && pendingImages.length) refreshImgs();
 
-    // 标题勾选框 — 点一下 = 创建为已完成
-    const checkBtn = body.querySelector('#qe-check');
-    if (_r && pendingDone) {
-      checkBtn.classList.add('done');
-      checkBtn.textContent = '✓';
-      titleEl.classList.add('done');
-    }
-    checkBtn.onclick = () => {
-      pendingDone = !pendingDone;
-      checkBtn.classList.toggle('done', pendingDone);
-      checkBtn.textContent = pendingDone ? '✓' : '';
-      titleEl.classList.toggle('done', pendingDone);
-    };
-
-    // 子待办 — 创建时就能加,保存时一并落库为独立 task(parentTaskId)
-    const subList = body.querySelector('#qe-sub-list');
-    const subCount = body.querySelector('#qe-sub-count');
-    const refreshSubs = () => {
-      subCount.textContent = pendingSubs.length;
-      subList.innerHTML = pendingSubs.map(s => `
-        <li class="dp-sub ${s.done ? 'done' : ''}" data-sub-id="${esc(s.id)}"${s.checklistItem ? ' data-sub-checklist="1"' : ''}>
-          <button class="dp-sub-check ${s.done ? 'done' : ''}" data-qe-sub-toggle="${esc(s.id)}">${s.done ? '✓' : ''}</button>
-          ${s.checklistItem ? '<span class="dp-sub-checklist-mark" title="检查事项 — 每次重复都会重置">≡</span>' : ''}
-          <span class="dp-sub-title">${esc(s.title)}</span>
-          <button class="dp-sub-del" data-qe-sub-del="${esc(s.id)}" title="删除">×</button>
-        </li>`).join('');
-      subList.querySelectorAll('[data-qe-sub-toggle]').forEach(b => b.onclick = () => {
-        const s = pendingSubs.find(x => x.id === b.dataset.qeSubToggle);
-        if (s) { s.done = !s.done; refreshSubs(); }
-      });
-      subList.querySelectorAll('[data-qe-sub-del]').forEach(b => b.onclick = () => {
-        const i = pendingSubs.findIndex(x => x.id === b.dataset.qeSubDel);
-        if (i >= 0) { pendingSubs.splice(i, 1); refreshSubs(); }
-      });
-    };
-    // 回填的子待办立即渲染
-    if (_r && pendingSubs.length) refreshSubs();
-    const subAddEl = body.querySelector('#qe-sub-add');
-    subAddEl.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      const v = subAddEl.value.trim();
-      if (!v) return;
-      pendingSubs.push({ id: genId('t'), title: v, done: false, checklistItem: _addAsChecklistItem });
-      subAddEl.value = '';
-      refreshSubs();
-    });
-    // ≡ 切换:加普通子任务 vs 加检查事项 (持久, 跟桌面共用 _addAsChecklistItem)
-    const subModeBtn = body.querySelector('#qe-sub-add-mode');
-    if (subModeBtn) subModeBtn.onclick = (ev) => {
-      ev.preventDefault();
-      _addAsChecklistItem = !_addAsChecklistItem;
-      _saveAddAsChecklist();
-      subModeBtn.classList.toggle('active', _addAsChecklistItem);
-      subAddEl.classList.toggle('as-checklist', _addAsChecklistItem);
-      subModeBtn.title = _addAsChecklistItem
-        ? '当前:加检查事项(每次重复重置)— 点击切回普通子任务'
-        : '当前:加普通子任务(持久)— 点击切到加检查事项';
-    };
-
-    function refreshSchedRow() {
-      const bar = body.querySelector('#qe-time-bar');
-      bar.innerHTML = `
-        ${schedPillHtml()}
-        <button class="dp-add-sched-btn" data-action="qe-add-sched" title="${sched ? '改时间' : '加时间'}">
-          <span class="ico-calendar"></span>
-        </button>`;
-      bindBarHandlers();
-    }
     function _captureRestore() {
       return {
         title: titleEl ? titleEl.value : '',
@@ -11441,49 +11380,37 @@ function openCreateTaskSheet(opts) {
         pickedProjectId,
         sched,
         pendingImages: pendingImages.slice(),
-        pendingSubs:   pendingSubs.slice(),
-        pendingDone,
       };
     }
-    function bindBarHandlers() {
-      const xBtn = body.querySelector('[data-action="qe-remove-sched"]');
-      if (xBtn) xBtn.onclick = () => { sched = null; refreshSchedRow(); };
-      const addBtn = body.querySelector('[data-action="qe-add-sched"]');
-      if (addBtn) addBtn.onclick = () => {
-        // 时间选 sheet 会用 innerHTML 覆盖当前 sheet → 当前 DOM 输入值会丢, 闭包变量也跟着断
-        // 必须在打开 picker 前把状态全部 snapshot, picker save/cancel 回调里用 _restore 重开 task sheet
-        const _stash = _captureRestore();
-        openQuickTimePickerSheet(sched, (newSched) => {
-          // newSched 可能是新值 / null (清时间) / undefined (取消, 但当前 picker 取消不调 onSave —
-          // 还是会出现 task sheet 关掉的情况, 见下面 picker 的 cancel 修改)
-          _stash.sched = (newSched === undefined) ? sched : newSched;
-          openCreateTaskSheet({ _restore: _stash });
-        });
-      };
+    function _updateFolderPill() {
+      const lbl = body.querySelector('#qe-folder-label');
+      if (lbl) lbl.textContent = _projectLabel();
     }
-    bindBarHandlers();
 
-    // 之前 dp-head 里有 [data-action="cancel"] × 按钮, 现已删 (sheet 设计语言规则: 不要 × 按钮)
-    // 这里 querySelector 拿不到, 不能再 .onclick → null TypeError 把整个 sheet 打开流程崩了
-    const cancelBtn = body.querySelector('[data-action="cancel"]');
-    if (cancelBtn) cancelBtn.onclick = closeSheet;
+    // 日期 pill 点 → 时间 picker; save/cancel/clear 都用 _restore 把 task sheet 重开,不丢 draft
+    body.querySelector('[data-action="qe-edit-sched"]').onclick = () => {
+      const _stash = _captureRestore();
+      openQuickTimePickerSheet(sched, (newSched) => {
+        _stash.sched = (newSched === undefined) ? sched : newSched;
+        openCreateTaskSheet({ _restore: _stash });
+      });
+    };
+    // 文件夹 pill 点 → 项目 picker (overlay, 不替换 sheet, 不需要 _restore)
     body.querySelector('[data-action="qe-pick-project"]').onclick = (ev) => {
       ev.stopPropagation();
       openProjectPicker(pickedProjectId, ev.currentTarget, (newPid) => {
         pickedProjectId = newPid;
-        body.querySelector('#qe-proj-pill').innerHTML = projPillHtml();
+        _updateFolderPill();
       });
     };
-    // 更多菜单 — 含「从模板创建」
+    // 更多 — 从模板创建
     body.querySelector('[data-action="qe-more"]').onclick = (ev) => {
       ev.stopPropagation();
       const menuItems = [];
-      // task / event 模板都能用来建任务
       const hasUsable = (state.templates || []).some(t => t.kind === 'task' || t.kind === 'event');
       if (hasUsable) {
         menuItems.push({ label: '从模板创建', icon: 'ico-template', action: () => {
           closePopover();
-          // 把当前 sheet 的时间槽 + 项目带过去,模板套到拖出来的时间上,而不是回退到默认时间
           const carryStart = sched && Number.isFinite(sched.start) ? sched.start : undefined;
           const carryEnd   = sched && Number.isFinite(sched.end)   ? sched.end   : undefined;
           const carryProj  = pickedProjectId || undefined;
@@ -11495,11 +11422,11 @@ function openCreateTaskSheet(opts) {
       }
       showPopover(menuItems, { anchor: ev.currentTarget });
     };
+
     const save = () => {
       const title = titleEl.value.trim();
       if (!title) { closeSheet(); return; }
       const note = noteEl ? noteEl.value : '';
-      // 从 note 解析 #tag(对齐摘要/详情的 tag 行为)
       const tags = [];
       const tagRe = /#([^\s#,。、,]+)/g;
       let mm;
@@ -11509,14 +11436,12 @@ function openCreateTaskSheet(opts) {
       }
       const startMs = sched && sched.start || null;
       const endMs   = sched && sched.end   || null;
-      // 字段对齐桌面 sanitize 期望(同 applyTaskTemplate 那条 path),
-      // 缺 doneAt / color / images 会让桌面端把这条 task 过滤掉或渲染异常 — 之前漏了
       const newTask = {
         id: genId('t'),
         title,
         note,
-        done: pendingDone,
-        doneAt: pendingDone ? Date.now() : null,
+        done: false,
+        doneAt: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         projectId: pickedProjectId || null,
@@ -11530,46 +11455,21 @@ function openCreateTaskSheet(opts) {
         tags,
         subtasks: [],
         schedules: sched ? [sched] : [],
-        images: [],
+        images: pendingImages.slice(),
         completedOccurrences: [],
         kanbanColumn: null,
         order: 100,
       };
-      newTask.images = pendingImages.slice();
       state.tasks.push(newTask);
-      // 子待办 → 独立 task + parentTaskId(对齐详情/桌面模型)
-      let subOrder = 100;
-      for (const s of pendingSubs) {
-        const child = {
-          id: s.id,
-          title: s.title,
-          note: '',
-          done: !!s.done,
-          doneAt: s.done ? Date.now() : null,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          projectId: newTask.projectId,
-          parentTaskId: newTask.id,
-          parentEventId: null,
-          dueAt: null, start: null, end: null,
-          allDay: false,
-          color: '',
-          tags: [],
-          subtasks: [],
-          schedules: [],
-          images: [],
-          completedOccurrences: [],
-          kanbanColumn: null,
-          order: subOrder,
-        };
-        if (s.checklistItem) child.checklistItem = true;
-        state.tasks.push(child);
-        subOrder += 100;
-      }
-      pushState(); closeSheet(); renderAll();
+      pushState();
+      closeSheet();
+      renderAll();
     };
     body.querySelector('[data-action="save"]').onclick = save;
-    titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+    // Ctrl/Cmd+Enter 提交 (手机外接键盘场景)。回车单独按则允许换行 — title 是 input 没换行问题
+    titleEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+    });
   });
 }
 

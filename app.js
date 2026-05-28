@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0920';
+const _PSFOCUS_BUILD = '20260528-0921';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7355,18 +7355,21 @@ function openTaskDetail(id, opts) {
   // 应用模式 class 到 #sheet — 控制 sheet-body max-height / 隐藏 back/bar 等
   sheet.classList.remove('td-p1', 'td-p2');
   sheet.classList.add('td-' + _mode);
-  // P1 模式: input 加 readonly + 监听 focus → 切到 P2
+  // P1 模式: input 加 readonly + 监听 click → 切到 P2
+  // (用 click 不用 focus — readonly input 在 iOS 上 tap 不触发 focus, 用 focus 切不过去会卡死)
   if (_mode === 'p1') {
     body.querySelectorAll('.dp-title-input, .dp-note-input, .dp-sub-add-input').forEach(el => {
       el.setAttribute('readonly', '');
-      el.addEventListener('focus', () => {
-        // 记下当前焦点元素 — 重渲后聚回去
-        if (el.classList.contains('dp-title-input'))   _taskDetailRestoreFocus = 'title';
-        else if (el.classList.contains('dp-note-input')) _taskDetailRestoreFocus = 'note';
-        else if (el.classList.contains('dp-sub-add-input')) _taskDetailRestoreFocus = 'sub';
+      const fld = el.classList.contains('dp-title-input') ? 'title'
+                : el.classList.contains('dp-note-input')  ? 'note'
+                : 'sub';
+      el.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        _taskDetailRestoreFocus = fld;
         _taskDetailMode = 'p2';
         openTaskDetail(id);
-      }, { once: true });
+      });
     });
   } else if (_taskDetailRestoreFocus) {
     // P2 模式 + 上一次有要恢复的焦点 → 聚过去
@@ -7671,6 +7674,7 @@ function bindTaskDetailEvents(body, id) {
     if (e.key !== 'Enter') return;
     const v = addSubInput.value.trim();
     if (!v) return;
+    e.preventDefault();   // 防输入法换行
     // 新子任务用桌面模型(独立 task + parentTaskId),跟桌面同步
     const maxOrder = state.tasks
       .filter(x => x.parentTaskId === t.id)
@@ -7690,10 +7694,13 @@ function bindTaskDetailEvents(body, id) {
       order: maxOrder + 100,
       kanbanColumn: null,
     };
-    // toggle 开了 → 标记为检查事项 (重复任务每次 occurrence 重置)
     if (_addAsChecklistItem) newSub.checklistItem = true;
     state.tasks.push(newSub);
-    pushState(); openTaskDetail(id); renderAll();
+    pushState();
+    // 标记 — 重渲后让 sub-add input 重新聚焦, 直接接着输下一条 (Kayu 2026-05-28)
+    _taskDetailRestoreFocus = 'sub';
+    openTaskDetail(id);
+    renderAll();
   });
   // ≡ 切换:加普通子任务 vs 加检查事项 (持久, 跟桌面共用 _addAsChecklistItem)
   const subModeBtn = body.querySelector('.dp-sub-add-mode');

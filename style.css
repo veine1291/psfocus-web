@@ -789,7 +789,8 @@ html, body { overscroll-behavior-y: contain; }
   align-items: center;
   gap: 8px;
 }
-.td-folder {
+/* 注: 因为同时挂 .dp-project-pill (line 1734) 有自己的 bg-section, 用组合 selector 提权重 */
+.td-folder.dp-project-pill {
   flex: 1;
   min-width: 0;
   display: inline-flex;
@@ -805,7 +806,7 @@ html, body { overscroll-behavior-y: contain; }
   max-width: max-content;
   cursor: pointer;
 }
-.td-folder:active { background: var(--bg-hover); }
+.td-folder.dp-project-pill:active { background: var(--bg-hover); }
 .td-folder .dp-project-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
 .td-folder .ico-folder { width: 14px; height: 14px; background: currentColor;
   -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
@@ -820,7 +821,8 @@ html, body { overscroll-behavior-y: contain; }
   opacity: .55;
   flex: 0 0 auto;
 }
-.td-more {
+/* .dp-more-btn (line 1756) 也有 bg-section, 用组合 selector 提权重 */
+.td-more.dp-more-btn {
   width: 32px; height: 32px;
   border-radius: 50%;
   border: 0;
@@ -832,7 +834,7 @@ html, body { overscroll-behavior-y: contain; }
   cursor: pointer;
   flex: 0 0 auto;
 }
-.td-more:active { background: var(--bg-hover); }
+.td-more.dp-more-btn:active { background: var(--bg-hover); }
 .td-more .ico-more {
   width: 16px; height: 16px;
   background: currentColor;
@@ -850,16 +852,17 @@ html, body { overscroll-behavior-y: contain; }
   flex-wrap: wrap;
 }
 .td-check {
-  width: 26px; height: 26px;
+  /* 跟主界面 .card-checkbox 同尺寸 (22px) + 同 border (1.5px) — Kayu 2026-05-28 */
+  width: 22px; height: 22px;
   border-radius: 50%;
-  border: 1.8px solid var(--text-faint);
+  border: 1.5px solid var(--text-mute);
   background: transparent;
   color: transparent;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
   padding: 0;
   flex: 0 0 auto;
   transition: background .12s, border-color .12s, color .12s;
@@ -896,8 +899,8 @@ html, body { overscroll-behavior-y: contain; }
   text-decoration: line-through;
 }
 .td-title::placeholder { color: var(--text-faint); font-weight: 500; }
-/* 描述 — 小字浅灰 */
-.td-note {
+/* 描述 — 小字浅灰. 组合 selector 提权重 (.dp-note-input line 1494 有 bg-section) */
+.td-note.dp-note-input {
   width: 100%;
   border: 0;
   background: transparent;
@@ -908,10 +911,12 @@ html, body { overscroll-behavior-y: contain; }
   resize: none;
   font-family: inherit;
   line-height: 1.55;
+  min-height: 0;
+  border-radius: 0;
   -webkit-appearance: none;
   appearance: none;
 }
-.td-note::placeholder { color: var(--text-faint); }
+.td-note.dp-note-input::placeholder { color: var(--text-faint); }
 .td-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1363,13 +1368,15 @@ html, body { overscroll-behavior-y: contain; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 4px 4px 10px;
+  /* 左右等 padding — × 隐时 (P1) 视觉对称; × 显时用负 margin 把 × 拉到右边 */
+  padding: 4px 10px;
   border-radius: 14px;
   background: var(--bg-section);
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.2;
 }
+.dp-sched-pill .dp-sched-x { margin-right: -6px; }
 .dp-sched-pill.overdue {
   background: rgba(200, 69, 69, 0.14);
   color: #c84545;

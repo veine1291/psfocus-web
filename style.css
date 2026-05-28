@@ -717,12 +717,12 @@ html, body { overscroll-behavior-y: contain; }
 #sheet.td-p1 .dp-sub-add-input {
   cursor: pointer;
 }
-/* ← 退出按钮 (P2 only) */
+/* ← 退出按钮 (P2 only) — 无 bg, 跟 sheet 同色 */
 .td-back {
   width: 32px; height: 32px;
   border-radius: 50%;
   border: 0;
-  background: var(--bg-section);
+  background: transparent;
   color: var(--text-dim);
   display: inline-flex;
   align-items: center;
@@ -740,28 +740,25 @@ html, body { overscroll-behavior-y: contain; }
   -webkit-mask-position: center; mask-position: center;
   display: inline-block;
 }
-/* 🚩 flag (优先级) toggle 按钮 */
-.td-flag {
-  width: 36px; height: 36px;
-  border-radius: 50%;
-  border: 0;
-  background: var(--bg-section);
-  color: var(--text-dim);
+/* (.td-flag 已删除 — 用户没此功能需求, Kayu 2026-05-28) */
+/* +加 schedule 按钮 — 纯图标 (+ + 时间), 无 bg 无 border */
+.td-add-sched-icon {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 1px;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
   cursor: pointer;
+  border-radius: 6px;
+  font-family: inherit;
   flex: 0 0 auto;
-  padding: 0;
-  transition: background .12s, color .12s;
 }
-.td-flag:active { background: var(--bg-hover); }
-.td-flag.on {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
-}
-.td-flag .ico-flag {
-  width: 16px; height: 16px;
+.td-add-sched-icon:active { background: var(--bg-hover); }
+.td-add-sched-icon .ico-plus,
+.td-add-sched-icon .ico-clock {
+  width: 13px; height: 13px;
   background: currentColor;
   -webkit-mask-size: contain; mask-size: contain;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
@@ -798,16 +795,17 @@ html, body { overscroll-behavior-y: contain; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 4px;
   border: 0;
-  background: var(--bg-section);
+  background: transparent;       /* 跟 sheet 同色, 不再单独白底 (Kayu 2026-05-28) */
   color: var(--text-dim);
-  border-radius: 16px;
+  border-radius: 6px;
   font-size: 13px;
   font-family: inherit;
   max-width: max-content;
   cursor: pointer;
 }
+.td-folder:active { background: var(--bg-hover); }
 .td-folder .dp-project-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
 .td-folder .ico-folder { width: 14px; height: 14px; background: currentColor;
   -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
@@ -823,10 +821,10 @@ html, body { overscroll-behavior-y: contain; }
   flex: 0 0 auto;
 }
 .td-more {
-  width: 36px; height: 36px;
+  width: 32px; height: 32px;
   border-radius: 50%;
   border: 0;
-  background: var(--bg-section);
+  background: transparent;       /* 不再白底 (Kayu 2026-05-28) */
   color: var(--text-dim);
   display: inline-flex;
   align-items: center;
@@ -834,6 +832,7 @@ html, body { overscroll-behavior-y: contain; }
   cursor: pointer;
   flex: 0 0 auto;
 }
+.td-more:active { background: var(--bg-hover); }
 .td-more .ico-more {
   width: 16px; height: 16px;
   background: currentColor;
@@ -1517,11 +1516,12 @@ html, body { overscroll-behavior-y: contain; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 4px 3px 10px;
+  padding: 4px 4px 4px 10px;
   border-radius: 12px;
   font-size: 12px;
   line-height: 1.2;
-  border: 1px solid;
+  font-weight: 500;          /* 加重 — 浅底色上更可读 (Kayu 2026-05-28) */
+  border: 0;                  /* 取消 1px border, 用更浓的 bg 替代视觉边缘 */
 }
 .dp-tag-chip-x {
   width: 16px; height: 16px;
@@ -1601,25 +1601,26 @@ html, body { overscroll-behavior-y: contain; }
 .dp-sub-add-input {
   flex: 1;
   min-width: 0;
-  background: var(--bg-section);
+  background: transparent;     /* 跟 sheet 同色, 不再单独白底 (Kayu 2026-05-28) */
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 8px 12px;
   font-size: 13px;
   color: var(--text);
   outline: none;
   font-family: inherit;
 }
+.dp-sub-add-input:focus { background: var(--bg-hover); }
 /* 加检查事项模式 — input 微微染色提示 */
 .dp-sub-add-input.as-checklist {
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-section));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
-/* ≡ 切换按钮 — 普通态低对比, 激活态主题色 */
+/* ≡ 切换按钮 — 普通态低对比, 激活态主题色, 无 bg */
 .dp-sub-add-mode {
   flex: 0 0 auto;
-  width: 32px; height: 32px;
+  width: 28px; height: 28px;
   border: 0;
-  background: var(--bg-section);
+  background: transparent;
   color: var(--text-faint);
   border-radius: 50%;
   font-size: 16px;
@@ -1632,8 +1633,7 @@ html, body { overscroll-behavior-y: contain; }
 }
 .dp-sub-add-mode:active { background: var(--bg-hover); }
 .dp-sub-add-mode.active {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent);
+  color: var(--accent);   /* 仅字色变, 无背景 — Kayu: '检查事项 ui 不要单独白底' */
 }
 .dp-sub-list {
   list-style: none;

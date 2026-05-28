@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0919';
+const _PSFOCUS_BUILD = '20260528-0920';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7250,7 +7250,8 @@ function openTaskDetail(id, opts) {
   })();
   const tagChipsHtml = tags.map(tg => {
     const c = colorOfTag(tg);
-    return `<span class="dp-tag-chip" style="background:color-mix(in srgb,${esc(c)} 15%,transparent);color:${esc(c)};border-color:color-mix(in srgb,${esc(c)} 40%,transparent);">
+    // bg 15→24%, 不要 border (没了之后 chip 跟 sheet 反差也清楚, 比双层细描更耐看 Kayu 2026-05-28)
+    return `<span class="dp-tag-chip" style="background:color-mix(in srgb,${esc(c)} 24%,transparent);color:${esc(c)};">
       <span>${esc(tg)}</span>
       <button class="dp-tag-chip-x" data-action="dp-remove-tag" data-tag="${esc(tg)}" title="移除">×</button>
     </span>`;
@@ -7278,7 +7279,7 @@ function openTaskDetail(id, opts) {
     <div class="sheet-handle"></div>
     <div class="dp-detail td-detail">
 
-      <!-- 顶部行: ← 退出 (P2) + 文件夹 pill + 🚩 flag + 更多 -->
+      <!-- 顶部行: ← 退出 (P2) + 文件夹 pill + 更多 (flag 删了, 用户没此功能) -->
       <div class="td-top">
         <button class="td-back" data-action="td-collapse" title="返回小抽屉">
           <span class="ico-chevron-left"></span>
@@ -7288,22 +7289,19 @@ function openTaskDetail(id, opts) {
           <span>${esc(projLabel)}</span>
           <span class="ico-chevron-down td-folder-chev"></span>
         </button>
-        <button class="td-flag ${t.flagged ? 'on' : ''}" data-action="td-toggle-flag" title="${t.flagged ? '取消标记' : '标记重要'}">
-          <span class="ico-flag"></span>
-        </button>
         <button class="td-more dp-more-btn" data-action="task-detail-more" title="更多">
           <span class="ico-more"></span>
         </button>
       </div>
 
-      <!-- 日期行: 勾选 + 多 schedule + 加日期 -->
+      <!-- 日期行: 勾选 + 多 schedule + 加 (+号 + 时间图标 only, 无 bg) -->
       <div class="td-date-row">
         <button class="td-check dp-check ${checked ? 'done' : ''}" data-action="toggle-done" title="${checked ? '标记未完成' : '标记完成'}">${checked ? '✓' : ''}</button>
         <div class="td-scheds">
           ${schedHtml}
-          <button class="td-add-sched dp-add-sched-btn" data-action="dp-add-schedule" title="加时间">
+          <button class="td-add-sched-icon" data-action="dp-add-schedule" title="${schedules.length ? '加一个时间' : '加日期'}">
             <span class="ico-plus"></span>
-            <span>${schedules.length ? '加' : '加日期'}</span>
+            <span class="ico-clock"></span>
           </button>
         </div>
       </div>
@@ -7409,16 +7407,7 @@ function bindTaskDetailEvents(body, id) {
   // ← 返回 (P2 → P1)
   const backBtn = body.querySelector('[data-action="td-collapse"]');
   if (backBtn) backBtn.onclick = () => { _taskDetailMode = 'p1'; openTaskDetail(id); };
-  // 🚩 flag toggle
-  const flagBtn = body.querySelector('[data-action="td-toggle-flag"]');
-  if (flagBtn) flagBtn.onclick = () => {
-    t.flagged = !t.flagged;
-    t.updatedAt = Date.now();
-    pushState();
-    flagBtn.classList.toggle('on', !!t.flagged);
-    flagBtn.title = t.flagged ? '取消标记' : '标记重要';
-    renderAll();  // 列表里 flag 标记也要刷
-  };
+  // (flag 按钮已删除 — 用户没此功能需求)
   // 🏷 工具栏 tag — 切到 P2 (如已 P2 就不切), focus note, 插 # 到末尾
   const barTag = body.querySelector('[data-action="td-bar-tag"]');
   if (barTag) barTag.onclick = () => {

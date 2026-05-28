@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0924';
+const _PSFOCUS_BUILD = '20260528-0925';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1636,6 +1636,9 @@ let summaryState = {
   filter: 'all',               // 'all' | 'tag:<name>'
   searchQuery: '',
   searchOpen: false,           // 顶栏搜索按钮控制的搜索框开关
+  // 高级筛选 (Kayu 2026-05-28): 跟 searchQuery 叠加, 不动 sidebar 的 filter
+  searchTime: { mode: 'all', start: null, end: null },   // mode: all|this-week|this-month|custom
+  searchTags: { mode: 'all', list: [] },                 // mode: all|none|include|exclude; list = tag 名数组
   // 日期折叠状态 — 跨刷新保留(per-device UI 偏好,不走云端)
   collapsedDays: (() => {
     try { return new Set(JSON.parse(localStorage.getItem('psfocus_collapsedDays') || '[]')); }
@@ -1875,6 +1878,10 @@ function renderSummaryTab(view) {
       ? `<div class="sum-search-row">
            <span class="ico-search sum-search-ico"></span>
            <input type="text" class="sum-search" placeholder="搜索摘要…" value="${esc(summaryState.searchQuery)}" data-action-input="summary-search-input">
+           <button class="sum-filter-btn ${_summaryAnyFilterActive() ? 'active' : ''}" data-action="summary-open-filter" aria-label="筛选">
+             <span class="ico-filter"></span>
+             ${_summaryAnyFilterActive() ? '<span class="sum-filter-dot"></span>' : ''}
+           </button>
          </div>`
       : ''}
     ${isData
@@ -2555,6 +2562,160 @@ function _renderSummaryModuleEditor(m, dayKey) {
   return '';
 }
 
+// 高级搜索筛选 — 计算时间范围 (本周 / 本月 / 自定义) + tag 包含/排除
+// 跟基础 searchQuery + sidebar filter 叠加
+function _summaryApplySearchFilters(list) {
+  const t = summaryState.searchTime || { mode: 'all' };
+  const tg = summaryState.searchTags || { mode: 'all', list: [] };
+  // 时间范围
+  if (t.mode !== 'all') {
+    let lo, hi;
+    const now = new Date();
+    if (t.mode === 'this-week') {
+      // 周一 00:00 → 周日 23:59 (中国习惯周一为周首)
+      const day = (now.getDay() + 6) % 7;   // 周一=0, 周日=6
+      const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day, 0, 0, 0);
+      lo = monday.getTime();
+      hi = lo + 7 * 86400000;
+    } else if (t.mode === 'this-month') {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+      const next = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0);
+      lo = first.getTime();
+      hi = next.getTime();
+    } else if (t.mode === 'custom') {
+      if (Number.isFinite(t.start)) lo = t.start;
+      if (Number.isFinite(t.end))   hi = t.end + 86400000;   // end 算到当天 23:59:59
+    }
+    if (lo != null || hi != null) {
+      list = list.filter(s => {
+        const c = s.createdAt;
+        if (lo != null && c < lo) return false;
+        if (hi != null && c >= hi) return false;
+        return true;
+      });
+    }
+  }
+  // 标签
+  if (tg.mode === 'none') {
+    list = list.filter(s => !((s.tags || []).length));
+  } else if (tg.mode === 'include' && tg.list && tg.list.length) {
+    list = list.filter(s => {
+      const stags = s.tags || [];
+      // 命中任一指定 tag (或其子 tag) 就算 — OR 语义, 跟 sidebar 多选 AND 不同, 更宽松
+      return tg.list.some(want => stags.some(x => x === want || x.startsWith(want + '/')));
+    });
+  } else if (tg.mode === 'exclude' && tg.list && tg.list.length) {
+    list = list.filter(s => {
+      const stags = s.tags || [];
+      // 必须 不含 任何指定 tag
+      return !tg.list.some(want => stags.some(x => x === want || x.startsWith(want + '/')));
+    });
+  }
+  return list;
+}
+// 高级筛选是否在生效 (任一项不是默认值 = 在生效) — 用于 UI 显 active badge / 判定是否计入'搜索态'
+function _summaryAnyFilterActive() {
+  const t = summaryState.searchTime || {};
+  const tg = summaryState.searchTags || {};
+  return (t.mode && t.mode !== 'all') || (tg.mode && tg.mode !== 'all');
+}
+
+// ms → YYYY-MM-DD (本地时区,给 <input type="date"> 用)
+function _msToDateInputVal(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+// YYYY-MM-DD → 当天 00:00 的 ms (本地时区)
+function _dateInputValToMs(s) {
+  if (!s || typeof s !== 'string') return null;
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0).getTime();
+}
+
+// 高级筛选 sheet —— 移动端
+function openSummaryFilterSheet() {
+  const renderSheet = () => {
+    const t = summaryState.searchTime || { mode: 'all', start: null, end: null };
+    const tg = summaryState.searchTags || { mode: 'all', list: [] };
+    const tMode = t.mode || 'all';
+    const tgMode = tg.mode || 'all';
+    // 时间预设按钮
+    const timeChips = [
+      ['all', '不限时间'],
+      ['this-week', '本周'],
+      ['this-month', '本月'],
+      ['custom', '自定义'],
+    ].map(([m, label]) =>
+      `<button class="sf-chip ${tMode === m ? 'active' : ''}" data-action="summary-filter-time-mode" data-mode="${m}">${esc(label)}</button>`
+    ).join('');
+    const customTimeHtml = tMode === 'custom'
+      ? `<div class="sf-custom-row">
+           <input type="date" class="sf-date-input" data-action-change="summary-filter-time-custom" data-field="start" value="${esc(_msToDateInputVal(t.start))}">
+           <span class="sf-date-sep">—</span>
+           <input type="date" class="sf-date-input" data-action-change="summary-filter-time-custom" data-field="end" value="${esc(_msToDateInputVal(t.end))}">
+         </div>`
+      : '';
+    // 标签预设按钮
+    const tagChips = [
+      ['all', '全部内容'],
+      ['none', '无标签'],
+      ['include', '包含指定标签'],
+      ['exclude', '排除指定标签'],
+    ].map(([m, label]) =>
+      `<button class="sf-chip ${tgMode === m ? 'active' : ''}" data-action="summary-filter-tag-mode" data-mode="${m}">${esc(label)}</button>`
+    ).join('');
+    // 标签池(包含/排除模式下显示)
+    let tagPoolHtml = '';
+    if (tgMode === 'include' || tgMode === 'exclude') {
+      const allTags = (state.summaryTags || []).slice().sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN'));
+      if (!allTags.length) {
+        tagPoolHtml = `<div class="sf-tag-pool-empty">还没有标签 — 写笔记时输入 #xxx 自动建立</div>`;
+      } else {
+        const picked = new Set(tg.list || []);
+        tagPoolHtml = `<div class="sf-tag-pool">
+          ${allTags.map(tg2 => {
+            const active = picked.has(tg2.name);
+            return `<button class="sf-tag-chip ${active ? 'active' : ''}" data-action="summary-filter-tag-toggle" data-tag="${esc(tg2.name)}">
+              <span class="sf-tag-hash">#</span>${esc(tg2.name)}
+            </button>`;
+          }).join('')}
+        </div>`;
+      }
+    }
+    return `
+      <div class="sheet-handle"></div>
+      <div class="sheet-content sf-sheet">
+        <div class="sf-section">
+          <div class="sf-section-title">时间范围</div>
+          <div class="sf-chip-row">${timeChips}</div>
+          ${customTimeHtml}
+        </div>
+        <div class="sf-section">
+          <div class="sf-section-title">标签</div>
+          <div class="sf-chip-row">${tagChips}</div>
+          ${tagPoolHtml}
+        </div>
+        <div class="sf-actions">
+          <button class="sf-btn-clear" data-action="summary-filter-clear">清除筛选</button>
+          <button class="sf-btn-done" data-action="summary-filter-done">完成</button>
+        </div>
+      </div>
+    `;
+  };
+  // 重渲整个 sheet body (chip 切换 / tag 多选都需要)
+  summaryState._filterSheetRerender = () => {
+    const body = document.getElementById('sheet-body');
+    if (body) body.innerHTML = renderSheet();
+  };
+  showSheet(renderSheet());
+}
+
 function _renderSummaryList() {
   const filter = summaryState.filter || 'all';
   const q = (summaryState.searchQuery || '').toLowerCase().trim();
@@ -2569,6 +2730,8 @@ function _renderSummaryList() {
       (s.tags || []).some(t => t.toLowerCase().includes(q))
     );
   }
+  // 高级筛选 (时间范围 / tag 包含-排除) — 在 q 之上再 narrow
+  list = _summaryApplySearchFilters(list);
   list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   const byDay = new Map();
   for (const s of list) {
@@ -3399,6 +3562,66 @@ const _summaryActions = {
         if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(listEl);
       }
     }, 250);
+  },
+  // 高级筛选入口 — 打开 sheet
+  'summary-open-filter': () => {
+    openSummaryFilterSheet();
+  },
+  // 时间范围模式切换 (all/this-week/this-month/custom)
+  'summary-filter-time-mode': (el) => {
+    const m = el && el.dataset && el.dataset.mode;
+    if (!m) return;
+    if (!summaryState.searchTime) summaryState.searchTime = { mode: 'all', start: null, end: null };
+    summaryState.searchTime.mode = m;
+    // 切到自定义时若没有起止默认取今天 → 今天
+    if (m === 'custom') {
+      const todayMs = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+      if (!Number.isFinite(summaryState.searchTime.start)) summaryState.searchTime.start = todayMs;
+      if (!Number.isFinite(summaryState.searchTime.end))   summaryState.searchTime.end   = todayMs;
+    }
+    if (summaryState._filterSheetRerender) summaryState._filterSheetRerender();
+  },
+  // 自定义起止日期变更
+  'summary-filter-time-custom': (el) => {
+    const field = el && el.dataset && el.dataset.field;
+    if (!field) return;
+    if (!summaryState.searchTime) summaryState.searchTime = { mode: 'custom', start: null, end: null };
+    summaryState.searchTime.mode = 'custom';
+    summaryState.searchTime[field] = _dateInputValToMs(el.value);
+    // 不重渲整个 sheet — 不然会让用户失去 input 焦点;直接保留状态等"完成"再 apply
+  },
+  // 标签模式切换 (all/none/include/exclude)
+  'summary-filter-tag-mode': (el) => {
+    const m = el && el.dataset && el.dataset.mode;
+    if (!m) return;
+    if (!summaryState.searchTags) summaryState.searchTags = { mode: 'all', list: [] };
+    summaryState.searchTags.mode = m;
+    // all/none 不需要 list;include/exclude 保留已有 list
+    if (m === 'all' || m === 'none') summaryState.searchTags.list = [];
+    if (summaryState._filterSheetRerender) summaryState._filterSheetRerender();
+  },
+  // 多选 tag chip 切换
+  'summary-filter-tag-toggle': (el) => {
+    const tg = el && el.dataset && el.dataset.tag;
+    if (!tg) return;
+    if (!summaryState.searchTags) summaryState.searchTags = { mode: 'include', list: [] };
+    if (!Array.isArray(summaryState.searchTags.list)) summaryState.searchTags.list = [];
+    const i = summaryState.searchTags.list.indexOf(tg);
+    if (i >= 0) summaryState.searchTags.list.splice(i, 1);
+    else summaryState.searchTags.list.push(tg);
+    if (summaryState._filterSheetRerender) summaryState._filterSheetRerender();
+  },
+  // 清除全部筛选 (含 sheet 关闭)
+  'summary-filter-clear': () => {
+    summaryState.searchTime = { mode: 'all', start: null, end: null };
+    summaryState.searchTags = { mode: 'all', list: [] };
+    closeSheet();
+    renderAll();
+  },
+  // 完成 — 应用筛选并关闭 sheet
+  'summary-filter-done': () => {
+    closeSheet();
+    renderAll();
   },
   'summary-toggle-day': (el) => {
     const k = el.dataset.dayKey;

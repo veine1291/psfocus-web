@@ -2008,11 +2008,87 @@ function _renderSummaryInputBox() {
         <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
         <span class="ico-image"></span>
       </label>
+      ${_sumTbPinnedButtonsHtml()}
       <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
       <div class="sum-input-spacer"></div>
       <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
     </div>
   </div>`;
+}
+
+// ===== 摘要工具栏可固定项 (Kayu 2026-05-28) =====
+// 用户可以从 ⋯ 菜单里把某些格式按钮 pin 到主工具栏, 长期常驻
+// 每个 def 有 styled preview, 在菜单和工具栏都直接显示带样式的小预览, 不只是文字
+const _SUM_TB_DEFS = [
+  { id: 'wikilink', label: '概念链接',  preview: '<span class="sum-tb-prev sum-tb-prev-wiki">[[…]]</span>' },
+  { id: 'head',     label: '标题',      preview: '<span class="sum-tb-prev sum-tb-prev-head">H</span>' },
+  { id: 'bold',     label: '粗体',      preview: '<span class="sum-tb-prev"><b>B</b></span>' },
+  { id: 'italic',   label: '斜体',      preview: '<span class="sum-tb-prev"><i>I</i></span>' },
+  { id: 'ul',       label: '无序列表',   preview: '<span class="sum-tb-prev"><span class="ico-list"></span></span>' },
+  { id: 'ol',       label: '有序列表',   preview: '<span class="sum-tb-prev">1.</span>' },
+  { id: 'quote',    label: '引用',      preview: '<span class="sum-tb-prev sum-tb-prev-quote">""</span>' },
+  { id: 'module',   label: '+ 模块',    preview: '<span class="sum-tb-prev sum-tb-prev-mod">+模块</span>' },
+];
+
+// 读 / 写 pinned list — 跟桌面共用 state.settings.summaryToolbarPinned
+// 手机默认 [] (空主栏), 桌面默认全 pin (preserve 旧行为) — 各自代码里读时给不同 fallback
+function _sumTbPinned() {
+  if (!state || !state.settings) return [];
+  const v = state.settings.summaryToolbarPinned;
+  if (Array.isArray(v)) return v;
+  return [];  // mobile fallback: empty
+}
+function _sumTbSetPinned(arr) {
+  if (!state.settings) state.settings = {};
+  state.settings.summaryToolbarPinned = arr.slice();
+  saveState();
+}
+function _sumTbTogglePin(fmtId) {
+  const cur = _sumTbPinned();
+  const i = cur.indexOf(fmtId);
+  if (i >= 0) cur.splice(i, 1);
+  else cur.push(fmtId);
+  _sumTbSetPinned(cur);
+}
+function _sumTbPinnedButtonsHtml() {
+  const pinned = _sumTbPinned();
+  return pinned.map(id => {
+    const def = _SUM_TB_DEFS.find(d => d.id === id);
+    if (!def) return '';
+    return `<button class="sum-tb-btn sum-tb-pinned" data-action="summary-tb-apply" data-fmt-id="${id}" title="${esc(def.label)}">${def.preview}</button>`;
+  }).join('');
+}
+
+// 工具栏 inline 重画 — pin/unpin 后调, 不重画整个 sheet
+function _rerenderSumToolbar() {
+  const tb = document.querySelector('#sheet-body .sum-input-toolbar')
+    || document.querySelector('.sum-input-toolbar');
+  if (!tb) return;
+  // 取出 pinned 部分 + ⋯ 之前的固定部分 + 之后的 ⋯/spacer/submit
+  // 简化:整段重画
+  tb.innerHTML = `
+    <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
+    <label class="sum-tb-btn sum-tb-img" title="上传图片">
+      <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
+      <span class="ico-image"></span>
+    </label>
+    ${_sumTbPinnedButtonsHtml()}
+    <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
+    <div class="sum-input-spacer"></div>
+    <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
+  `;
+}
+
+// 应用 fmt — wikilink / module 单独走, 其它走 summary-tb-format
+function _sumTbApplyFmt(fmtId) {
+  if (!fmtId) return;
+  if (fmtId === 'wikilink') {
+    if (_summaryActions['summary-tb-wikilink']) _summaryActions['summary-tb-wikilink']();
+  } else if (fmtId === 'module') {
+    if (_summaryActions['summary-open-mod-sheet']) _summaryActions['summary-open-mod-sheet']({ dataset: {} });
+  } else {
+    if (_summaryActions['summary-tb-format']) _summaryActions['summary-tb-format']({ dataset: { fmt: fmtId } });
+  }
 }
 
 // 取摘要输入框 — contenteditable div (优先 sheet 里的, 避免误打到主视图同名 class)
@@ -3191,52 +3267,58 @@ const _summaryActions = {
       else renderAll();
     }
   },
-  // 工具栏的 ⋯ → 弹 popover, 列出格式化按钮 + [[]] + 模块
-  // flomo 风格的折叠 — 把不常用的二级动作收进来 (Kayu 2026-05-28)
+  // 工具栏的 ⋯ → 自定义 popover (不能用 showPopover, 要每行带 preview + pin toggle)
+  // 点 row 主体 → 应用格式, 点右边图钉 → toggle pin 状态 (不应用)
   'summary-tb-more': (el) => {
-    const _runFmt = (fmt) => {
-      const ed = _summaryInputTa();
-      if (!ed) return;
-      ed.focus();
-      try {
-        if (fmt === 'bold')         document.execCommand('bold');
-        else if (fmt === 'italic')  document.execCommand('italic');
-        else if (fmt === 'head')    document.execCommand('formatBlock', false, 'H3');
-        else if (fmt === 'ul')      document.execCommand('insertUnorderedList');
-        else if (fmt === 'ol')      document.execCommand('insertOrderedList');
-        else if (fmt === 'quote')   document.execCommand('formatBlock', false, 'BLOCKQUOTE');
-      } catch (_) {}
-      _syncEditorToState(ed);
-    };
-    const _wikilink = () => {
-      const ed = _summaryInputTa();
-      if (!ed) return;
-      ed.focus();
-      try {
-        const sel = window.getSelection();
-        if (sel && sel.rangeCount) {
-          const r = sel.getRangeAt(0);
-          r.deleteContents();
-          const node = document.createTextNode('[[]]');
-          r.insertNode(node);
-          r.setStart(node, 2); r.setEnd(node, 2);
-          sel.removeAllRanges(); sel.addRange(r);
-        }
-      } catch (_) {}
-      _syncEditorToState(ed);
-    };
-    const items = [
-      { label: '概念链接 [[…]]',  action: () => { _wikilink();          closePopover(); } },
-      { label: '引用',           action: () => { _runFmt('quote');     closePopover(); } },
-      { label: '标题',           action: () => { _runFmt('head');      closePopover(); } },
-      { label: '粗体',           action: () => { _runFmt('bold');      closePopover(); } },
-      { label: '斜体',           action: () => { _runFmt('italic');    closePopover(); } },
-      { label: '无序列表',        action: () => { _runFmt('ul');        closePopover(); } },
-      { label: '有序列表',        action: () => { _runFmt('ol');        closePopover(); } },
-      { divider: true },
-      { label: '+ 模块',         action: () => { closePopover(); if (_summaryActions['summary-open-mod-sheet']) _summaryActions['summary-open-mod-sheet'](el); } },
-    ];
-    showPopover(items, { anchor: el, side: 'right' });
+    const pop = $('popover'), body = $('popover-body');
+    body.classList.remove('popover-left');
+    body.classList.add('popover-anchored');
+    const pinned = _sumTbPinned();
+    const rows = _SUM_TB_DEFS.map(def => {
+      const isPin = pinned.includes(def.id);
+      return `<div class="sum-tb-menu-item" data-fmt-id="${def.id}">
+        <span class="sum-tb-menu-item-preview">${def.preview}</span>
+        <span class="sum-tb-menu-item-label">${esc(def.label)}</span>
+        <button type="button" class="sum-tb-pin ${isPin ? 'pinned' : ''}" data-pin-id="${def.id}" title="${isPin ? '取消固定到工具栏' : '固定到工具栏 — 常驻显示'}">📌</button>
+      </div>`;
+    }).join('');
+    body.innerHTML = `<div class="sum-tb-menu">${rows}</div>`;
+    pop.classList.remove('hidden');
+    // 行主体点 → 应用 fmt
+    body.querySelectorAll('.sum-tb-menu-item').forEach(row => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('[data-pin-id]')) return;
+        const fmtId = row.dataset.fmtId;
+        _sumTbApplyFmt(fmtId);
+        closePopover();
+      });
+    });
+    // pin 图钉点 → toggle, 立刻刷新工具栏 + 自身样式 (不关 popover)
+    body.querySelectorAll('[data-pin-id]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.pinId;
+        _sumTbTogglePin(id);
+        btn.classList.toggle('pinned', _sumTbPinned().includes(id));
+        _rerenderSumToolbar();
+      });
+    });
+    pop.querySelector('.popover-mask').onclick = closePopover;
+    // 定位: anchor 上方 — 工具栏在键盘附近, popover 弹上面
+    requestAnimationFrame(() => {
+      const ar = el.getBoundingClientRect();
+      const br = body.getBoundingClientRect();
+      body.style.position = 'fixed';
+      body.style.top = '';
+      body.style.bottom = Math.max(8, window.innerHeight - ar.top + 8) + 'px';
+      body.style.left = Math.max(8, Math.min(window.innerWidth - br.width - 8, ar.left)) + 'px';
+      body.style.right = '';
+    });
+  },
+  // 工具栏 inline pinned 按钮的点 → 应用 fmt
+  'summary-tb-apply': (el) => {
+    const id = el && el.dataset && el.dataset.fmtId;
+    _sumTbApplyFmt(id);
   },
   'summary-tb-wikilink': (el) => {
     const ed = _summaryInputTa();

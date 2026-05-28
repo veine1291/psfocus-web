@@ -692,6 +692,182 @@ html, body { overscroll-behavior-y: contain; }
   padding: 0 16px 16px;
 }
 
+/* ===== 滴答清单风任务详情 sheet (Kayu 2026-05-28 第 1 轮) ===== */
+/* 注: 保留 .dp-detail 兼容旧 css; td-* 是新结构 */
+.td-detail {
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.td-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.td-folder {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0;
+  background: var(--bg-section);
+  color: var(--text-dim);
+  border-radius: 16px;
+  font-size: 13px;
+  font-family: inherit;
+  max-width: max-content;
+  cursor: pointer;
+}
+.td-folder .dp-project-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.td-folder .ico-folder { width: 14px; height: 14px; background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center; display: inline-block; flex: 0 0 auto; }
+.td-folder-chev {
+  width: 10px; height: 10px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+  opacity: .55;
+  flex: 0 0 auto;
+}
+.td-more {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--bg-section);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.td-more .ico-more {
+  width: 16px; height: 16px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+}
+
+/* 日期行 — 大勾选 + schedule pills + 加日期 */
+.td-date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.td-check {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 1.8px solid var(--text-faint);
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  padding: 0;
+  flex: 0 0 auto;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.td-check.done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.td-scheds {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+/* 大标题 — 大字号粗体, 透明 input */
+.td-title {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text);
+  outline: none;
+  padding: 4px 0 0;
+  font-family: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.td-title.done {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+.td-title::placeholder { color: var(--text-faint); font-weight: 500; }
+/* 描述 — 小字浅灰 */
+.td-note {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  color: var(--text-dim);
+  outline: none;
+  padding: 0;
+  resize: none;
+  font-family: inherit;
+  line-height: 1.55;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.td-note::placeholder { color: var(--text-faint); }
+.td-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.td-tags:empty { display: none; }
+.td-imgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.td-subs { display: flex; flex-direction: column; gap: 6px; }
+/* 底部图标条 */
+.td-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-soft);
+}
+.td-bar-spacer { flex: 1; }
+.td-bar-btn {
+  width: 36px; height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+}
+.td-bar-btn:active { background: var(--bg-hover); }
+.td-bar-btn .ico-image,
+.td-bar-btn .ico-chevron-down {
+  width: 18px; height: 18px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  display: inline-block;
+}
+
 /* ===== 滴答清单风新建任务 sheet (Kayu 2026-05-28 重做) ===== */
 .qe-content {
   flex: 1 1 auto;

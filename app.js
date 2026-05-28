@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0917';
+const _PSFOCUS_BUILD = '20260528-0918';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7257,55 +7257,79 @@ function openTaskDetail(id) {
   `).join('');
 
   const sheet = $('sheet'), body = $('sheet-body');
+  // 滴答清单风重排 (Kayu 2026-05-28 第 1 轮):
+  // - 顶部: folder pill (左) + 更多 ⋯ (右)
+  // - 日期行: 勾选 + 多 schedule pills + "+加"
+  // - 大标题 (粗字), 描述 (小灰字)
+  // - tags / images / sub-todos 分别 section, 不再挤在 merged-row
+  // - 底部图标条: 附件 + 收起
+  // 兼容性:保留所有 dp-* 类名以便 bindTaskDetailEvents 不动
   body.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="dp-detail">
+    <div class="dp-detail td-detail">
 
-      <div class="dp-time-bar">
-        ${schedHtml}
-        <button class="dp-add-sched-btn" data-action="dp-add-schedule" title="加时间">
-          <span class="ico-plus"></span>
-          <span>${schedules.length ? '改' : '加时间'}</span>
+      <!-- 顶部行: 文件夹 pill + 更多 -->
+      <div class="td-top">
+        <button class="td-folder dp-project-pill" data-action="dp-pick-project">
+          ${projColor ? `<span class="dp-project-dot" style="background:${esc(projColor)}"></span>` : '<span class="ico-folder"></span>'}
+          <span>${esc(projLabel)}</span>
+          <span class="ico-chevron-down td-folder-chev"></span>
+        </button>
+        <button class="td-more dp-more-btn" data-action="task-detail-more" title="更多">
+          <span class="ico-more"></span>
         </button>
       </div>
 
-      <div class="dp-title-row">
-        <button class="dp-check ${checked ? 'done' : ''}" data-action="toggle-done" title="${checked ? '标记未完成' : '标记完成'}">${checked ? '✓' : ''}</button>
-        <input type="text" class="dp-title-input ${checked ? 'done' : ''}" value="${esc(t.title || '')}" />
+      <!-- 日期行: 勾选 + 多 schedule + 加日期 -->
+      <div class="td-date-row">
+        <button class="td-check dp-check ${checked ? 'done' : ''}" data-action="toggle-done" title="${checked ? '标记未完成' : '标记完成'}">${checked ? '✓' : ''}</button>
+        <div class="td-scheds">
+          ${schedHtml}
+          <button class="td-add-sched dp-add-sched-btn" data-action="dp-add-schedule" title="加时间">
+            <span class="ico-plus"></span>
+            <span>${schedules.length ? '加' : '加日期'}</span>
+          </button>
+        </div>
       </div>
 
       ${focusedHtml}
 
-      <div class="dp-section dp-merged-section">
-        <textarea class="dp-note-input" rows="3">${esc(t.note || '')}</textarea>
-        <div class="dp-merged-row">
-          <div class="dp-merged-tags">${tagChipsHtml}</div>
-          <label class="dp-merged-add-img" title="上传图片">
-            <input type="file" accept="image/*" multiple data-action="dp-task-add-images" hidden>
-            <span class="ico-image"></span>
-          </label>
-        </div>
-        ${images.length ? `<div class="dp-image-grid">${imagesHtml}</div>` : ''}
-      </div>
-      <datalist id="${datalistId}">
-        ${allTagNames.filter(x => !tags.includes(x)).map(x => `<option value="${esc(x)}"></option>`).join('')}
-      </datalist>
+      <!-- 大标题 -->
+      <input type="text" class="td-title dp-title-input ${checked ? 'done' : ''}" value="${esc(t.title || '')}" />
 
-      <div class="dp-section">
-        <div class="dp-section-title">子待办 <span class="dp-section-count">${subItemsRaw.length}</span></div>
-        <div class="dp-sub-add">
+      <!-- 描述 -->
+      <textarea class="td-note dp-note-input" rows="2">${esc(t.note || '')}</textarea>
+
+      <!-- tags (无则隐藏) -->
+      ${tagChipsHtml ? `<div class="td-tags dp-merged-tags">${tagChipsHtml}</div>` : ''}
+
+      <!-- 图片网格 -->
+      ${images.length ? `<div class="td-imgs dp-image-grid">${imagesHtml}</div>` : ''}
+
+      <!-- 子待办 (列表 + 加新入口) -->
+      <div class="td-subs">
+        ${subsHtml}
+        <div class="td-sub-add dp-sub-add">
           <input type="text" class="dp-sub-add-input ${_addAsChecklistItem ? 'as-checklist' : ''}">
           <button type="button" class="dp-sub-add-mode ${_addAsChecklistItem ? 'active' : ''}" data-action="toggle-add-as-checklist" title="${_addAsChecklistItem ? '当前:加检查事项(每次重复重置)— 点击切回普通子任务' : '当前:加普通子任务(持久)— 点击切到加检查事项'}">≡</button>
         </div>
-        ${subsHtml}
       </div>
+
+      <datalist id="${datalistId}">
+        ${allTagNames.filter(x => !tags.includes(x)).map(x => `<option value="${esc(x)}"></option>`).join('')}
+      </datalist>
     </div>
-    <div class="dp-footer">
-      <button class="dp-project-pill" data-action="dp-pick-project">
-        ${projColor ? `<span class="dp-project-dot" style="background:${esc(projColor)}"></span>` : '<span class="ico-folder"></span>'}
-        <span>${esc(projLabel)}</span>
+
+    <!-- 底部图标条 -->
+    <div class="td-bar">
+      <label class="td-bar-btn" title="附件 / 上传图片">
+        <input type="file" accept="image/*" multiple data-action="dp-task-add-images" hidden>
+        <span class="ico-image"></span>
+      </label>
+      <div class="td-bar-spacer"></div>
+      <button class="td-bar-btn" data-action="close-sheet" title="收起">
+        <span class="ico-chevron-down"></span>
       </button>
-      <button class="dp-more-btn" data-action="task-detail-more" title="更多"><span class="ico-more"></span></button>
     </div>
   `;
   body.style.transform = '';

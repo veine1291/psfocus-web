@@ -1627,6 +1627,24 @@ html, body { overscroll-behavior-y: contain; }
 .dp-sub-add-input.as-checklist {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
+/* + 按钮 — 拼音 IME 行为不稳时的兜底, tap 一定能加新条 */
+.dp-sub-add-plus {
+  flex: 0 0 auto;
+  width: 28px; height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  border-radius: 50%;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 300;
+  padding: 0;
+}
+.dp-sub-add-plus:active { background: var(--bg-hover); }
 /* ≡ 切换按钮 — 普通态低对比, 激活态主题色, 无 bg */
 .dp-sub-add-mode {
   flex: 0 0 auto;

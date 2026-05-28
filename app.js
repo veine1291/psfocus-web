@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260528-0922';
+const _PSFOCUS_BUILD = '20260528-0923';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7320,11 +7320,15 @@ function openTaskDetail(id, opts) {
       <!-- 图片网格 -->
       ${images.length ? `<div class="td-imgs dp-image-grid">${imagesHtml}</div>` : ''}
 
-      <!-- 子待办 (列表 + 加新入口) -->
+      <!-- 子待办 (列表 + 加新入口)
+       * enterkeyhint=send 让 iOS 软键盘上显送出键 (不是"下一项"/"换行")
+       * + 按钮兜底 — 拼音 IME 第一下 Enter 用来确认输入, 不一定触发 keydown,
+         所以提供显式 + 按钮一定能加 */
       <div class="td-subs">
         ${subsHtml}
         <div class="td-sub-add dp-sub-add">
-          <input type="text" class="dp-sub-add-input ${_addAsChecklistItem ? 'as-checklist' : ''}">
+          <input type="text" class="dp-sub-add-input ${_addAsChecklistItem ? 'as-checklist' : ''}" enterkeyhint="send" autocapitalize="off">
+          <button type="button" class="dp-sub-add-plus" data-action="sub-add-submit" title="加">+</button>
           <button type="button" class="dp-sub-add-mode ${_addAsChecklistItem ? 'active' : ''}" data-action="toggle-add-as-checklist" title="${_addAsChecklistItem ? '当前:加检查事项(每次重复重置)— 点击切回普通子任务' : '当前:加普通子任务(持久)— 点击切到加检查事项'}">≡</button>
         </div>
       </div>
@@ -7669,11 +7673,10 @@ function bindTaskDetailEvents(body, id) {
   }
   body.querySelectorAll('[data-sub-id]').forEach(_bindOneSubRow);
   const addSubInput = body.querySelector('.dp-sub-add-input');
-  addSubInput.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    const v = addSubInput.value.trim();
+  // 提交一条子待办 — Enter 键 / + 按钮 共用
+  function _submitNewSub() {
+    const v = (addSubInput.value || '').trim();
     if (!v) return;
-    e.preventDefault();   // 防输入法换行
     const maxOrder = state.tasks
       .filter(x => x.parentTaskId === t.id)
       .reduce((m, x) => Math.max(m, x.order || 0), 0);
@@ -7695,11 +7698,10 @@ function bindTaskDetailEvents(body, id) {
     if (_addAsChecklistItem) newSub.checklistItem = true;
     state.tasks.push(newSub);
     pushState();
-    // 局部刷新:append <li> 到 sub list, 不重渲整个 sheet — 输入框焦点自然保住,
-    // 可以连续 Enter 输下一条 (Kayu 2026-05-28)
+    // 局部刷新:append <li> 到 sub list — 不重渲整 sheet, 输入框焦点保住,
+    // 连续 Enter (或连续点 +) 输下一条
     let subList = body.querySelector('.dp-sub-list');
     if (!subList) {
-      // 之前没子待办 (显示 .dp-empty), 先把 empty 换成 ul
       const empty = body.querySelector('.td-subs .dp-empty');
       if (empty) {
         const ul = document.createElement('ul');
@@ -7707,7 +7709,6 @@ function bindTaskDetailEvents(body, id) {
         empty.replaceWith(ul);
         subList = ul;
       } else {
-        // 兜底:整体重渲
         _taskDetailRestoreFocus = 'sub';
         openTaskDetail(id);
         renderAll();
@@ -7724,9 +7725,23 @@ function bindTaskDetailEvents(body, id) {
     const newLi = subList.lastElementChild;
     if (newLi) _bindOneSubRow(newLi);
     addSubInput.value = '';
-    addSubInput.focus();   // input 自然没 blur 过, focus 双保险
-    renderAll();           // 主视图任务计数同步
+    addSubInput.focus();
+    renderAll();
+  }
+  addSubInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    // IME 组词中的 Enter (拼音确认) 不算 — keyCode 229 是 IME composition 标志
+    if (e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    _submitNewSub();
   });
+  // + 按钮 — IME 行为不稳时的兜底入口, 一定能加
+  const subAddBtn = body.querySelector('[data-action="sub-add-submit"]');
+  if (subAddBtn) subAddBtn.onclick = (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    _submitNewSub();
+  };
   // ≡ 切换:加普通子任务 vs 加检查事项 (持久, 跟桌面共用 _addAsChecklistItem)
   const subModeBtn = body.querySelector('.dp-sub-add-mode');
   if (subModeBtn) subModeBtn.onclick = (ev) => {

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0927';
+const _PSFOCUS_BUILD = '20260529-0928';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2266,31 +2266,100 @@ function _canvasRedraw() {
   }
   ctx.restore();
 }
+// 压感曲线 — pressure (0~1) → 笔粗倍数 (0.2 ~ 1.2)
+// 太轻不至于消失, 重压略大于基准宽度;曲线给中段加一点 ease-in 让中等压力看起来更"用力"
+function _mapPressureToScale(p) {
+  if (p == null || !Number.isFinite(p)) return 1;
+  // 线性即可: 0 → 0.2; 1 → 1.2; 0.5 → 0.7
+  return Math.max(0.15, Math.min(1.5, 0.2 + p * 1.0));
+}
+// 判断这条 stroke 是否有压感数据 (任一点 p 不是 1 / 不存在 一致值)
+function _strokeHasPressure(s) {
+  if (!s || !s.points || s.points.length < 2) return false;
+  const first = s.points[0].p;
+  if (first == null) return false;
+  for (let i = 1; i < s.points.length; i++) {
+    const pi = s.points[i].p;
+    if (pi == null) return false;
+    // 任何一点跟首点差距 > 0.02 → 视为有压感
+    if (Math.abs(pi - first) > 0.02) return true;
+  }
+  // 全部一致, 仍当固定宽度 (不浪费分段)
+  return false;
+}
+
 function _canvasDrawStroke(ctx, s) {
   if (!s || !s.points || !s.points.length) return;
   ctx.save();
   ctx.strokeStyle = s.color || '#000';
-  ctx.lineWidth = s.width || 2;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   const pts = s.points;
+  const baseW = s.width || 2;
+  // 单点 → 画个小圆 (用首点 pressure 决定大小)
   if (pts.length < 2) {
-    // 单点 → 画个小圆
+    const p = pts[0].p != null ? pts[0].p : 1;
+    const r = (baseW * _mapPressureToScale(p)) / 2;
     ctx.fillStyle = s.color || '#000';
     ctx.beginPath();
-    ctx.arc(pts[0].x, pts[0].y, (s.width || 2) / 2, 0, Math.PI * 2);
+    ctx.arc(pts[0].x, pts[0].y, Math.max(0.5, r), 0, Math.PI * 2);
     ctx.fill();
-  } else {
+    ctx.restore();
+    return;
+  }
+  // 无压感 (或全一致) → 原路径一次画完, 性能好
+  if (!_strokeHasPressure(s)) {
+    ctx.lineWidth = baseW;
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
-    // 二次贝塞尔平滑: 每相邻两点的中点作为终点, 当前点作为控制点
     for (let i = 1; i < pts.length - 1; i++) {
       const cx = (pts[i].x + pts[i+1].x) / 2;
       const cy = (pts[i].y + pts[i+1].y) / 2;
       ctx.quadraticCurveTo(pts[i].x, pts[i].y, cx, cy);
     }
-    // 最后一段直接连
     ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  // 有压感 → 分段渲染, 每段宽度按相邻两点平均压力插值
+  // 用中点为锚, 二次贝塞尔以原点作控制点 — 跟无压感渲染的形状一致, 只是分段
+  // 段 i: 从 mid(i-1, i) → curve via pts[i] → mid(i, i+1), lineWidth = avg(p[i-1], p[i+1])
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  // 第一段: 起点 → mid(0,1), 宽度按 p[0]/p[1] 平均
+  {
+    const m01 = mid(pts[0], pts[1]);
+    const p = (((pts[0].p != null ? pts[0].p : 1) + (pts[1].p != null ? pts[1].p : 1)) / 2);
+    ctx.lineWidth = Math.max(0.3, baseW * _mapPressureToScale(p));
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(m01.x, m01.y);
+    ctx.stroke();
+  }
+  // 中间段: mid(i-1,i) → quadCurve via pts[i] → mid(i,i+1)
+  for (let i = 1; i < pts.length - 1; i++) {
+    const mPrev = mid(pts[i-1], pts[i]);
+    const mNext = mid(pts[i], pts[i+1]);
+    const pi = pts[i].p != null ? pts[i].p : 1;
+    const pPrev = pts[i-1].p != null ? pts[i-1].p : 1;
+    const pNext = pts[i+1].p != null ? pts[i+1].p : 1;
+    // 段宽 = (prev + cur + next) / 3, 平滑掉抖动
+    const p = (pPrev + pi + pNext) / 3;
+    ctx.lineWidth = Math.max(0.3, baseW * _mapPressureToScale(p));
+    ctx.beginPath();
+    ctx.moveTo(mPrev.x, mPrev.y);
+    ctx.quadraticCurveTo(pts[i].x, pts[i].y, mNext.x, mNext.y);
+    ctx.stroke();
+  }
+  // 末段: mid(n-2, n-1) → pts[n-1]
+  {
+    const n = pts.length;
+    const mN = mid(pts[n-2], pts[n-1]);
+    const p = (((pts[n-2].p != null ? pts[n-2].p : 1) + (pts[n-1].p != null ? pts[n-1].p : 1)) / 2);
+    ctx.lineWidth = Math.max(0.3, baseW * _mapPressureToScale(p));
+    ctx.beginPath();
+    ctx.moveTo(mN.x, mN.y);
+    ctx.lineTo(pts[n-1].x, pts[n-1].y);
     ctx.stroke();
   }
   ctx.restore();
@@ -2369,6 +2438,14 @@ function _canvasBindEvents() {
     const r = canvas.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
+  // 真实压感:仅 pen 类型设备 (Apple Pencil / Wacom / Surface Pen) 有真值;
+  // 手指 e.pressure 一般是 0 (无压力传感器), 鼠标固定 0.5 → 都视为无压感 (走原固定宽度)
+  function _readPressure(e) {
+    if (e.pointerType === 'pen' && e.pressure > 0 && e.pressure < 1) {
+      return e.pressure;
+    }
+    return 1;   // 触屏/鼠标/未识别 → 固定宽度
+  }
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
@@ -2378,7 +2455,7 @@ function _canvasBindEvents() {
         id: 'st-' + Math.random().toString(36).slice(2, 10),
         color: _canvasState.color,
         width: _canvasState.width,
-        points: [{ x: p.x, y: p.y }],
+        points: [{ x: p.x, y: p.y, p: _readPressure(e) }],
       };
       _canvasState.selection = null;
       _canvasRedraw();
@@ -2414,7 +2491,7 @@ function _canvasBindEvents() {
       const last = pts[pts.length - 1];
       // 间距 < 1.5px 跳过 (减少冗余点)
       if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return;
-      pts.push({ x: p.x, y: p.y });
+      pts.push({ x: p.x, y: p.y, p: _readPressure(e) });
       _canvasRedraw();
     } else if (_canvasState.tool === 'eraser' && (e.buttons & 1 || e.pressure > 0)) {
       _canvasEraseAt(p.x, p.y);

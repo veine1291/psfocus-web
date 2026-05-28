@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0926';
+const _PSFOCUS_BUILD = '20260529-0927';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2054,6 +2054,7 @@ function _renderSummaryEditorPage() {
         <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
         <span class="ico-image"></span>
       </label>`}
+      ${isEdit ? '' : `<button class="sum-tb-btn" data-action="summary-canvas-open" title="手写画布"><span class="ico-edit-pen"></span></button>`}
       ${_sumTbPinnedButtonsHtml()}
       <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
     </div>
@@ -2086,6 +2087,646 @@ function _renderSummaryEditorPage() {
     b.addEventListener('mousedown', e => e.preventDefault());
   });
   if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(body);
+}
+
+// ============================================================
+// 全屏手写画布 (Kayu 2026-05-29) — 矢量笔画 + 框选 + 缩放; 完成时只导出 PNG 上传
+// 数据非持久 (退出即丢), 持久化的是导出的 PNG
+// ============================================================
+const _CV_COLOR_PRESETS = ['#000000', '#1a1a1a', '#C84545', '#3B82F6', '#22A55D', '#F59E0B', '#9333EA', '#EC4899'];
+const _CV_WIDTHS = [1, 2, 3, 5, 8, 14, 22];
+let _canvasState = {
+  open: false,
+  strokes: [],         // [{ id, color, width, points: [{x,y}] }]
+  tool: 'pen',         // 'pen' | 'eraser' | 'select'
+  color: '#000000',
+  width: 3,
+  colorHistory: (() => {
+    try { return JSON.parse(localStorage.getItem('psfocus_canvasColors') || '[]'); }
+    catch (_) { return []; }
+  })(),
+  history: [],         // strokes 快照栈
+  histIdx: -1,
+  selection: null,     // { ids: Set<id>, bbox: {x,y,w,h}, mode: 'idle'|'move'|'scale-br' }
+  currentStroke: null, // 正在画的
+  marquee: null,       // { x0, y0, x1, y1 }
+  // 入口上下文: 'summary-editor' (从摘要编辑页打开) — done 时把 PNG 上传到 summary pendingImages
+  origin: 'summary-editor',
+  // DPR + 画布逻辑尺寸 (CSS px)
+  dpr: 1, w: 0, h: 0,
+  // 渲染 throttle
+  needRedraw: false,
+};
+
+function _canvasSaveColorHistory(color) {
+  if (!color) return;
+  const hist = (_canvasState.colorHistory || []).filter(c => c !== color);
+  hist.unshift(color);
+  _canvasState.colorHistory = hist.slice(0, 8);
+  try { localStorage.setItem('psfocus_canvasColors', JSON.stringify(_canvasState.colorHistory)); } catch (_) {}
+}
+function _canvasPushHistory() {
+  // 深拷贝 strokes 当前快照 → 进栈
+  const snap = JSON.parse(JSON.stringify(_canvasState.strokes));
+  _canvasState.history = _canvasState.history.slice(0, _canvasState.histIdx + 1);
+  _canvasState.history.push(snap);
+  if (_canvasState.history.length > 50) _canvasState.history.shift();
+  _canvasState.histIdx = _canvasState.history.length - 1;
+  _canvasRefreshToolbar();
+}
+function _canvasUndo() {
+  if (_canvasState.histIdx <= 0) return;
+  _canvasState.histIdx--;
+  _canvasState.strokes = JSON.parse(JSON.stringify(_canvasState.history[_canvasState.histIdx]));
+  _canvasState.selection = null;
+  _canvasRedraw();
+  _canvasRefreshToolbar();
+}
+function _canvasRedo() {
+  if (_canvasState.histIdx >= _canvasState.history.length - 1) return;
+  _canvasState.histIdx++;
+  _canvasState.strokes = JSON.parse(JSON.stringify(_canvasState.history[_canvasState.histIdx]));
+  _canvasState.selection = null;
+  _canvasRedraw();
+  _canvasRefreshToolbar();
+}
+
+// 笔画的 bounding box (含线宽)
+function _strokeBBox(s) {
+  if (!s || !s.points || !s.points.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of s.points) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const pad = (s.width || 1) / 2;
+  return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
+}
+function _bboxesOverlap(a, b) {
+  if (!a || !b) return false;
+  return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y);
+}
+function _pointInBBox(p, b) {
+  if (!b) return false;
+  return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+}
+// 点到线段距离 — 橡皮判断用
+function _pointSegDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  let t = lenSq ? ((px - ax) * dx + (py - ay) * dy) / lenSq : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx, cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+function _strokeNearPoint(s, x, y, threshold) {
+  if (!s || !s.points || !s.points.length) return false;
+  const th = threshold + (s.width || 1) / 2;
+  // 先粗筛 bbox
+  const b = _strokeBBox(s);
+  if (!b || !_pointInBBox({ x, y }, { x: b.x - th, y: b.y - th, w: b.w + th * 2, h: b.h + th * 2 })) return false;
+  if (s.points.length === 1) {
+    return Math.hypot(s.points[0].x - x, s.points[0].y - y) <= th;
+  }
+  for (let i = 1; i < s.points.length; i++) {
+    if (_pointSegDist(x, y, s.points[i-1].x, s.points[i-1].y, s.points[i].x, s.points[i].y) <= th) return true;
+  }
+  return false;
+}
+
+// 选区相关
+function _canvasRecalcSelectionBBox() {
+  const sel = _canvasState.selection;
+  if (!sel || !sel.ids || !sel.ids.size) { _canvasState.selection = null; return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of _canvasState.strokes) {
+    if (!sel.ids.has(s.id)) continue;
+    const b = _strokeBBox(s);
+    if (!b) continue;
+    if (b.x < minX) minX = b.x;
+    if (b.y < minY) minY = b.y;
+    if (b.x + b.w > maxX) maxX = b.x + b.w;
+    if (b.y + b.h > maxY) maxY = b.y + b.h;
+  }
+  if (minX === Infinity) { _canvasState.selection = null; return; }
+  sel.bbox = { x: minX - 6, y: minY - 6, w: (maxX - minX) + 12, h: (maxY - minY) + 12 };
+}
+
+// === 渲染 ===
+function _canvasGetCtx() {
+  const canvas = document.getElementById('cvp-canvas');
+  if (!canvas) return null;
+  return canvas.getContext('2d');
+}
+function _canvasRedraw() {
+  const ctx = _canvasGetCtx();
+  if (!ctx) return;
+  const dpr = _canvasState.dpr || 1;
+  // ctx.scale 应用在初始化时, 这里坐标按 CSS px 操作
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);     // reset 给 clear 用
+  const canvas = ctx.canvas;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // 应用 DPR
+  // 背景 (白)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, _canvasState.w, _canvasState.h);
+  // 笔画
+  for (const s of _canvasState.strokes) _canvasDrawStroke(ctx, s);
+  if (_canvasState.currentStroke) _canvasDrawStroke(ctx, _canvasState.currentStroke);
+  // 选区框 + 手柄
+  if (_canvasState.selection && _canvasState.selection.bbox) {
+    const b = _canvasState.selection.bbox;
+    ctx.save();
+    ctx.strokeStyle = '#3B82F6';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.setLineDash([]);
+    // 右下角缩放手柄
+    ctx.fillStyle = '#3B82F6';
+    ctx.fillRect(b.x + b.w - 8, b.y + b.h - 8, 14, 14);
+    ctx.restore();
+  }
+  // 框选预览
+  if (_canvasState.marquee) {
+    const m = _canvasState.marquee;
+    const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
+    ctx.save();
+    ctx.strokeStyle = '#3B82F6';
+    ctx.fillStyle = 'rgba(59,130,246,0.10)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+function _canvasDrawStroke(ctx, s) {
+  if (!s || !s.points || !s.points.length) return;
+  ctx.save();
+  ctx.strokeStyle = s.color || '#000';
+  ctx.lineWidth = s.width || 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const pts = s.points;
+  if (pts.length < 2) {
+    // 单点 → 画个小圆
+    ctx.fillStyle = s.color || '#000';
+    ctx.beginPath();
+    ctx.arc(pts[0].x, pts[0].y, (s.width || 2) / 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    // 二次贝塞尔平滑: 每相邻两点的中点作为终点, 当前点作为控制点
+    for (let i = 1; i < pts.length - 1; i++) {
+      const cx = (pts[i].x + pts[i+1].x) / 2;
+      const cy = (pts[i].y + pts[i+1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, cx, cy);
+    }
+    // 最后一段直接连
+    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 缩放手柄 hit test (右下角 14px)
+function _canvasHandleHit(x, y) {
+  const sel = _canvasState.selection;
+  if (!sel || !sel.bbox) return null;
+  const b = sel.bbox;
+  if (x >= b.x + b.w - 10 && x <= b.x + b.w + 10 && y >= b.y + b.h - 10 && y <= b.y + b.h + 10) {
+    return 'scale-br';
+  }
+  return null;
+}
+
+function openCanvasPage(opts) {
+  _canvasState.open = true;
+  _canvasState.origin = (opts && opts.origin) || 'summary-editor';
+  _canvasState.strokes = [];
+  _canvasState.selection = null;
+  _canvasState.currentStroke = null;
+  _canvasState.marquee = null;
+  _canvasState.tool = 'pen';
+  _canvasState.history = [[]];
+  _canvasState.histIdx = 0;
+  const page = document.getElementById('canvas-page');
+  if (page) page.classList.remove('hidden');
+  document.body.classList.add('canvas-open');
+  // 渲染工具栏 + 初始化 canvas size
+  _canvasRefreshToolbar();
+  // 延后到下一帧再初始化 canvas (DOM 显示后 getBoundingClientRect 才准)
+  requestAnimationFrame(() => {
+    _canvasInitSize();
+    _canvasBindEvents();
+    _canvasRedraw();
+  });
+}
+function closeCanvasPage() {
+  const page = document.getElementById('canvas-page');
+  if (page) page.classList.add('hidden');
+  document.body.classList.remove('canvas-open');
+  _canvasState.open = false;
+  // 不清 strokes — 万一用户误触, 重开还在 (但下次 open 会重置). 这里清干净更安全
+  _canvasState.strokes = [];
+  _canvasState.history = [];
+  _canvasState.histIdx = -1;
+  _canvasState.selection = null;
+  _canvasState.currentStroke = null;
+}
+function _canvasInitSize() {
+  const canvas = document.getElementById('cvp-canvas');
+  const stage = document.getElementById('cvp-stage');
+  if (!canvas || !stage) return;
+  const r = stage.getBoundingClientRect();
+  const w = Math.max(100, Math.floor(r.width));
+  const h = Math.max(100, Math.floor(r.height));
+  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  _canvasState.dpr = dpr;
+  _canvasState.w = w;
+  _canvasState.h = h;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  // 这次只设尺寸, transform 应用在每次 redraw 开头 (setTransform)
+}
+function _canvasBindEvents() {
+  const canvas = document.getElementById('cvp-canvas');
+  if (!canvas || canvas._bound) return;
+  canvas._bound = true;
+  canvas.style.touchAction = 'none';   // 关键: 阻止 iOS 双指缩放/滑动
+  let dragLast = null;     // pointermove 上次位置 (移/缩放用)
+  let scaleAnchor = null;  // 缩放时的固定锚点和原始 bbox
+  function localXY(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    const p = localXY(e);
+    if (_canvasState.tool === 'pen') {
+      _canvasState.currentStroke = {
+        id: 'st-' + Math.random().toString(36).slice(2, 10),
+        color: _canvasState.color,
+        width: _canvasState.width,
+        points: [{ x: p.x, y: p.y }],
+      };
+      _canvasState.selection = null;
+      _canvasRedraw();
+    } else if (_canvasState.tool === 'eraser') {
+      _canvasEraseAt(p.x, p.y);
+      dragLast = p;
+    } else if (_canvasState.tool === 'select') {
+      // 优先看缩放手柄
+      const handle = _canvasHandleHit(p.x, p.y);
+      if (handle === 'scale-br' && _canvasState.selection) {
+        _canvasState.selection.mode = 'scale-br';
+        const b = _canvasState.selection.bbox;
+        scaleAnchor = { ax: b.x, ay: b.y, origW: b.w, origH: b.h, origStrokes: JSON.parse(JSON.stringify(_canvasState.strokes.filter(s => _canvasState.selection.ids.has(s.id)))) };
+        dragLast = p;
+        return;
+      }
+      // 点选区内部 → 拖动
+      if (_canvasState.selection && _pointInBBox(p, _canvasState.selection.bbox)) {
+        _canvasState.selection.mode = 'move';
+        dragLast = p;
+        return;
+      }
+      // 否则开始框选
+      _canvasState.selection = null;
+      _canvasState.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+      _canvasRedraw();
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = localXY(e);
+    if (_canvasState.currentStroke) {
+      const pts = _canvasState.currentStroke.points;
+      const last = pts[pts.length - 1];
+      // 间距 < 1.5px 跳过 (减少冗余点)
+      if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return;
+      pts.push({ x: p.x, y: p.y });
+      _canvasRedraw();
+    } else if (_canvasState.tool === 'eraser' && (e.buttons & 1 || e.pressure > 0)) {
+      _canvasEraseAt(p.x, p.y);
+      dragLast = p;
+    } else if (_canvasState.marquee) {
+      _canvasState.marquee.x1 = p.x;
+      _canvasState.marquee.y1 = p.y;
+      _canvasRedraw();
+    } else if (_canvasState.selection && _canvasState.selection.mode === 'move' && dragLast) {
+      const dx = p.x - dragLast.x, dy = p.y - dragLast.y;
+      for (const s of _canvasState.strokes) {
+        if (!_canvasState.selection.ids.has(s.id)) continue;
+        for (const pt of s.points) { pt.x += dx; pt.y += dy; }
+      }
+      _canvasState.selection.bbox.x += dx;
+      _canvasState.selection.bbox.y += dy;
+      dragLast = p;
+      _canvasRedraw();
+    } else if (_canvasState.selection && _canvasState.selection.mode === 'scale-br' && scaleAnchor) {
+      // 以 (ax, ay) 为锚, 拖动右下角缩放
+      const newW = Math.max(20, p.x - scaleAnchor.ax);
+      const newH = Math.max(20, p.y - scaleAnchor.ay);
+      const sx = newW / scaleAnchor.origW;
+      const sy = newH / scaleAnchor.origH;
+      // 等比 (取较大方向, 避免变形)? 用户可能要等比, 也可能要自由. 默认等比, 取 min
+      const ratio = Math.min(sx, sy);
+      const finalW = scaleAnchor.origW * ratio;
+      const finalH = scaleAnchor.origH * ratio;
+      // 重建 strokes 中的选中部分: pt = ax + (origPt.x - ax) * ratio
+      const origMap = new Map(scaleAnchor.origStrokes.map(s => [s.id, s]));
+      for (const s of _canvasState.strokes) {
+        if (!_canvasState.selection.ids.has(s.id)) continue;
+        const orig = origMap.get(s.id);
+        if (!orig) continue;
+        for (let i = 0; i < s.points.length; i++) {
+          s.points[i].x = scaleAnchor.ax + (orig.points[i].x - scaleAnchor.ax) * ratio;
+          s.points[i].y = scaleAnchor.ay + (orig.points[i].y - scaleAnchor.ay) * ratio;
+        }
+        s.width = (orig.width || 2) * ratio;
+      }
+      _canvasState.selection.bbox = { x: scaleAnchor.ax, y: scaleAnchor.ay, w: finalW, h: finalH };
+      _canvasRedraw();
+    }
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    if (_canvasState.currentStroke) {
+      // 笔画结束 — 入 strokes
+      _canvasState.strokes.push(_canvasState.currentStroke);
+      _canvasState.currentStroke = null;
+      _canvasPushHistory();
+      _canvasRedraw();
+    } else if (_canvasState.marquee) {
+      // 框选结束 — 算出选中的 strokes
+      const m = _canvasState.marquee;
+      const rect = {
+        x: Math.min(m.x0, m.x1), y: Math.min(m.y0, m.y1),
+        w: Math.abs(m.x1 - m.x0), h: Math.abs(m.y1 - m.y0),
+      };
+      _canvasState.marquee = null;
+      if (rect.w > 4 && rect.h > 4) {
+        const ids = new Set();
+        for (const s of _canvasState.strokes) {
+          const b = _strokeBBox(s);
+          if (_bboxesOverlap(b, rect)) ids.add(s.id);
+        }
+        if (ids.size) {
+          _canvasState.selection = { ids, bbox: null, mode: 'idle' };
+          _canvasRecalcSelectionBBox();
+        }
+      }
+      _canvasRedraw();
+    } else if (_canvasState.selection && (_canvasState.selection.mode === 'move' || _canvasState.selection.mode === 'scale-br')) {
+      _canvasState.selection.mode = 'idle';
+      scaleAnchor = null;
+      _canvasPushHistory();
+    } else if (_canvasState.tool === 'eraser') {
+      _canvasPushHistory();
+    }
+    dragLast = null;
+    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+  });
+  canvas.addEventListener('pointercancel', () => {
+    _canvasState.currentStroke = null;
+    _canvasState.marquee = null;
+    if (_canvasState.selection) _canvasState.selection.mode = 'idle';
+    dragLast = null;
+    scaleAnchor = null;
+    _canvasRedraw();
+  });
+  // 窗口 resize → 重新初始化 (按比例保留 strokes 较复杂, 简单起见: 不缩放, 只重设 canvas size 让用户继续画)
+  window.addEventListener('resize', () => {
+    if (!_canvasState.open) return;
+    _canvasInitSize();
+    _canvasRedraw();
+  });
+}
+
+function _canvasEraseAt(x, y) {
+  const th = 8;  // 容差
+  const before = _canvasState.strokes.length;
+  _canvasState.strokes = _canvasState.strokes.filter(s => !_strokeNearPoint(s, x, y, th));
+  if (_canvasState.strokes.length !== before) _canvasRedraw();
+}
+
+// === 工具栏 ===
+function _canvasRefreshToolbar() {
+  const tb = document.getElementById('cvp-toolbar');
+  if (!tb) return;
+  const st = _canvasState;
+  const canUndo = st.histIdx > 0;
+  const canRedo = st.histIdx < st.history.length - 1;
+  tb.innerHTML = `
+    <button class="cvp-tool ${st.tool === 'pen' ? 'active' : ''}" data-action="canvas-tool" data-tool="pen" title="笔">
+      <span class="ico-pencil"></span>
+    </button>
+    <button class="cvp-tool ${st.tool === 'eraser' ? 'active' : ''}" data-action="canvas-tool" data-tool="eraser" title="橡皮">
+      <span class="ico-eraser"></span>
+    </button>
+    <button class="cvp-tool ${st.tool === 'select' ? 'active' : ''}" data-action="canvas-tool" data-tool="select" title="选择">
+      <span class="ico-select"></span>
+    </button>
+    <button class="cvp-tool cvp-tool-color" data-action="canvas-open-color" title="颜色">
+      <span class="cvp-color-swatch" style="background:${esc(st.color)};"></span>
+    </button>
+    <button class="cvp-tool cvp-tool-width" data-action="canvas-open-width" title="笔粗">
+      <span class="cvp-width-dot" style="width:${Math.min(20, st.width + 4)}px; height:${Math.min(20, st.width + 4)}px; background:${esc(st.color)};"></span>
+    </button>
+    <span class="cvp-sep"></span>
+    <button class="cvp-tool" data-action="canvas-undo" ${canUndo ? '' : 'disabled'} title="撤销">
+      <span class="ico-undo"></span>
+    </button>
+    <button class="cvp-tool" data-action="canvas-redo" ${canRedo ? '' : 'disabled'} title="重做">
+      <span class="ico-redo"></span>
+    </button>
+    <button class="cvp-tool cvp-tool-clear" data-action="canvas-clear" title="清空">
+      <span class="ico-trash"></span>
+    </button>
+  `;
+  // 顶栏识别按钮态同步
+  const ocrBtn = document.getElementById('cvp-topbar-ocr');
+  if (ocrBtn) {
+    if (_canvasState.ocrPending) {
+      ocrBtn.classList.add('pending');
+      ocrBtn.disabled = true;
+      ocrBtn.textContent = '识别中…';
+    } else {
+      ocrBtn.classList.remove('pending');
+      ocrBtn.disabled = false;
+      ocrBtn.textContent = '识别';
+    }
+  }
+}
+
+function _canvasOpenColorPopover(anchorBtn) {
+  const pop = document.getElementById('cvp-popover');
+  if (!pop) return;
+  const recent = _canvasState.colorHistory || [];
+  const cur = _canvasState.color;
+  pop.innerHTML = `
+    <div class="cvp-pop-title">预设</div>
+    <div class="cvp-pop-row">
+      ${_CV_COLOR_PRESETS.map(c => `<button class="cvp-color-chip ${c === cur ? 'active' : ''}" data-action="canvas-pick-color" data-c="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
+    </div>
+    ${recent.length ? `<div class="cvp-pop-title">最近</div>
+    <div class="cvp-pop-row">
+      ${recent.map(c => `<button class="cvp-color-chip ${c === cur ? 'active' : ''}" data-action="canvas-pick-color" data-c="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
+    </div>` : ''}
+    <div class="cvp-pop-title">自定义</div>
+    <div class="cvp-pop-row">
+      <label class="cvp-color-custom">
+        <input type="color" id="cvp-color-input" value="${esc(cur)}">
+        <span>选取任意颜色</span>
+      </label>
+    </div>
+  `;
+  _canvasShowPopover(pop, anchorBtn);
+  const inp = document.getElementById('cvp-color-input');
+  if (inp) inp.addEventListener('input', () => {
+    _canvasState.color = inp.value;
+    _canvasSaveColorHistory(inp.value);
+    _canvasRefreshToolbar();
+  });
+  inp && inp.addEventListener('change', () => {
+    _canvasHidePopover();
+  });
+}
+function _canvasOpenWidthPopover(anchorBtn) {
+  const pop = document.getElementById('cvp-popover');
+  if (!pop) return;
+  pop.innerHTML = `
+    <div class="cvp-pop-title">笔粗</div>
+    <div class="cvp-pop-row cvp-width-row">
+      ${_CV_WIDTHS.map(w => `<button class="cvp-width-chip ${w === _canvasState.width ? 'active' : ''}" data-action="canvas-pick-width" data-w="${w}">
+        <span class="cvp-width-preview" style="width:${Math.min(24, w + 4)}px; height:${Math.min(24, w + 4)}px; background:${esc(_canvasState.color)};"></span>
+      </button>`).join('')}
+    </div>
+    <div class="cvp-pop-title">自定义 (1-30)</div>
+    <div class="cvp-pop-row">
+      <input type="range" id="cvp-width-slider" min="1" max="30" value="${_canvasState.width}" class="cvp-width-slider">
+      <span class="cvp-width-num" id="cvp-width-num">${_canvasState.width}</span>
+    </div>
+  `;
+  _canvasShowPopover(pop, anchorBtn);
+  const slider = document.getElementById('cvp-width-slider');
+  const num = document.getElementById('cvp-width-num');
+  if (slider) slider.addEventListener('input', () => {
+    _canvasState.width = parseInt(slider.value, 10) || 3;
+    if (num) num.textContent = _canvasState.width;
+    _canvasRefreshToolbar();
+  });
+}
+function _canvasShowPopover(pop, anchor) {
+  pop.classList.remove('hidden');
+  if (anchor) {
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = Math.max(8, r.left) + 'px';
+    pop.style.top = (r.bottom + 6) + 'px';
+    // 防超右边
+    requestAnimationFrame(() => {
+      const pr = pop.getBoundingClientRect();
+      if (pr.right > window.innerWidth - 8) pop.style.left = Math.max(8, window.innerWidth - pr.width - 8) + 'px';
+    });
+  }
+  // 点空白关
+  const onDoc = (e) => {
+    if (pop.contains(e.target)) return;
+    if (e.target.closest('[data-action="canvas-open-color"]') || e.target.closest('[data-action="canvas-open-width"]')) return;
+    _canvasHidePopover();
+    document.removeEventListener('click', onDoc);
+  };
+  setTimeout(() => document.addEventListener('click', onDoc), 50);
+}
+function _canvasHidePopover() {
+  const pop = document.getElementById('cvp-popover');
+  if (pop) pop.classList.add('hidden');
+}
+
+// === 完成: 导出 PNG + 上传 + 进 pendingImages ===
+async function _canvasFinish() {
+  const canvas = document.getElementById('cvp-canvas');
+  if (!canvas) { closeCanvasPage(); return; }
+  if (!_canvasState.strokes.length) {
+    showToast('画布是空的');
+    closeCanvasPage();
+    return;
+  }
+  // 取消选区高亮再导出 (避免蓝框出现在 PNG 里)
+  _canvasState.selection = null;
+  _canvasState.marquee = null;
+  _canvasRedraw();
+  // 裁剪到内容 bbox + padding (避免周围一大圈空白)
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of _canvasState.strokes) {
+    const b = _strokeBBox(s);
+    if (!b) continue;
+    if (b.x < minX) minX = b.x;
+    if (b.y < minY) minY = b.y;
+    if (b.x + b.w > maxX) maxX = b.x + b.w;
+    if (b.y + b.h > maxY) maxY = b.y + b.h;
+  }
+  const pad = 12;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(_canvasState.w, maxX + pad);
+  maxY = Math.min(_canvasState.h, maxY + pad);
+  const cropW = Math.max(40, maxX - minX);
+  const cropH = Math.max(40, maxY - minY);
+  // 创建离屏 canvas, 按 DPR 抓取
+  const dpr = _canvasState.dpr || 1;
+  const off = document.createElement('canvas');
+  off.width = Math.round(cropW * dpr);
+  off.height = Math.round(cropH * dpr);
+  const offCtx = off.getContext('2d');
+  offCtx.drawImage(canvas,
+    Math.round(minX * dpr), Math.round(minY * dpr),
+    Math.round(cropW * dpr), Math.round(cropH * dpr),
+    0, 0, off.width, off.height);
+  // 导出 PNG
+  const blob = await new Promise(res => off.toBlob(b => res(b), 'image/png'));
+  if (!blob) { showToast('导出失败'); closeCanvasPage(); return; }
+  // 上传
+  if (!window.tcbApp || !tcbApp.uploadFile) {
+    showToast('未登录云同步,无法保存画布');
+    closeCanvasPage();
+    return;
+  }
+  showToast('保存画布…');
+  try {
+    const fname = `handwriting-${Date.now()}.png`;
+    const cloudPath = `psfocus-summary-images/${uid || 'anon'}/${Date.now()}-${fname}`;
+    const file = new File([blob], fname, { type: 'image/png' });
+    const res = await tcbApp.uploadFile({ cloudPath, filePath: file });
+    const fileID = res && res.fileID;
+    if (fileID) {
+      summaryState.pendingImages.push({
+        id: 'img-' + Math.random().toString(36).slice(2, 10),
+        cloudFileID: fileID, name: fname, uploadedAt: Date.now(),
+      });
+      showToast('已加到笔记');
+      // 关画布, 刷新摘要编辑页的待发布图区
+      closeCanvasPage();
+      if (_summaryEditorPage.open) _renderSummaryEditorPage();
+      _refreshSumPendingImagesInSheet();
+    } else {
+      showToast('上传失败');
+      closeCanvasPage();
+    }
+  } catch (err) {
+    console.warn('[canvas-upload]', err);
+    showToast('上传失败: ' + (err && err.message || err));
+    closeCanvasPage();
+  }
 }
 
 function _summaryPrefillFilterTagIfEmpty() {
@@ -2224,6 +2865,7 @@ function _rerenderSumToolbar() {
         <input type="file" accept="image/*" multiple data-action="summary-upload-image" hidden>
         <span class="ico-image"></span>
       </label>`}
+      ${isEdit ? '' : `<button class="sum-tb-btn" data-action="summary-canvas-open" title="手写画布"><span class="ico-edit-pen"></span></button>`}
       ${_sumTbPinnedButtonsHtml()}
       <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
     `;
@@ -3720,6 +4362,123 @@ const _summaryActions = {
     }
   },
   // ===== 全屏笔记编辑页 (Kayu 2026-05-29) =====
+  // ===== 手写画布入口 + 内部操作 (Kayu 2026-05-29) =====
+  // canvas-* 走 _summaryActions 注:dispatcher 只接 summary-* / concept-*, 这些 canvas-*
+  // 我得在 dispatcher 里加 'canvas-' 前缀;但更简单: 直接前缀改成 summary-canvas-*
+  'summary-canvas-open': () => {
+    // 当前从摘要编辑页打开; 关闭弹出的 popover/sheet
+    closeSheet();
+    openCanvasPage({ origin: 'summary-editor' });
+  },
+  'canvas-close': () => {
+    if (_canvasState.strokes && _canvasState.strokes.length) {
+      if (!confirm('画布有内容,确定放弃?')) return;
+    }
+    closeCanvasPage();
+  },
+  'canvas-done': () => { _canvasFinish(); },
+  'canvas-tool': (el) => {
+    const t = el && el.dataset && el.dataset.tool;
+    if (!t) return;
+    _canvasState.tool = t;
+    if (t !== 'select') _canvasState.selection = null;
+    _canvasHidePopover();
+    _canvasRefreshToolbar();
+    _canvasRedraw();
+  },
+  'canvas-open-color': (el) => { _canvasOpenColorPopover(el); },
+  'canvas-open-width': (el) => { _canvasOpenWidthPopover(el); },
+  'canvas-pick-color': (el) => {
+    const c = el && el.dataset && el.dataset.c;
+    if (!c) return;
+    _canvasState.color = c;
+    _canvasSaveColorHistory(c);
+    _canvasRefreshToolbar();
+    _canvasHidePopover();
+  },
+  'canvas-pick-width': (el) => {
+    const w = parseInt(el && el.dataset && el.dataset.w, 10);
+    if (!Number.isFinite(w)) return;
+    _canvasState.width = w;
+    _canvasRefreshToolbar();
+    _canvasHidePopover();
+  },
+  'canvas-undo': () => { _canvasUndo(); },
+  'canvas-redo': () => { _canvasRedo(); },
+  'canvas-clear': () => {
+    if (!_canvasState.strokes.length) return;
+    if (!confirm('清空画布?')) return;
+    _canvasState.strokes = [];
+    _canvasState.selection = null;
+    _canvasPushHistory();
+    _canvasRedraw();
+  },
+  // OCR — 调云函数 ocrHandwriting (用户需在 CloudBase 控制台部署, 见 cloudfunctions/ocrHandwriting/README.md)
+  'canvas-ocr': async () => {
+    if (_canvasState.ocrPending) return;
+    if (!_canvasState.strokes.length) { showToast('画布是空的'); return; }
+    if (!window.tcbApp || !tcbApp.callFunction) { showToast('未登录云同步,无法识别'); return; }
+    _canvasState.ocrPending = true;
+    _canvasRefreshToolbar();
+    try {
+      // 把当前画布导出为 PNG base64 (截到内容 bbox, 跟 _canvasFinish 同款)
+      _canvasState.selection = null;
+      _canvasState.marquee = null;
+      _canvasRedraw();
+      const canvas = document.getElementById('cvp-canvas');
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const s of _canvasState.strokes) {
+        const b = _strokeBBox(s);
+        if (!b) continue;
+        if (b.x < minX) minX = b.x;
+        if (b.y < minY) minY = b.y;
+        if (b.x + b.w > maxX) maxX = b.x + b.w;
+        if (b.y + b.h > maxY) maxY = b.y + b.h;
+      }
+      const pad = 12;
+      minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+      maxX = Math.min(_canvasState.w, maxX + pad); maxY = Math.min(_canvasState.h, maxY + pad);
+      const cropW = Math.max(40, maxX - minX), cropH = Math.max(40, maxY - minY);
+      const dpr = _canvasState.dpr || 1;
+      const off = document.createElement('canvas');
+      off.width = Math.round(cropW * dpr);
+      off.height = Math.round(cropH * dpr);
+      off.getContext('2d').drawImage(canvas,
+        Math.round(minX * dpr), Math.round(minY * dpr),
+        Math.round(cropW * dpr), Math.round(cropH * dpr),
+        0, 0, off.width, off.height);
+      const dataUrl = off.toDataURL('image/png');
+      const base64 = dataUrl.split(',')[1];
+      showToast('识别中…');
+      const res = await tcbApp.callFunction({ name: 'ocrHandwriting', data: { imageBase64: base64 } });
+      const r = res && res.result;
+      if (!r || r.code !== 0) {
+        const msg = (r && r.msg) || '识别失败';
+        showToast('OCR 失败: ' + msg);
+        return;
+      }
+      const text = (r.text || '').trim();
+      if (!text) { showToast('没识别到文字'); return; }
+      // 把识别结果追加到摘要编辑页 draft (或编辑模式的 editingMd)
+      if (_summaryEditorPage.open) {
+        if (_summaryEditorPage.mode === 'edit') {
+          _summaryEditorPage.editingMd = ((_summaryEditorPage.editingMd || '').trimEnd() + '\n' + text).trim();
+        } else {
+          summaryState.draftNote = ((summaryState.draftNote || '').trimEnd() + '\n' + text).trim();
+        }
+      }
+      showToast('已插入识别文字 (' + text.length + ' 字)');
+      // 关画布回编辑页 → 重渲让新文字出现
+      closeCanvasPage();
+      if (_summaryEditorPage.open) _renderSummaryEditorPage();
+    } catch (err) {
+      console.warn('[canvas-ocr]', err);
+      showToast('OCR 失败: ' + (err && err.message || err));
+    } finally {
+      _canvasState.ocrPending = false;
+      _canvasRefreshToolbar();
+    }
+  },
   'summary-editor-page-close': () => {
     // 返回前先把编辑器最新值同步到 state (防 RAF 还没跑就退出)
     const ed = document.querySelector('#sum-editor-page-body .sum-input.sep-editor');
@@ -4432,33 +5191,34 @@ const _summaryActions = {
   },
 };
 
-// 全局 dispatcher — 把 summary-* 的 click/input/blur/change 路由到 _summaryActions
+// 全局 dispatcher — 把 summary-* / concept-* / canvas-* 的 click/input/blur/change 路由到 _summaryActions
 function _bindSummaryGlobalDispatchers() {
   if (window._summaryDispatchersBound) return;
   window._summaryDispatchersBound = true;
+  const _isMyAction = (a) => a && (a.startsWith('summary-') || a.startsWith('concept-') || a.startsWith('canvas-'));
   document.addEventListener('click', (e) => {
     const el = e.target.closest && e.target.closest('[data-action]');
     if (!el) return;
     const a = el.dataset.action;
-    if (a && (a.startsWith('summary-') || a.startsWith('concept-')) && _summaryActions[a]) _summaryActions[a](el, e);
+    if (_isMyAction(a) && _summaryActions[a]) _summaryActions[a](el, e);
   });
   document.addEventListener('input', (e) => {
     const el = e.target.closest && e.target.closest('[data-action-input]');
     if (!el) return;
     const a = el.dataset.actionInput;
-    if (a && (a.startsWith('summary-') || a.startsWith('concept-')) && _summaryActions[a]) _summaryActions[a](el, e);
+    if (_isMyAction(a) && _summaryActions[a]) _summaryActions[a](el, e);
   });
   document.addEventListener('change', (e) => {
     const el = e.target.closest && e.target.closest('[data-action-change],[data-action]');
     if (!el) return;
     const a = el.dataset.actionChange || el.dataset.action;
-    if (a && (a.startsWith('summary-') || a.startsWith('concept-')) && _summaryActions[a]) _summaryActions[a](el, e);
+    if (_isMyAction(a) && _summaryActions[a]) _summaryActions[a](el, e);
   });
   document.addEventListener('blur', (e) => {
     const el = e.target.closest && e.target.closest('[data-action-blur]');
     if (!el) return;
     const a = el.dataset.actionBlur;
-    if (a && (a.startsWith('summary-') || a.startsWith('concept-')) && _summaryActions[a]) _summaryActions[a](el, e);
+    if (_isMyAction(a) && _summaryActions[a]) _summaryActions[a](el, e);
   }, true);
 }
 _bindSummaryGlobalDispatchers();

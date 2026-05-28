@@ -10,7 +10,7 @@
   <!-- 不能用 no-store,会禁掉 iOS / Chrome 的 BFCache,导致每次切回 tab 都要全量 reload -->
   <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
   <title>PS Focus</title>
-  <link rel="stylesheet" href="style.css?v=20260529-0926">
+  <link rel="stylesheet" href="style.css?v=20260529-0927">
 </head>
 <body>
 
@@ -119,11 +119,27 @@
   <div id="sum-editor-page-body" class="sum-editor-page-body"></div>
 </div>
 
+<!-- 全屏手写画布 (Kayu 2026-05-29 提议) — 笔 + 颜色 + 橡皮 + 框选移动/缩放, 结束导出 PNG 进 pendingImages -->
+<div id="canvas-page" class="canvas-page hidden">
+  <header class="cvp-topbar">
+    <button class="cvp-topbar-btn" data-action="canvas-close" aria-label="返回"><span class="ico-chevron-left"></span></button>
+    <div class="cvp-topbar-title">手写画布</div>
+    <button id="cvp-topbar-ocr" class="cvp-topbar-ocr" data-action="canvas-ocr" title="识别为文字">识别</button>
+    <button class="cvp-topbar-done" data-action="canvas-done">完成</button>
+  </header>
+  <div class="cvp-toolbar" id="cvp-toolbar"></div>
+  <div class="cvp-stage" id="cvp-stage">
+    <canvas id="cvp-canvas" class="cvp-canvas"></canvas>
+    <!-- 颜色 / 笔粗滑条的 popover, 由 JS 动态填入 -->
+    <div id="cvp-popover" class="cvp-popover hidden"></div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div id="toast" class="toast hidden"></div>
 
 <!-- 腾讯云 CloudBase SDK(暴露 window.cloudbase) -->
 <script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js?v=1"></script>
-<script src="app.js?v=20260529-0926"></script>
+<script src="app.js?v=20260529-0927"></script>
 </body>
 </html>

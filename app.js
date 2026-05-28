@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0928';
+const _PSFOCUS_BUILD = '20260529-0929';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2322,44 +2322,25 @@ function _canvasDrawStroke(ctx, s) {
     ctx.restore();
     return;
   }
-  // 有压感 → 分段渲染, 每段宽度按相邻两点平均压力插值
-  // 用中点为锚, 二次贝塞尔以原点作控制点 — 跟无压感渲染的形状一致, 只是分段
-  // 段 i: 从 mid(i-1, i) → curve via pts[i] → mid(i, i+1), lineWidth = avg(p[i-1], p[i+1])
-  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-  // 第一段: 起点 → mid(0,1), 宽度按 p[0]/p[1] 平均
-  {
-    const m01 = mid(pts[0], pts[1]);
-    const p = (((pts[0].p != null ? pts[0].p : 1) + (pts[1].p != null ? pts[1].p : 1)) / 2);
-    ctx.lineWidth = Math.max(0.3, baseW * _mapPressureToScale(p));
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    ctx.lineTo(m01.x, m01.y);
-    ctx.stroke();
+  // 有压感 → 每相邻两点一段 (短段, lineCap=round 衔接自然)
+  // Canvas 2D 的 lineWidth 一段 path 内不能渐变, 所以段越短越接近"段内渐变"。
+  // Apple Pencil 60-120Hz 采样, 相邻点 2-8px, 视觉上跟连续渐变无差别。
+  // 每段宽度 = baseWidth * map( (p[i] + p[i+1]) / 2 )
+  // 同时对 pressure 做 3 点滑动平均, 压平采样抖动
+  const smoothP = new Array(pts.length);
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)].p != null ? pts[Math.max(0, i - 1)].p : 1;
+    const b = pts[i].p != null ? pts[i].p : 1;
+    const c = pts[Math.min(pts.length - 1, i + 1)].p != null ? pts[Math.min(pts.length - 1, i + 1)].p : 1;
+    smoothP[i] = (a + b + c) / 3;
   }
-  // 中间段: mid(i-1,i) → quadCurve via pts[i] → mid(i,i+1)
-  for (let i = 1; i < pts.length - 1; i++) {
-    const mPrev = mid(pts[i-1], pts[i]);
-    const mNext = mid(pts[i], pts[i+1]);
-    const pi = pts[i].p != null ? pts[i].p : 1;
-    const pPrev = pts[i-1].p != null ? pts[i-1].p : 1;
-    const pNext = pts[i+1].p != null ? pts[i+1].p : 1;
-    // 段宽 = (prev + cur + next) / 3, 平滑掉抖动
-    const p = (pPrev + pi + pNext) / 3;
-    ctx.lineWidth = Math.max(0.3, baseW * _mapPressureToScale(p));
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i+1];
+    const avgP = (smoothP[i] + smoothP[i+1]) / 2;
+    ctx.lineWidth = Math.max(0.3, baseW * _mapPressureToScale(avgP));
     ctx.beginPath();
-    ctx.moveTo(mPrev.x, mPrev.y);
-    ctx.quadraticCurveTo(pts[i].x, pts[i].y, mNext.x, mNext.y);
-    ctx.stroke();
-  }
-  // 末段: mid(n-2, n-1) → pts[n-1]
-  {
-    const n = pts.length;
-    const mN = mid(pts[n-2], pts[n-1]);
-    const p = (((pts[n-2].p != null ? pts[n-2].p : 1) + (pts[n-1].p != null ? pts[n-1].p : 1)) / 2);
-    ctx.lineWidth = Math.max(0.3, baseW * _mapPressureToScale(p));
-    ctx.beginPath();
-    ctx.moveTo(mN.x, mN.y);
-    ctx.lineTo(pts[n-1].x, pts[n-1].y);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
     ctx.stroke();
   }
   ctx.restore();
@@ -2446,8 +2427,27 @@ function _canvasBindEvents() {
     }
     return 1;   // 触屏/鼠标/未识别 → 固定宽度
   }
+  // 当前激活的 pointerId — 只跟踪第一根, 其它 (多指/手掌误触) 一律忽略
+  let _activePointerId = null;
+  // RAF 节流: pointermove 60Hz 触发, 但 redraw 集成到下一帧, 避免每个 move 都同步重渲整个 canvas
+  let _moveRAF = null;
+  function _scheduleRedraw() {
+    if (_moveRAF) return;
+    _moveRAF = requestAnimationFrame(() => { _moveRAF = null; _canvasRedraw(); });
+  }
   canvas.addEventListener('pointerdown', (e) => {
+    // 关键保护 1: 只接受 primary pointer (主指), 多指 / Pencil + 手掌 同时下 → 丢非主
+    // 这避免第二个 pointerdown 覆盖正在画的 currentStroke (→ 上一笔从未入库, 看起来"消失")
+    if (!e.isPrimary) { e.preventDefault(); return; }
+    // 关键保护 2: 若 currentStroke 还在 (上一次 pointerup 漏触发 / cancel 没清),
+    // 先把它入 strokes 库, 别让新 down 直接覆盖丢笔画
+    if (_canvasState.currentStroke && _canvasState.currentStroke.points && _canvasState.currentStroke.points.length >= 1) {
+      _canvasState.strokes.push(_canvasState.currentStroke);
+      _canvasState.currentStroke = null;
+      _canvasPushHistory();
+    }
     e.preventDefault();
+    _activePointerId = e.pointerId;
     canvas.setPointerCapture(e.pointerId);
     const p = localXY(e);
     if (_canvasState.tool === 'pen') {
@@ -2458,7 +2458,7 @@ function _canvasBindEvents() {
         points: [{ x: p.x, y: p.y, p: _readPressure(e) }],
       };
       _canvasState.selection = null;
-      _canvasRedraw();
+      _scheduleRedraw();
     } else if (_canvasState.tool === 'eraser') {
       _canvasEraseAt(p.x, p.y);
       dragLast = p;
@@ -2485,6 +2485,8 @@ function _canvasBindEvents() {
     }
   });
   canvas.addEventListener('pointermove', (e) => {
+    // 忽略非激活 pointer (多指/手掌)
+    if (_activePointerId != null && e.pointerId !== _activePointerId) return;
     const p = localXY(e);
     if (_canvasState.currentStroke) {
       const pts = _canvasState.currentStroke.points;
@@ -2492,14 +2494,14 @@ function _canvasBindEvents() {
       // 间距 < 1.5px 跳过 (减少冗余点)
       if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return;
       pts.push({ x: p.x, y: p.y, p: _readPressure(e) });
-      _canvasRedraw();
+      _scheduleRedraw();
     } else if (_canvasState.tool === 'eraser' && (e.buttons & 1 || e.pressure > 0)) {
       _canvasEraseAt(p.x, p.y);
       dragLast = p;
     } else if (_canvasState.marquee) {
       _canvasState.marquee.x1 = p.x;
       _canvasState.marquee.y1 = p.y;
-      _canvasRedraw();
+      _scheduleRedraw();
     } else if (_canvasState.selection && _canvasState.selection.mode === 'move' && dragLast) {
       const dx = p.x - dragLast.x, dy = p.y - dragLast.y;
       for (const s of _canvasState.strokes) {
@@ -2509,7 +2511,7 @@ function _canvasBindEvents() {
       _canvasState.selection.bbox.x += dx;
       _canvasState.selection.bbox.y += dy;
       dragLast = p;
-      _canvasRedraw();
+      _scheduleRedraw();
     } else if (_canvasState.selection && _canvasState.selection.mode === 'scale-br' && scaleAnchor) {
       // 以 (ax, ay) 为锚, 拖动右下角缩放
       const newW = Math.max(20, p.x - scaleAnchor.ax);
@@ -2533,10 +2535,15 @@ function _canvasBindEvents() {
         s.width = (orig.width || 2) * ratio;
       }
       _canvasState.selection.bbox = { x: scaleAnchor.ax, y: scaleAnchor.ay, w: finalW, h: finalH };
-      _canvasRedraw();
+      _scheduleRedraw();
     }
   });
   canvas.addEventListener('pointerup', (e) => {
+    // 仅处理 active pointer 的 up; 别的 (多指/手掌) up 不影响主笔
+    if (_activePointerId != null && e.pointerId !== _activePointerId) return;
+    _activePointerId = null;
+    // 取消 pending RAF, 立即同步落地一次, 保证 currentStroke 入库前最后一帧渲染到位
+    if (_moveRAF) { cancelAnimationFrame(_moveRAF); _moveRAF = null; }
     if (_canvasState.currentStroke) {
       // 笔画结束 — 入 strokes
       _canvasState.strokes.push(_canvasState.currentStroke);
@@ -2573,8 +2580,17 @@ function _canvasBindEvents() {
     dragLast = null;
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
   });
-  canvas.addEventListener('pointercancel', () => {
-    _canvasState.currentStroke = null;
+  canvas.addEventListener('pointercancel', (e) => {
+    if (_activePointerId != null && e.pointerId !== _activePointerId) return;
+    _activePointerId = null;
+    if (_moveRAF) { cancelAnimationFrame(_moveRAF); _moveRAF = null; }
+    // cancel 不是 up — 笔画半途取消 (如 iOS 滑出/手势), 保住已画的部分: push 入 strokes
+    // 这避免 currentStroke 被丢, 用户画一半被系统打断后整笔消失
+    if (_canvasState.currentStroke && _canvasState.currentStroke.points && _canvasState.currentStroke.points.length >= 1) {
+      _canvasState.strokes.push(_canvasState.currentStroke);
+      _canvasState.currentStroke = null;
+      _canvasPushHistory();
+    }
     _canvasState.marquee = null;
     if (_canvasState.selection) _canvasState.selection.mode = 'idle';
     dragLast = null;

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0943';
+const _PSFOCUS_BUILD = '20260529-0944';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -4072,9 +4072,11 @@ function _renderSummaryList() {
     byDay.get(k).push(s);
   }
   // 收集所有"有活动"的天:笔记 / session / 模块 / 今天
-  // 过滤模式(tag / search)下只看笔记 days,避免无关空 day 干扰筛选结果
+  // 过滤模式(tag / search / 高级筛选)下只看笔记 days,避免无关空 day 干扰筛选结果
+  const advActive = (typeof _summaryAnyFilterActive === 'function') && _summaryAnyFilterActive();
+  const isMainView = filter === 'all' && !q && !advActive;
   const activeDays = new Set(byDay.keys());
-  if (filter === 'all' && !q) {
+  if (isMainView) {
     for (const s of (state.sessions || [])) {
       if (s.startedAt) activeDays.add(_summaryDayKey(s.startedAt));
     }
@@ -4085,11 +4087,11 @@ function _renderSummaryList() {
     activeDays.add(_todayKey());
   }
   if (!activeDays.size) {
-    return `<div class="sum-empty">${q || filter !== 'all' ? '没有符合的笔记' : '还没有笔记 — 上面输入框写一条'}</div>`;
+    return `<div class="sum-empty">${q || filter !== 'all' || advActive ? '没有符合的笔记' : '还没有笔记 — 上面输入框写一条'}</div>`;
   }
   const maxDays = Math.max(1, summaryState.visibleDaysCount || 20);
   let sortedKeys, moreDays;
-  if (filter === 'all' && !q) {
+  if (isMainView) {
     // 主视图:从今天往回连续 N 天(空天也显示 — 可点铅笔补录)+ 更早的活跃天
     const now = new Date();
     const contiguous = [];
@@ -4103,7 +4105,7 @@ function _renderSummaryList() {
     moreDays = olderActiveSorted.length - olderShown.length;
     sortedKeys = contiguous.concat(olderShown);
   } else {
-    // 搜索 / 筛选:只显示有结果的天,不补空
+    // 搜索 / 筛选 / 高级筛选:只显示有结果的天,不补空
     const sortedAllKeys = Array.from(activeDays).sort().reverse();
     sortedKeys = sortedAllKeys.slice(0, maxDays);
     moreDays = sortedAllKeys.length - sortedKeys.length;

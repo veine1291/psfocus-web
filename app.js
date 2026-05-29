@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0933';
+const _PSFOCUS_BUILD = '20260529-0934';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2443,8 +2443,26 @@ function openCanvasPage(opts) {
     _canvasInitSize();
     _canvasBindEvents();
     _canvasBindWindowDiag();
+    _canvasBindPageTouchBlock();
     _canvasRedraw();
     _dbgLastStrokesCount = 0;  // 重置 alarm 比对基线
+  });
+}
+
+// 整个 canvas-page 级别的 touch 拦截 — Pencil 在 toolbar / stage padding 上也不能触发 iOS 手势
+// 注意:不能在 toolbar 按钮上 preventDefault, 否则点击失效。在 capture phase 用 stopPropagation 跳过 button
+function _canvasBindPageTouchBlock() {
+  const page = document.getElementById('canvas-page');
+  if (!page || page._touchBound) return;
+  page._touchBound = true;
+  ['touchstart', 'touchmove'].forEach(ev => {
+    page.addEventListener(ev, (e) => {
+      // 在交互元素上 (按钮 / input / 滑条 / label) 不 preventDefault, 让 iOS 处理 tap
+      const t = e.target;
+      if (t && t.closest && t.closest('button, input, label, [role="button"]')) return;
+      // 其它区域 (canvas / stage padding / topbar 空白) 全 reject
+      e.preventDefault();
+    }, { passive: false });
   });
 }
 
@@ -2497,8 +2515,16 @@ function _canvasBindEvents() {
   canvas._bound = true;
   canvas.style.touchAction = 'none';   // 关键: 阻止 iOS 双指缩放/滑动
   // 多层防 iOS Pencil 触发"选择内容"高亮 / "Scribble" / contextmenu
-  ['selectstart', 'dragstart', 'contextmenu', 'gesturestart'].forEach(ev => {
+  ['selectstart', 'dragstart', 'contextmenu', 'gesturestart', 'gesturechange', 'gestureend'].forEach(ev => {
     canvas.addEventListener(ev, (e) => e.preventDefault());
+  });
+  // ⭐ iOS Safari 关键: Pencil 触发 Scribble / "选择并显示拷贝菜单" 是走 TouchEvents 的,
+  // 光拦 PointerEvents 不够 — Safari 同时分发两套事件流, 必须 touch 也 preventDefault
+  // 否则 iOS 会判断"Pencil 划过文本" → 弹 Edit Menu (拷贝/查找/翻译...)
+  ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach(ev => {
+    canvas.addEventListener(ev, (e) => {
+      e.preventDefault();   // 阻止 iOS 默认手势, pointer events 仍正常分发
+    }, { passive: false });
   });
   let dragLast = null;     // pointermove 上次位置 (移/缩放用)
   let scaleAnchor = null;  // 缩放时的固定锚点和原始 bbox

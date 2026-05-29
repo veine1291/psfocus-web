@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-2044';
+const _PSFOCUS_BUILD = '20260530-0552';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -5545,6 +5545,7 @@ const _summaryActions = {
       </div>
     `, {
       noSwipeClose: true,   // iPad 上 picker 弹起时手指容易碰 sheet 顶部, 关掉自动滑关
+      noMaskClose: true,    // iOS picker 关闭瞬间合成 click 容易落在 mask 上误关 sheet
       onMount: (body) => {
         // input change → 立即应用 + 关 sheet (iPad 上 viewport 变化也不影响)
         const inp = body.querySelector('#sum-date-sheet-input');
@@ -10180,23 +10181,26 @@ function openTagEditor(id) {
 }
 
 // ----- 通用 sheet 显示 -----
-// 第二参数可以是 function (老接口, onMount) 或 object ({ onMount, noSwipeClose })
+// 第二参数可以是 function (老接口, onMount) 或 object ({ onMount, noSwipeClose, noMaskClose })
+// - noSwipeClose: 不绑顶部下拉关闭手势 (iPad picker 弹起时手指容易碰)
+// - noMaskClose: 点 mask 不关 sheet (iOS native picker 关闭瞬间合成 click 容易落在 mask 上误关)
 function showSheet(html, onMountOrOpts) {
   const sheet = $('sheet'), body = $('sheet-body');
   body.innerHTML = html;
   body.style.transform = '';
   body.style.transition = '';
   sheet.classList.remove('hidden');
-  let onMount = null, noSwipeClose = false;
+  let onMount = null, noSwipeClose = false, noMaskClose = false;
   if (typeof onMountOrOpts === 'function') {
     onMount = onMountOrOpts;
   } else if (onMountOrOpts && typeof onMountOrOpts === 'object') {
     onMount = onMountOrOpts.onMount;
     noSwipeClose = !!onMountOrOpts.noSwipeClose;
+    noMaskClose = !!onMountOrOpts.noMaskClose;
   }
+  // 标记到 DOM 上, 全局 close-sheet handler 会检查 (line ~14393)
+  sheet.dataset.noMaskClose = noMaskClose ? '1' : '';
   if (onMount) onMount(body);
-  // noSwipeClose: 适合 iPad 上需要弹 native picker 的 sheet (date picker 等)
-  // 否则 picker 弹起时手指在 sheet 顶部滑动会误关
   if (!noSwipeClose) bindSheetSwipeClose(body);
 }
 function closeSheet() {
@@ -14390,7 +14394,17 @@ function bindGlobalEvents() {
     if (t.dataset && t.dataset.action === 'close-drawer-nav') closeDrawerNav();
     if (t.dataset && t.dataset.action === 'close-drawer-right') closeCalendarSidebar();
     if (t.dataset && t.dataset.action === 'close-popover') closePopover();
-    if (t.dataset && t.dataset.action === 'close-sheet') closeSheet();
+    if (t.dataset && t.dataset.action === 'close-sheet') {
+      // 防误关: sheet 标记了 noMaskClose 且 target 是 mask → 拒绝
+      // 适合需要 native picker (input[type=date] 等) 的 sheet, iOS 关 picker 时
+      // 合成 click 容易落在 mask 上把 sheet 一起关掉
+      const sheet = $('sheet');
+      if (sheet && sheet.dataset.noMaskClose === '1' && t.classList && t.classList.contains('sheet-mask')) {
+        // 让用户必须点 sheet 内的"取消"按钮 (那是 .modal-btn, 不是 .sheet-mask)
+        return;
+      }
+      closeSheet();
+    }
   });
   // tab bar 由 renderTabBar 自带 click handler,这里不再重复绑定
   // FAB 短按 = 新建任务;长按 = 从模板创建

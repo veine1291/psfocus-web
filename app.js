@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-1404';
+const _PSFOCUS_BUILD = '20260529-1606';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1723,15 +1723,23 @@ function _summaryModulesForDay(dayKey) {
 // 让"今天"自动继承"最近一天"的模板(空 entries),实现"添加过的模块每天都在,无需每天单独加"
 // 只在今天 key 完全不存在时跑一次;用户删了今天的模块后,本次不会自动恢复 — 明天 ensure 会照搬今天(含删除)
 // 注:用"最近一天"(可能是空数组)而不是"最近有模块的一天" — 这样用户清空今天意图能传递到后续
-function _summaryEnsureTodayHasTemplates() {
-  const todayKey = _todayKey();
+// 给指定日期补一份模块模板 (复制最近一天的模块结构, entries 清空)
+// 用在: 今日 (启动时) / 改草稿日期到一个还没设过模块的日 (Kayu 2026-05-29)
+function _summaryEnsureDayHasTemplates(dayKey) {
+  if (!dayKey) return;
   if (!state.summaryDayModules) state.summaryDayModules = {};
-  if (Object.prototype.hasOwnProperty.call(state.summaryDayModules, todayKey)) return;
+  if (Object.prototype.hasOwnProperty.call(state.summaryDayModules, dayKey)) return;
+  // 找最接近 dayKey 但比它早 (或一样) 的最近一天 — 优先用它的模板
+  // 没有就拿全局最近一天 (可能是未来日期, 也行)
   const keys = Object.keys(state.summaryDayModules).sort();
-  const lastKey = keys[keys.length - 1];
-  const template = (lastKey && Array.isArray(state.summaryDayModules[lastKey])) ? state.summaryDayModules[lastKey] : null;
-  if (!template) { state.summaryDayModules[todayKey] = []; return; }
-  state.summaryDayModules[todayKey] = template.map(m => {
+  let templateKey = null;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    if (keys[i] <= dayKey) { templateKey = keys[i]; break; }
+  }
+  if (!templateKey && keys.length) templateKey = keys[keys.length - 1];
+  const template = (templateKey && Array.isArray(state.summaryDayModules[templateKey])) ? state.summaryDayModules[templateKey] : null;
+  if (!template) { state.summaryDayModules[dayKey] = []; return; }
+  state.summaryDayModules[dayKey] = template.map(m => {
     const out = {
       id: 'mod-' + Math.random().toString(36).slice(2, 10),
       kind: m.kind,
@@ -1743,6 +1751,9 @@ function _summaryEnsureTodayHasTemplates() {
     if (m.taskId) out.taskId = m.taskId;
     return out;
   });
+}
+function _summaryEnsureTodayHasTemplates() {
+  _summaryEnsureDayHasTemplates(_todayKey());
 }
 function _todayKey() { return _summaryDayKey(Date.now()); }
 function _dayKeyToTs(dayKey) {
@@ -2103,6 +2114,9 @@ function _renderSummaryEditorPage() {
       const ts = _dateInputValToMs(draftDateInp.value);
       if (Number.isFinite(ts)) {
         summaryState.draftCreatedAt = ts;
+        // 新日期可能还没设模块 → 自动从最近一天复制模板 (空 entries)
+        // 不然录入区会整块消失, 用户以为出 bug (Kayu 2026-05-29 反馈)
+        _summaryEnsureDayHasTemplates(_summaryDayKey(ts));
         _renderSummaryEditorPage();   // 重渲让 label 文字 + 录入模块跟着切
       }
     });

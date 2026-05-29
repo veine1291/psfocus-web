@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0941';
+const _PSFOCUS_BUILD = '20260529-0942';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -3105,6 +3105,47 @@ function _canvasHidePopover() {
   if (pop) pop.classList.add('hidden');
 }
 
+// 把当前画布按内容 bbox 裁剪, 导出 base64 PNG (去掉 data: 前缀) — 给 OCR 用
+// 返回 null 如果画布为空
+function _canvasExportCroppedBase64() {
+  const canvas = document.getElementById('cvp-canvas');
+  if (!canvas) return null;
+  if (!_canvasState.strokes.length && !_canvasState.images.length) return null;
+  _canvasState.selection = null;
+  _canvasState.marquee = null;
+  _canvasRedraw();
+  // 计算内容 bbox (笔画 + 图片)
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of _canvasState.strokes) {
+    const b = _strokeBBox(s);
+    if (!b) continue;
+    if (b.x < minX) minX = b.x;
+    if (b.y < minY) minY = b.y;
+    if (b.x + b.w > maxX) maxX = b.x + b.w;
+    if (b.y + b.h > maxY) maxY = b.y + b.h;
+  }
+  for (const im of (_canvasState.images || [])) {
+    if (im.x < minX) minX = im.x;
+    if (im.y < minY) minY = im.y;
+    if (im.x + im.w > maxX) maxX = im.x + im.w;
+    if (im.y + im.h > maxY) maxY = im.y + im.h;
+  }
+  if (!Number.isFinite(minX)) return null;
+  const pad = 12;
+  minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+  maxX = Math.min(_canvasState.w, maxX + pad); maxY = Math.min(_canvasState.h, maxY + pad);
+  const cropW = Math.max(40, maxX - minX), cropH = Math.max(40, maxY - minY);
+  const dpr = _canvasState.dpr || 1;
+  const off = document.createElement('canvas');
+  off.width = Math.round(cropW * dpr);
+  off.height = Math.round(cropH * dpr);
+  off.getContext('2d').drawImage(canvas,
+    Math.round(minX * dpr), Math.round(minY * dpr),
+    Math.round(cropW * dpr), Math.round(cropH * dpr),
+    0, 0, off.width, off.height);
+  return off.toDataURL('image/png').split(',')[1];
+}
+
 // 把当前画布渲染成 PNG → 上传 CloudBase → push 到 summaryState.pendingImages
 // 成功 return true, 失败 return false (并 alert)
 // 不关 canvas — 调用方决定是否关
@@ -5013,93 +5054,111 @@ const _summaryActions = {
     _canvasRenderPagesSidebar();
   },
   // OCR — 调云函数 ocrHandwriting (用户需在 CloudBase 控制台部署, 见 cloudfunctions/ocrHandwriting/README.md)
+  // 识别 — 多页:依次切到每个非空页, 截图调 OCR, 拼接所有页文字 + 上传所有页 PNG
   'canvas-ocr': async () => {
     if (_canvasState.ocrPending) return;
-    if (!_canvasState.strokes.length) { alert('画布是空的, 先画点字'); return; }
+    const pages = _canvasState.pages || [];
+    const nonEmpty = [];
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      if ((p.strokes && p.strokes.length) || (p.images && p.images.length)) nonEmpty.push(i);
+    }
+    if (!nonEmpty.length) { alert('画布是空的, 先画点字'); return; }
     if (typeof tcbApp === 'undefined' || !tcbApp || !tcbApp.callFunction) {
       alert('云同步还没就绪 — 无法识别为文字。\n\n不想识别也没关系: 直接按"插入笔记"就会把画布作为图片附到笔记里。');
       return;
     }
     _canvasState.ocrPending = true;
     _canvasRefreshToolbar();
+    const origIdx = _canvasState.activePageIdx;
+    const allTexts = [];      // 每页识别文字 (顺序)
+    let fatalErr = null;       // 致命错误 (函数未部署 / 全部失败) → 中止
     try {
-      // 把当前画布导出为 PNG base64 (截到内容 bbox, 跟 _canvasFinish 同款)
-      _canvasState.selection = null;
-      _canvasState.marquee = null;
-      _canvasRedraw();
-      const canvas = document.getElementById('cvp-canvas');
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const s of _canvasState.strokes) {
-        const b = _strokeBBox(s);
-        if (!b) continue;
-        if (b.x < minX) minX = b.x;
-        if (b.y < minY) minY = b.y;
-        if (b.x + b.w > maxX) maxX = b.x + b.w;
-        if (b.y + b.h > maxY) maxY = b.y + b.h;
-      }
-      const pad = 12;
-      minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
-      maxX = Math.min(_canvasState.w, maxX + pad); maxY = Math.min(_canvasState.h, maxY + pad);
-      const cropW = Math.max(40, maxX - minX), cropH = Math.max(40, maxY - minY);
-      const dpr = _canvasState.dpr || 1;
-      const off = document.createElement('canvas');
-      off.width = Math.round(cropW * dpr);
-      off.height = Math.round(cropH * dpr);
-      off.getContext('2d').drawImage(canvas,
-        Math.round(minX * dpr), Math.round(minY * dpr),
-        Math.round(cropW * dpr), Math.round(cropH * dpr),
-        0, 0, off.width, off.height);
-      const dataUrl = off.toDataURL('image/png');
-      const base64 = dataUrl.split(',')[1];
-      showToast('识别中…');
-      const res = await tcbApp.callFunction({ name: 'ocrHandwriting', data: { imageBase64: base64 } });
-      const r = res && res.result;
-      if (!r || r.code !== 0) {
-        const msg = (r && r.msg) || '识别失败';
-        const notDeployed = /FUNCTION_?S?_?NOT_?FOUND|FunctionName parameter|not found|没找到|函数不存在|function .{0,30}not exist/i.test(msg);
-        if (notDeployed) {
-          alert('"识别"需要 OCR 云函数, 但还没部署。\n\n不影响使用 — 直接按右上"插入笔记"就会把画布作为图片附到笔记里发布。\n\n要部署 OCR (可选): 见 cloudfunctions/ocrHandwriting/README.md');
-        } else {
-          alert('OCR 失败:\n\n' + msg + '\n\n不识别也行: 直接按"插入笔记"把画布作为图片附到笔记。');
+      for (let n = 0; n < nonEmpty.length; n++) {
+        const i = nonEmpty[n];
+        // 切到该页 (跟 _canvasFinish 一样, 等一帧让 redraw 完成)
+        if (i !== _canvasState.activePageIdx) {
+          _canvasBindPage(i);
+          _canvasRedraw();
+          await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
         }
+        // 截当前页 → base64
+        const b64 = _canvasExportCroppedBase64();
+        if (!b64) { allTexts.push(''); continue; }
+        if (nonEmpty.length > 1) showToast(`识别 ${n + 1}/${nonEmpty.length} 页…`);
+        else showToast('识别中…');
+        let res;
+        try {
+          res = await tcbApp.callFunction({ name: 'ocrHandwriting', data: { imageBase64: b64 } });
+        } catch (err) {
+          const msg = (err && err.message) || String(err);
+          if (/FUNCTION_?S?_?NOT_?FOUND|FunctionName parameter|not found|没找到|函数不存在|function .{0,30}not exist/i.test(msg)) {
+            fatalErr = 'not-deployed';
+            break;
+          }
+          throw err;
+        }
+        const r = res && res.result;
+        if (!r || r.code !== 0) {
+          const msg = (r && r.msg) || '识别失败';
+          if (/FUNCTION_?S?_?NOT_?FOUND|FunctionName parameter|not found|没找到|函数不存在|function .{0,30}not exist/i.test(msg)) {
+            fatalErr = 'not-deployed';
+            break;
+          }
+          // 单页失败不中止, 记错累计
+          console.warn('[canvas-ocr] page', i, 'failed:', msg);
+          allTexts.push('');
+          continue;
+        }
+        allTexts.push((r.text || '').trim());
+      }
+      // 致命错误退出
+      if (fatalErr === 'not-deployed') {
+        if (origIdx !== _canvasState.activePageIdx) { _canvasBindPage(origIdx); _canvasRedraw(); }
+        alert('"识别"需要 OCR 云函数, 但还没部署。\n\n不影响使用 — 直接按右上"插入笔记"就会把画布作为图片附到笔记里发布。\n\n要部署 OCR (可选): 见 cloudfunctions/ocrHandwriting/README.md');
         return;
       }
-      const text = (r.text || '').trim();
-      // 把识别结果追加到摘要编辑页 draft (或编辑模式的 editingMd) — 即使空也走 finish 流程, 至少保留图片
-      if (text && _summaryEditorPage.open) {
+      // 拼接所有页文字 (各页之间 \n\n 分隔, 表示分页; 空页跳过)
+      const combinedText = allTexts.filter(t => t).join('\n\n').trim();
+      // 把识别结果追加到摘要编辑页 draft / editingMd
+      if (combinedText && _summaryEditorPage.open) {
         if (_summaryEditorPage.mode === 'edit') {
-          _summaryEditorPage.editingMd = ((_summaryEditorPage.editingMd || '').trimEnd() + '\n' + text).trim();
+          _summaryEditorPage.editingMd = ((_summaryEditorPage.editingMd || '').trimEnd() + '\n' + combinedText).trim();
         } else {
-          summaryState.draftNote = ((summaryState.draftNote || '').trimEnd() + '\n' + text).trim();
+          summaryState.draftNote = ((summaryState.draftNote || '').trimEnd() + '\n' + combinedText).trim();
         }
       }
-      // 识别后同时把画布作为图片附到笔记 (Kayu 2026-05-29) — 跟"插入笔记"一样上传 PNG
-      // 这样发布的 summary 既有识别文字也有原画布图, 用户两边都能看到 / 比对
-      const uploadOk = await _canvasUploadPngToPending();
-      if (text && uploadOk) {
-        showToast(`已插入 ${text.length} 字 + 图片`);
-      } else if (text) {
-        showToast(`已插入 ${text.length} 字 (图片上传失败)`);
-      } else if (uploadOk) {
-        alert('没识别到文字, 但画布已作为图片插入笔记。');
+      // 同时把所有非空页上传 PNG 进 pendingImages (跟 _canvasFinish 同款)
+      let uploadedCount = 0;
+      for (const i of nonEmpty) {
+        if (i !== _canvasState.activePageIdx) {
+          _canvasBindPage(i);
+          _canvasRedraw();
+          await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+        }
+        const ok = await _canvasUploadPngToPending();
+        if (ok) uploadedCount++;
+      }
+      // 反馈 — 综合识别 + 上传结果
+      const pageNoun = nonEmpty.length > 1 ? `${nonEmpty.length} 页` : '';
+      if (combinedText && uploadedCount === nonEmpty.length) {
+        showToast(`${pageNoun}识别 ${combinedText.length} 字 + ${uploadedCount} 张图`);
+      } else if (combinedText) {
+        showToast(`${pageNoun}识别 ${combinedText.length} 字 (部分图上传失败)`);
+      } else if (uploadedCount) {
+        alert(`${pageNoun}没识别到文字, 但 ${uploadedCount} 张图已插入笔记。`);
       } else {
-        alert('没识别到文字, 图片也上传失败。');
+        alert('没识别到文字, 图也上传失败。');
         return;
       }
-      // 关画布回编辑页 → 重渲让新文字 + 图片出现
+      // 关画布回编辑页
       closeCanvasPage();
       if (_summaryEditorPage.open) _renderSummaryEditorPage();
     } catch (err) {
       console.warn('[canvas-ocr]', err);
+      if (origIdx !== _canvasState.activePageIdx) { _canvasBindPage(origIdx); _canvasRedraw(); }
       const msg = (err && err.message) || String(err);
-      // 匹配多种"函数未部署"消息: CloudBase 返回 FUNCTION_NOT_FOUND (单数, 无 S)
-      // 也可能是 FunctionName parameter could not be found / function does not exist 等
-      const notDeployed = /FUNCTION_?S?_?NOT_?FOUND|FunctionName parameter|not found|没找到|函数不存在|function .{0,30}not exist/i.test(msg);
-      if (notDeployed) {
-        alert('"识别"需要 OCR 云函数, 但还没部署。\n\n不影响使用 — 直接按右上"插入笔记"就会把画布作为图片附到笔记里发布。\n\n要部署 OCR (可选): 见 cloudfunctions/ocrHandwriting/README.md');
-      } else {
-        alert('OCR 失败:\n' + msg + '\n\n不识别也行: 直接按"插入笔记"把画布作为图片。');
-      }
+      alert('OCR 出错:\n' + msg + '\n\n不识别也行: 直接按"插入笔记"把画布作为图片。');
     } finally {
       _canvasState.ocrPending = false;
       _canvasRefreshToolbar();

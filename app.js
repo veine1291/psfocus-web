@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-1606';
+const _PSFOCUS_BUILD = '20260529-1957';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2034,13 +2034,14 @@ function _renderSummaryEditorPage() {
   // body 永远渲染 — collapsed CSS class 控制 display:none, 这样 toggle 不需要重渲就能立即生效
   // 用 div 而非 button 包外层 — 这样里面可以嵌 label/input 实现"今日"日期 pill 不冲突按钮嵌套规则
   // dispatcher 按 closest data-action 派发: 点 label 走 summary-noop (拦截不展开), 点其它走 toggle
+  // 用 button 而非 label+input — iOS Safari 嵌 input type=date 在 label 里 picker 渲染不稳
+  // 改成点 button 弹我们自己的 sheet, 完全控制 UI 不受 iOS 行为变化影响
   const todayModsHtml = todayMods.length ? `<div class="sum-input-day-mods ${inputModsCollapsed ? 'collapsed' : ''}">
     <div class="sum-input-day-mods-head" data-action="summary-toggle-input-mods">
       <span class="sum-input-day-mods-chev">${inputModsCollapsed ? '▶' : '▼'}</span>
-      <label class="sum-input-date-pill" data-action="summary-noop" title="点击改这条笔记的日期">
-        <input type="date" id="sum-draft-date-input" class="sum-draft-date-input" value="${esc(draftDateInputVal)}">
-        <span>${esc(draftDateLabel)}</span>
-      </label>
+      <button type="button" class="sum-input-date-pill" data-action="summary-pick-draft-date" title="点击改这条笔记的日期">
+        ${esc(draftDateLabel)}
+      </button>
       <span class="sum-input-day-mods-label">· 待录入 <span class="sum-input-day-mods-count">(${todayMods.length})</span></span>
     </div>
     <div class="sum-input-day-mods-body">
@@ -2105,22 +2106,8 @@ function _renderSummaryEditorPage() {
       if (Number.isFinite(ts)) _summaryEditorPage.editingCreatedAt = ts;
     });
   }
-  // 新建模式: "今日" pill 的 date input change → 更新草稿日期 + 重渲让录入模块跟着切到该日
-  const draftDateInp = body.querySelector('#sum-draft-date-input');
-  if (draftDateInp) {
-    // 防 input 的 click 冒泡触发外层 toggle (HTML 规范上 label 内点 input 会触发 input click + label click)
-    draftDateInp.addEventListener('click', e => e.stopPropagation());
-    draftDateInp.addEventListener('change', () => {
-      const ts = _dateInputValToMs(draftDateInp.value);
-      if (Number.isFinite(ts)) {
-        summaryState.draftCreatedAt = ts;
-        // 新日期可能还没设模块 → 自动从最近一天复制模板 (空 entries)
-        // 不然录入区会整块消失, 用户以为出 bug (Kayu 2026-05-29 反馈)
-        _summaryEnsureDayHasTemplates(_summaryDayKey(ts));
-        _renderSummaryEditorPage();   // 重渲让 label 文字 + 录入模块跟着切
-      }
-    });
-  }
+  // 新建模式"今日" pill 改用独立 sheet (不再用内嵌 input[type=date], iOS 渲染不稳)
+  // 见 _summaryActions['summary-pick-draft-date'] — 走 showSheet 弹底部日历
   // 工具栏按钮 mousedown 阻止失焦 (保选区)
   body.querySelectorAll('.sep-toolbar .sum-tb-btn').forEach(b => {
     b.addEventListener('mousedown', e => e.preventDefault());
@@ -5381,6 +5368,55 @@ const _summaryActions = {
   // 占位 action — 用于在外层 toggle 区域内放"非 toggle"子区, 阻止 dispatcher 派发到外层
   // (示例: "今日" pill 在"待录入"行内, 点 pill 不能触发 toggle)
   'summary-noop': () => {},
+  // 草稿日期选择 sheet (Kayu 2026-05-29) — 替代内嵌 input[type=date] (iOS 渲染问题)
+  // 点"今日" pill → 弹底部 sheet, 含 native date input + 快捷按钮 + 确认
+  'summary-pick-draft-date': () => {
+    const cur = summaryState.draftCreatedAt || Date.now();
+    const curInputVal = _msToDateInputVal(cur);
+    const todayMs = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+    const yMs = todayMs - 86400000;
+    const tMs = todayMs + 86400000;
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content sum-date-sheet">
+        <div class="sum-date-sheet-title">这条笔记的日期</div>
+        <div class="sum-date-sheet-quick">
+          <button class="sum-date-quick-btn" data-action="summary-draft-date-pick-quick" data-ms="${yMs}">昨日</button>
+          <button class="sum-date-quick-btn" data-action="summary-draft-date-pick-quick" data-ms="${todayMs}">今日</button>
+          <button class="sum-date-quick-btn" data-action="summary-draft-date-pick-quick" data-ms="${tMs}">明日</button>
+        </div>
+        <div class="sum-date-sheet-input-row">
+          <span>自定义</span>
+          <input type="date" id="sum-date-sheet-input" class="sum-date-sheet-input" value="${esc(curInputVal)}">
+        </div>
+        <div class="sum-date-sheet-actions">
+          <button class="modal-btn" data-action="close-sheet">取消</button>
+          <button class="modal-btn modal-btn-primary" data-action="summary-draft-date-confirm">确认</button>
+        </div>
+      </div>
+    `);
+  },
+  // 选了快捷按钮 (昨/今/明) → 直接 apply + 关 sheet
+  'summary-draft-date-pick-quick': (el) => {
+    const ms = parseInt(el && el.dataset && el.dataset.ms, 10);
+    if (!Number.isFinite(ms)) return;
+    summaryState.draftCreatedAt = ms;
+    _summaryEnsureDayHasTemplates(_summaryDayKey(ms));
+    closeSheet();
+    if (_summaryEditorPage.open) _renderSummaryEditorPage();
+  },
+  // 自定义日期 → 读 sheet 内 input, apply + 关 sheet
+  'summary-draft-date-confirm': () => {
+    const inp = document.getElementById('sum-date-sheet-input');
+    if (!inp) { closeSheet(); return; }
+    const ts = _dateInputValToMs(inp.value);
+    if (Number.isFinite(ts)) {
+      summaryState.draftCreatedAt = ts;
+      _summaryEnsureDayHasTemplates(_summaryDayKey(ts));
+    }
+    closeSheet();
+    if (_summaryEditorPage.open) _renderSummaryEditorPage();
+  },
   // "今日 · 待录入" 折叠/展开 — 记到 localStorage
   'summary-toggle-input-mods': () => {
     summaryState.inputModsCollapsed = !summaryState.inputModsCollapsed;

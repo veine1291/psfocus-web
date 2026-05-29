@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260530-0600';
+const _PSFOCUS_BUILD = '20260530-0610';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1725,19 +1725,32 @@ function _summaryModulesForDay(dayKey) {
 // 注:用"最近一天"(可能是空数组)而不是"最近有模块的一天" — 这样用户清空今天意图能传递到后续
 // 给指定日期补一份模块模板 (复制最近一天的模块结构, entries 清空)
 // 用在: 今日 (启动时) / 改草稿日期到一个还没设过模块的日 (Kayu 2026-05-29)
+// 关键: 空数组也复制 (key 存在 + 空, 是 bug case — 用户切日期就消失面板)
 function _summaryEnsureDayHasTemplates(dayKey) {
   if (!dayKey) return;
   if (!state.summaryDayModules) state.summaryDayModules = {};
-  if (Object.prototype.hasOwnProperty.call(state.summaryDayModules, dayKey)) return;
-  // 找最接近 dayKey 但比它早 (或一样) 的最近一天 — 优先用它的模板
-  // 没有就拿全局最近一天 (可能是未来日期, 也行)
+  // 已经有非空模块 → 不动
+  const existing = state.summaryDayModules[dayKey];
+  if (Array.isArray(existing) && existing.length > 0) return;
+  // key 不存在 / 是空数组 → 都尝试复制最近一天的模板
+  // 找最接近 dayKey 但比它早 (或一样) 的最近一天 — 必须是**有内容**的, 跳过空数组的 key
   const keys = Object.keys(state.summaryDayModules).sort();
   let templateKey = null;
   for (let i = keys.length - 1; i >= 0; i--) {
+    if (keys[i] === dayKey) continue;   // 不能拿自己
+    const arr = state.summaryDayModules[keys[i]];
+    if (!Array.isArray(arr) || !arr.length) continue;   // 跳过空数组
     if (keys[i] <= dayKey) { templateKey = keys[i]; break; }
   }
-  if (!templateKey && keys.length) templateKey = keys[keys.length - 1];
-  const template = (templateKey && Array.isArray(state.summaryDayModules[templateKey])) ? state.summaryDayModules[templateKey] : null;
+  // 没找到比 dayKey 早的非空 → 找全局最近的非空 (可能是未来日期)
+  if (!templateKey) {
+    for (let i = keys.length - 1; i >= 0; i--) {
+      if (keys[i] === dayKey) continue;
+      const arr = state.summaryDayModules[keys[i]];
+      if (Array.isArray(arr) && arr.length) { templateKey = keys[i]; break; }
+    }
+  }
+  const template = templateKey ? state.summaryDayModules[templateKey] : null;
   if (!template) { state.summaryDayModules[dayKey] = []; return; }
   state.summaryDayModules[dayKey] = template.map(m => {
     const out = {

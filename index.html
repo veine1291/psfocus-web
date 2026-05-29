@@ -10,7 +10,7 @@
   <!-- 不能用 no-store,会禁掉 iOS / Chrome 的 BFCache,导致每次切回 tab 都要全量 reload -->
   <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
   <title>PS Focus</title>
-  <link rel="stylesheet" href="style.css?v=20260529-0939">
+  <link rel="stylesheet" href="style.css?v=20260529-0940">
 </head>
 <body>
 
@@ -135,6 +135,8 @@
     <!-- 颜色 / 笔粗滑条的 popover, 由 JS 动态填入 -->
     <div id="cvp-popover" class="cvp-popover hidden"></div>
   </div>
+  <!-- 页面侧栏 — 从右滑入, 列出所有页缩略图 -->
+  <div id="cvp-pages-sidebar" class="cvp-pages-sidebar hidden"></div>
 </div>
 
 <!-- Toast -->
@@ -142,6 +144,6 @@
 
 <!-- 腾讯云 CloudBase SDK(暴露 window.cloudbase) -->
 <script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js?v=1"></script>
-<script src="app.js?v=20260529-0939"></script>
+<script src="app.js?v=20260529-0940"></script>
 </body>
 </html>

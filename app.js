@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0939';
+const _PSFOCUS_BUILD = '20260529-0940';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2097,7 +2097,13 @@ const _CV_COLOR_PRESETS = ['#000000', '#1a1a1a', '#C84545', '#3B82F6', '#22A55D'
 const _CV_WIDTHS = [1, 2, 3, 5, 8, 14, 22];
 let _canvasState = {
   open: false,
-  strokes: [],         // [{ id, color, width, points: [{x,y}] }]
+  // 多页画布 (Kayu 2026-05-29) — 每页有自己的 strokes / images / history
+  // _canvasState.strokes / images / history / histIdx 始终引用当前页的字段, 切页时换引用
+  pages: [],           // [{ id, strokes:[], images:[], history:[], histIdx:-1 }]
+  activePageIdx: 0,
+  pagesSidebarOpen: false,
+  strokes: [],         // [{ id, color, width, points: [{x,y}] }] — 引用 pages[active].strokes
+  images: [],          // [{ id, x, y, w, h, img: HTMLImageElement, src }] — 引用 pages[active].images
   tool: 'pen',         // 'pen' | 'eraser' | 'select'
   color: '#000000',
   width: 3,
@@ -2146,6 +2152,36 @@ let _canvasState = {
   needRedraw: false,
 };
 
+// === 多页画布 helpers ===
+function _canvasNewPage() {
+  return {
+    id: 'p-' + Math.random().toString(36).slice(2, 10),
+    strokes: [],
+    images: [],
+    history: [{ strokes: [], images: [] }],
+    histIdx: 0,
+  };
+}
+// 把 _canvasState.strokes/images/history/histIdx 切换到指定 page 的引用
+function _canvasBindPage(idx) {
+  const page = _canvasState.pages[idx];
+  if (!page) return;
+  _canvasState.activePageIdx = idx;
+  _canvasState.strokes = page.strokes;
+  _canvasState.images = page.images;
+  _canvasState.history = page.history;
+  _canvasState.histIdx = page.histIdx;
+  _canvasState.currentStroke = null;
+  _canvasState.selection = null;
+  _canvasState.marquee = null;
+}
+// pushHistory 等改 histIdx, 同步回 page 对象 (引用是同一数组, 但 histIdx 是 primitive)
+function _canvasSyncPageMeta() {
+  const page = _canvasState.pages[_canvasState.activePageIdx];
+  if (!page) return;
+  page.histIdx = _canvasState.histIdx;
+}
+
 function _canvasSaveColorHistory(color) {
   if (!color) return;
   const hist = (_canvasState.colorHistory || []).filter(c => c !== color);
@@ -2153,30 +2189,58 @@ function _canvasSaveColorHistory(color) {
   _canvasState.colorHistory = hist.slice(0, 8);
   try { localStorage.setItem('psfocus_canvasColors', JSON.stringify(_canvasState.colorHistory)); } catch (_) {}
 }
+// 快照: strokes + images (images 的 HTMLImageElement 不能序列化, 存 src 字符串)
+function _canvasMakeSnapshot() {
+  return {
+    strokes: JSON.parse(JSON.stringify(_canvasState.strokes)),
+    images: (_canvasState.images || []).map(im => ({
+      id: im.id, x: im.x, y: im.y, w: im.w, h: im.h, src: im.src,
+    })),
+  };
+}
+// 从快照恢复: images 重建 Image 对象, redraw 时 drawImage 用
+function _canvasRestoreSnapshot(snap) {
+  if (!snap) return;
+  // 重建 strokes (原地改, 保持引用)
+  _canvasState.strokes.length = 0;
+  for (const s of (snap.strokes || [])) _canvasState.strokes.push(s);
+  // 重建 images, 异步加载 Image
+  _canvasState.images.length = 0;
+  for (const im of (snap.images || [])) {
+    const obj = { id: im.id, x: im.x, y: im.y, w: im.w, h: im.h, src: im.src };
+    if (im.src) {
+      obj.img = new Image();
+      obj.img.onload = () => _canvasRedraw();   // 加载完触发重绘
+      obj.img.src = im.src;
+    }
+    _canvasState.images.push(obj);
+  }
+}
 function _canvasPushHistory() {
-  // 深拷贝 strokes 当前快照 → 进栈
-  const snap = JSON.parse(JSON.stringify(_canvasState.strokes));
-  _canvasState.history = _canvasState.history.slice(0, _canvasState.histIdx + 1);
+  const snap = _canvasMakeSnapshot();
+  _canvasState.history.length = _canvasState.histIdx + 1;
   _canvasState.history.push(snap);
   if (_canvasState.history.length > 50) _canvasState.history.shift();
   _canvasState.histIdx = _canvasState.history.length - 1;
+  _canvasSyncPageMeta();
   _canvasRefreshToolbar();
-  // push 不会减少 strokes, 不会触发 alarm; 跳过 dbg call 减开销
 }
 function _canvasUndo() {
   if (_canvasState.histIdx <= 0) return;
   _canvasState.histIdx--;
-  _canvasState.strokes = JSON.parse(JSON.stringify(_canvasState.history[_canvasState.histIdx]));
+  _canvasRestoreSnapshot(_canvasState.history[_canvasState.histIdx]);
   _canvasState.selection = null;
-  _dbgLastStrokesCount = _canvasState.strokes.length;   // 先重置 baseline 再 redraw, 防 alarm 误报
+  _dbgLastStrokesCount = _canvasState.strokes.length;
+  _canvasSyncPageMeta();
   _canvasRedraw();
   _canvasRefreshToolbar();
 }
 function _canvasRedo() {
   if (_canvasState.histIdx >= _canvasState.history.length - 1) return;
   _canvasState.histIdx++;
-  _canvasState.strokes = JSON.parse(JSON.stringify(_canvasState.history[_canvasState.histIdx]));
+  _canvasRestoreSnapshot(_canvasState.history[_canvasState.histIdx]);
   _canvasState.selection = null;
+  _canvasSyncPageMeta();
   _canvasRedraw();
   _canvasRefreshToolbar();
 }
@@ -2306,7 +2370,13 @@ function _canvasRedraw() {
   // 背景 (白)
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, _canvasState.w, _canvasState.h);
-  // 笔画
+  // 先画图片 (放在笔下面)
+  for (const im of (_canvasState.images || [])) {
+    if (im.img && im.img.complete && im.img.naturalWidth > 0) {
+      try { ctx.drawImage(im.img, im.x, im.y, im.w, im.h); } catch (_) {}
+    }
+  }
+  // 再画笔画
   for (const s of _canvasState.strokes) _canvasDrawStroke(ctx, s);
   if (_canvasState.currentStroke) _canvasDrawStroke(ctx, _canvasState.currentStroke);
   // 选区框 + 手柄
@@ -2443,13 +2513,14 @@ function _canvasHandleHit(x, y) {
 function openCanvasPage(opts) {
   _canvasState.open = true;
   _canvasState.origin = (opts && opts.origin) || 'summary-editor';
-  _canvasState.strokes = [];
+  // 初始化为单页 + 切换引用
+  _canvasState.pages = [_canvasNewPage()];
+  _canvasState.pagesSidebarOpen = false;
+  _canvasBindPage(0);
   _canvasState.selection = null;
   _canvasState.currentStroke = null;
   _canvasState.marquee = null;
   _canvasState.tool = 'pen';
-  _canvasState.history = [[]];
-  _canvasState.histIdx = 0;
   _canvasState._diagShown = false;
   _canvasState._penSeen = false;
   const page = document.getElementById('canvas-page');
@@ -2504,8 +2575,12 @@ function closeCanvasPage() {
   if (page) page.classList.add('hidden');
   document.body.classList.remove('canvas-open');
   _canvasState.open = false;
-  // 不清 strokes — 万一用户误触, 重开还在 (但下次 open 会重置). 这里清干净更安全
+  // 清干净 (下次 open 会重置 pages)
+  _canvasState.pages = [];
+  _canvasState.activePageIdx = 0;
+  _canvasState.pagesSidebarOpen = false;
   _canvasState.strokes = [];
+  _canvasState.images = [];
   _canvasState.history = [];
   _canvasState.histIdx = -1;
   _canvasState.selection = null;
@@ -2795,9 +2870,13 @@ function _canvasRefreshToolbar() {
   const st = _canvasState;
   const canUndo = st.histIdx > 0;
   const canRedo = st.histIdx < st.history.length - 1;
+  // 笔工具按钮:颜色/笔粗合并进它的 popover, 工具栏不再单独显示
+  // 笔下方一个小色条预览当前笔的颜色 + 粗细, GoodNotes 风格
+  const isPen = st.tool === 'pen';
   tb.innerHTML = `
-    <button class="cvp-tool ${st.tool === 'pen' ? 'active' : ''}" data-action="canvas-tool" data-tool="pen" title="笔">
+    <button class="cvp-tool cvp-tool-pen ${isPen ? 'active' : ''}" data-action="canvas-tool" data-tool="pen" title="笔 (再点配置颜色/笔粗)">
       <span class="ico-pencil"></span>
+      <span class="cvp-pen-preview" style="background:${esc(st.color)}; height:${Math.max(2, Math.min(6, st.width / 4))}px;"></span>
     </button>
     <button class="cvp-tool ${st.tool === 'eraser' ? 'active' : ''}" data-action="canvas-tool" data-tool="eraser" title="橡皮">
       <span class="ico-eraser"></span>
@@ -2805,11 +2884,9 @@ function _canvasRefreshToolbar() {
     <button class="cvp-tool ${st.tool === 'select' ? 'active' : ''}" data-action="canvas-tool" data-tool="select" title="选择">
       <span class="ico-select"></span>
     </button>
-    <button class="cvp-tool cvp-tool-color" data-action="canvas-open-color" title="颜色">
-      <span class="cvp-color-swatch" style="background:${esc(st.color)};"></span>
-    </button>
-    <button class="cvp-tool cvp-tool-width" data-action="canvas-open-width" title="笔粗">
-      <span class="cvp-width-dot" style="width:${Math.min(20, st.width + 4)}px; height:${Math.min(20, st.width + 4)}px; background:${esc(st.color)};"></span>
+    <button class="cvp-tool" data-action="canvas-insert-image" title="插入图片">
+      <span class="ico-image"></span>
+      <input type="file" accept="image/*" id="cvp-image-input" hidden>
     </button>
     <span class="cvp-sep"></span>
     <button class="cvp-tool" data-action="canvas-undo" ${canUndo ? '' : 'disabled'} title="撤销">
@@ -2818,8 +2895,13 @@ function _canvasRefreshToolbar() {
     <button class="cvp-tool" data-action="canvas-redo" ${canRedo ? '' : 'disabled'} title="重做">
       <span class="ico-redo"></span>
     </button>
-    <button class="cvp-tool cvp-tool-clear" data-action="canvas-clear" title="清空">
+    <button class="cvp-tool cvp-tool-clear" data-action="canvas-clear" title="清空当前页">
       <span class="ico-trash"></span>
+    </button>
+    <span class="cvp-spacer"></span>
+    <button class="cvp-tool cvp-tool-pages" data-action="canvas-pages-toggle" title="页面 (点开看缩略图 / 新增页)">
+      <span class="ico-pages"></span>
+      <span class="cvp-page-num">${(_canvasState.activePageIdx ?? 0) + 1}/${(_canvasState.pages || []).length || 1}</span>
     </button>
   `;
   // 顶栏识别按钮态同步
@@ -2837,74 +2919,79 @@ function _canvasRefreshToolbar() {
   }
 }
 
-function _canvasOpenColorPopover(anchorBtn) {
+// 已废弃 - 整合到 _canvasOpenPenSettingsPopover (留 stub 防止旧引用挂掉)
+function _canvasOpenColorPopover(anchorBtn) { _canvasOpenPenSettingsPopover(anchorBtn); }
+
+// 笔工具设置 — 整合颜色 + 笔粗 + 压感 + 抖动修正 + 输入方式 (Kayu 2026-05-29)
+// 单击笔按钮:首次切到笔工具, 再单击 toggle 此 popover
+function _canvasOpenPenSettingsPopover(anchorBtn) {
   const pop = document.getElementById('cvp-popover');
   if (!pop) return;
   const recent = _canvasState.colorHistory || [];
   const cur = _canvasState.color;
   pop.innerHTML = `
-    <div class="cvp-pop-title">预设</div>
-    <div class="cvp-pop-row">
-      ${_CV_COLOR_PRESETS.map(c => `<button class="cvp-color-chip ${c === cur ? 'active' : ''}" data-action="canvas-pick-color" data-c="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
+    <div class="cvp-pop-section">
+      <div class="cvp-pop-title">颜色</div>
+      <div class="cvp-pop-row">
+        ${_CV_COLOR_PRESETS.map(c => `<button class="cvp-color-chip ${c === cur ? 'active' : ''}" data-action="canvas-pick-color" data-c="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
+      </div>
+      ${recent.length ? `<div class="cvp-pop-subtitle">最近</div>
+      <div class="cvp-pop-row">
+        ${recent.map(c => `<button class="cvp-color-chip ${c === cur ? 'active' : ''}" data-action="canvas-pick-color" data-c="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
+      </div>` : ''}
+      <div class="cvp-pop-row">
+        <label class="cvp-color-custom">
+          <input type="color" id="cvp-color-input" value="${esc(cur)}">
+          <span>自定义颜色</span>
+        </label>
+      </div>
     </div>
-    ${recent.length ? `<div class="cvp-pop-title">最近</div>
-    <div class="cvp-pop-row">
-      ${recent.map(c => `<button class="cvp-color-chip ${c === cur ? 'active' : ''}" data-action="canvas-pick-color" data-c="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
-    </div>` : ''}
-    <div class="cvp-pop-title">自定义</div>
-    <div class="cvp-pop-row">
-      <label class="cvp-color-custom">
-        <input type="color" id="cvp-color-input" value="${esc(cur)}">
-        <span>选取任意颜色</span>
-      </label>
+    <div class="cvp-pop-section">
+      <div class="cvp-pop-title">笔粗</div>
+      <div class="cvp-pop-row cvp-width-row">
+        ${_CV_WIDTHS.map(w => `<button class="cvp-width-chip ${w === _canvasState.width ? 'active' : ''}" data-action="canvas-pick-width" data-w="${w}">
+          <span class="cvp-width-preview" style="width:${Math.min(24, w + 4)}px; height:${Math.min(24, w + 4)}px; background:${esc(cur)};"></span>
+        </button>`).join('')}
+      </div>
+      <div class="cvp-pop-row">
+        <input type="range" id="cvp-width-slider" min="1" max="30" value="${_canvasState.width}" class="cvp-width-slider">
+        <span class="cvp-width-num" id="cvp-width-num">${_canvasState.width}</span>
+      </div>
+    </div>
+    <div class="cvp-pop-section">
+      <div class="cvp-pop-title">压感曲线</div>
+      <div class="cvp-pop-row">
+        <input type="range" id="cvp-press-slider" min="0" max="10" value="${_canvasState.pressureRange}" class="cvp-width-slider">
+        <span class="cvp-width-num" id="cvp-press-num">${_canvasState.pressureRange}</span>
+      </div>
+      <div class="cvp-pop-hint">0 = 关闭压感 · 越大粗细对比越强 (Pencil 等才有效)</div>
+    </div>
+    <div class="cvp-pop-section">
+      <div class="cvp-pop-title">抖动修正</div>
+      <div class="cvp-pop-row">
+        <input type="range" id="cvp-stab-slider" min="0" max="10" value="${_canvasState.stabilize}" class="cvp-width-slider">
+        <span class="cvp-width-num" id="cvp-stab-num">${_canvasState.stabilize}</span>
+      </div>
+      <div class="cvp-pop-hint">0 = 关闭 · 越大笔触越平滑 (但跟随会延迟)</div>
+    </div>
+    <div class="cvp-pop-section">
+      <div class="cvp-pop-title">输入方式</div>
+      <div class="cvp-pop-row cvp-input-mode-row">
+        <button class="cvp-mode-chip ${_canvasState.inputMode === 'auto' ? 'active' : ''}" data-action="canvas-pick-input-mode" data-mode="auto">自动</button>
+        <button class="cvp-mode-chip ${_canvasState.inputMode === 'pen-only' ? 'active' : ''}" data-action="canvas-pick-input-mode" data-mode="pen-only">仅笔</button>
+      </div>
+      <div class="cvp-pop-hint">自动:见过 Pencil 后, 手指 / 手掌都拒。仅笔:永远只接 Pencil。</div>
     </div>
   `;
   _canvasShowPopover(pop, anchorBtn);
+  // 颜色 native picker
   const inp = document.getElementById('cvp-color-input');
   if (inp) inp.addEventListener('input', () => {
     _canvasState.color = inp.value;
     _canvasSaveColorHistory(inp.value);
     _canvasRefreshToolbar();
   });
-  inp && inp.addEventListener('change', () => {
-    _canvasHidePopover();
-  });
-}
-function _canvasOpenWidthPopover(anchorBtn) {
-  const pop = document.getElementById('cvp-popover');
-  if (!pop) return;
-  pop.innerHTML = `
-    <div class="cvp-pop-title">笔粗</div>
-    <div class="cvp-pop-row cvp-width-row">
-      ${_CV_WIDTHS.map(w => `<button class="cvp-width-chip ${w === _canvasState.width ? 'active' : ''}" data-action="canvas-pick-width" data-w="${w}">
-        <span class="cvp-width-preview" style="width:${Math.min(24, w + 4)}px; height:${Math.min(24, w + 4)}px; background:${esc(_canvasState.color)};"></span>
-      </button>`).join('')}
-    </div>
-    <div class="cvp-pop-title">自定义 (1-30)</div>
-    <div class="cvp-pop-row">
-      <input type="range" id="cvp-width-slider" min="1" max="30" value="${_canvasState.width}" class="cvp-width-slider">
-      <span class="cvp-width-num" id="cvp-width-num">${_canvasState.width}</span>
-    </div>
-    <div class="cvp-pop-title">压感曲线</div>
-    <div class="cvp-pop-row">
-      <input type="range" id="cvp-press-slider" min="0" max="10" value="${_canvasState.pressureRange}" class="cvp-width-slider">
-      <span class="cvp-width-num" id="cvp-press-num">${_canvasState.pressureRange}</span>
-    </div>
-    <div class="cvp-pop-hint">0 = 关闭压感 · 越大粗细对比越强 (Apple Pencil 等才有效)</div>
-    <div class="cvp-pop-title">抖动修正</div>
-    <div class="cvp-pop-row">
-      <input type="range" id="cvp-stab-slider" min="0" max="10" value="${_canvasState.stabilize}" class="cvp-width-slider">
-      <span class="cvp-width-num" id="cvp-stab-num">${_canvasState.stabilize}</span>
-    </div>
-    <div class="cvp-pop-hint">0 = 关闭 · 越大笔触越平滑 (但跟随会延迟)</div>
-    <div class="cvp-pop-title">输入方式</div>
-    <div class="cvp-pop-row cvp-input-mode-row">
-      <button class="cvp-mode-chip ${_canvasState.inputMode === 'auto' ? 'active' : ''}" data-action="canvas-pick-input-mode" data-mode="auto">自动</button>
-      <button class="cvp-mode-chip ${_canvasState.inputMode === 'pen-only' ? 'active' : ''}" data-action="canvas-pick-input-mode" data-mode="pen-only">仅笔</button>
-    </div>
-    <div class="cvp-pop-hint">自动:用过 Pencil 后, 后续手指 / 手掌都拒。<br>仅笔:永远只接 Pencil 输入。</div>
-  `;
-  _canvasShowPopover(pop, anchorBtn);
+  // 笔粗滑条
   const slider = document.getElementById('cvp-width-slider');
   const num = document.getElementById('cvp-width-num');
   if (slider) slider.addEventListener('input', () => {
@@ -2912,6 +2999,7 @@ function _canvasOpenWidthPopover(anchorBtn) {
     if (num) num.textContent = _canvasState.width;
     _canvasRefreshToolbar();
   });
+  // 抖动修正
   const stabSlider = document.getElementById('cvp-stab-slider');
   const stabNum = document.getElementById('cvp-stab-num');
   if (stabSlider) stabSlider.addEventListener('input', () => {
@@ -2919,6 +3007,7 @@ function _canvasOpenWidthPopover(anchorBtn) {
     if (stabNum) stabNum.textContent = _canvasState.stabilize;
     try { localStorage.setItem('psfocus_canvasStabilize', String(_canvasState.stabilize)); } catch (_) {}
   });
+  // 压感曲线
   const pressSlider = document.getElementById('cvp-press-slider');
   const pressNum = document.getElementById('cvp-press-num');
   if (pressSlider) pressSlider.addEventListener('input', () => {
@@ -2926,8 +3015,67 @@ function _canvasOpenWidthPopover(anchorBtn) {
     if (!Number.isFinite(_canvasState.pressureRange)) _canvasState.pressureRange = 4;
     if (pressNum) pressNum.textContent = _canvasState.pressureRange;
     try { localStorage.setItem('psfocus_canvasPressureRange', String(_canvasState.pressureRange)); } catch (_) {}
-    _canvasRedraw();  // 实时刷, 让用户看到现有笔画粗细变化
+    _canvasRedraw();
   });
+}
+// 旧 width popover stub — 现在合并到笔设置 popover, 留兼容
+function _canvasOpenWidthPopover(anchorBtn) { _canvasOpenPenSettingsPopover(anchorBtn); }
+
+// 页面侧栏渲染 — 显示所有页缩略图 + 切换 / 删除
+function _canvasRenderPagesSidebar() {
+  const sb = document.getElementById('cvp-pages-sidebar');
+  if (!sb) return;
+  if (!_canvasState.pagesSidebarOpen) {
+    sb.classList.add('hidden');
+    return;
+  }
+  sb.classList.remove('hidden');
+  const pages = _canvasState.pages || [];
+  const active = _canvasState.activePageIdx ?? 0;
+  // 缩略图: 在小 offscreen canvas 上画当前页内容缩放到 120x160
+  const thumbs = pages.map((p, i) => _canvasMakePageThumbnail(p, i, 140, 180));
+  sb.innerHTML = `
+    <div class="cvp-pages-mask" data-action="canvas-pages-close"></div>
+    <div class="cvp-pages-panel">
+      <div class="cvp-pages-head">
+        <span>页面 (${pages.length})</span>
+        <button class="cvp-pages-add-btn" data-action="canvas-page-add" title="新增一页"><span class="ico-plus"></span>新增</button>
+      </div>
+      <div class="cvp-pages-list">
+        ${pages.map((p, i) => `
+          <div class="cvp-page-card ${i === active ? 'active' : ''}" data-action="canvas-page-switch" data-idx="${i}">
+            <div class="cvp-page-thumb">${thumbs[i]}</div>
+            <div class="cvp-page-foot">
+              <span class="cvp-page-label">第 ${i + 1} 页</span>
+              ${pages.length > 1 ? `<button class="cvp-page-del" data-action="canvas-page-delete" data-idx="${i}" title="删除"><span class="ico-x"></span></button>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// 给单页生成缩略图 (SVG 形式, 笔画 + 图片框)
+function _canvasMakePageThumbnail(page, idx, tw, th) {
+  if (!page) return '';
+  const cw = _canvasState.w || 360;
+  const ch = _canvasState.h || 600;
+  const scale = Math.min(tw / cw, th / ch);
+  const sw = cw * scale, sh = ch * scale;
+  const strokesSvg = (page.strokes || []).map(s => {
+    if (!s.points || s.points.length < 2) return '';
+    const d = s.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${(p.x * scale).toFixed(1)} ${(p.y * scale).toFixed(1)}`).join(' ');
+    const w = Math.max(0.4, (s.width || 2) * scale * 0.8);
+    return `<path d="${d}" stroke="${esc(s.color || '#000')}" stroke-width="${w}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }).join('');
+  // 图片用小占位框 (不嵌入实际图避免缩略图巨大)
+  const imgsSvg = (page.images || []).map(im => {
+    return `<rect x="${(im.x * scale).toFixed(1)}" y="${(im.y * scale).toFixed(1)}" width="${(im.w * scale).toFixed(1)}" height="${(im.h * scale).toFixed(1)}" fill="#3B82F6" fill-opacity="0.18" stroke="#3B82F6" stroke-width="1" stroke-dasharray="3 2"/>`;
+  }).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${sw} ${sh}" width="${sw}" height="${sh}" style="background:#fff;">
+    ${imgsSvg}${strokesSvg}
+  </svg>`;
 }
 function _canvasShowPopover(pop, anchor) {
   pop.classList.remove('hidden');
@@ -3024,16 +3172,40 @@ async function _canvasUploadPngToPending() {
   }
 }
 
-// "插入笔记" 按钮 → 上传 PNG 进 pendingImages, 关 canvas, 回编辑页
+// "插入笔记" 按钮 → 把所有页 (非空) 都上传 PNG, 进 pendingImages, 关 canvas
 async function _canvasFinish() {
-  if (!_canvasState.strokes.length) {
+  const pages = _canvasState.pages || [];
+  // 收集所有非空页 idx
+  const nonEmpty = [];
+  for (let i = 0; i < pages.length; i++) {
+    const p = pages[i];
+    if ((p.strokes && p.strokes.length) || (p.images && p.images.length)) nonEmpty.push(i);
+  }
+  if (!nonEmpty.length) {
     showToast('画布是空的');
     closeCanvasPage();
     return;
   }
-  const ok = await _canvasUploadPngToPending();
-  if (!ok) return;   // 失败时保留画布让用户重试
-  showToast('已加到笔记');
+  // 多页时依次切到每页 → 渲染 → 上传, 失败任一页就停 (保留画布让用户重试)
+  let uploaded = 0;
+  const origIdx = _canvasState.activePageIdx;
+  for (const i of nonEmpty) {
+    if (i !== _canvasState.activePageIdx) {
+      _canvasBindPage(i);
+      _canvasRedraw();
+      // 等一帧让 redraw 完成 + image 加载
+      await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+    }
+    const ok = await _canvasUploadPngToPending();
+    if (!ok) {
+      // 失败时切回原页让用户看到错误位置
+      if (origIdx !== _canvasState.activePageIdx) _canvasBindPage(origIdx);
+      _canvasRedraw();
+      return;
+    }
+    uploaded++;
+  }
+  showToast(uploaded > 1 ? `已加 ${uploaded} 页到笔记` : '已加到笔记');
   closeCanvasPage();
   if (_summaryEditorPage.open) _renderSummaryEditorPage();
   _refreshSumPendingImagesInSheet();
@@ -4690,6 +4862,17 @@ const _summaryActions = {
   'canvas-tool': (el) => {
     const t = el && el.dataset && el.dataset.tool;
     if (!t) return;
+    const wasPenActive = _canvasState.tool === 'pen';
+    const popOpen = !document.getElementById('cvp-popover').classList.contains('hidden');
+    // 笔工具已 active + 再点笔 → toggle 设置 popover (GoodNotes 风格)
+    if (t === 'pen' && wasPenActive) {
+      if (popOpen) {
+        _canvasHidePopover();
+      } else {
+        _canvasOpenPenSettingsPopover(el);
+      }
+      return;
+    }
     _canvasState.tool = t;
     if (t !== 'select') _canvasState.selection = null;
     _canvasHidePopover();
@@ -4728,13 +4911,105 @@ const _summaryActions = {
   'canvas-undo': () => { _canvasUndo(); },
   'canvas-redo': () => { _canvasRedo(); },
   'canvas-clear': () => {
-    if (!_canvasState.strokes.length) return;
-    if (!confirm('清空画布?')) return;
-    _canvasState.strokes = [];
+    if (!_canvasState.strokes.length && !_canvasState.images.length) return;
+    if (!confirm('清空当前页 (笔画 + 图片)?')) return;
+    _canvasState.strokes.length = 0;
+    _canvasState.images.length = 0;
     _canvasState.selection = null;
     _dbgLastStrokesCount = 0;   // 主动清空, alarm baseline 重置 (先于 redraw)
     _canvasPushHistory();
     _canvasRedraw();
+  },
+  // ===== 插入图片 (Kayu 2026-05-29) =====
+  'canvas-insert-image': () => {
+    const input = document.getElementById('cvp-image-input');
+    if (!input) return;
+    input.value = '';
+    input.click();
+    input.onchange = () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        const img = new Image();
+        img.onload = () => {
+          // 缩放到画布 60% 长边内
+          const maxW = _canvasState.w * 0.6;
+          const maxH = _canvasState.h * 0.6;
+          let w = img.naturalWidth, h = img.naturalHeight;
+          const scale = Math.min(maxW / w, maxH / h, 1);
+          w = Math.max(60, w * scale);
+          h = Math.max(60, h * scale);
+          const x = Math.max(0, (_canvasState.w - w) / 2);
+          const y = Math.max(0, (_canvasState.h - h) / 2);
+          _canvasState.images.push({
+            id: 'cvimg-' + Math.random().toString(36).slice(2, 10),
+            x, y, w, h, img, src: dataUrl,
+          });
+          _canvasPushHistory();
+          _canvasRedraw();
+          showToast('已插入图片');
+        };
+        img.onerror = () => alert('图片加载失败');
+        img.src = dataUrl;
+      };
+      reader.onerror = () => alert('读图失败');
+      reader.readAsDataURL(f);
+    };
+  },
+  // ===== 多页画布 (Kayu 2026-05-29) =====
+  'canvas-page-add': () => {
+    // 当前页是空的就不重复加
+    if (!_canvasState.strokes.length && !_canvasState.images.length && _canvasState.pages.length >= 1) {
+      showToast('当前页是空的, 不用新增');
+      return;
+    }
+    _canvasState.pages.push(_canvasNewPage());
+    _canvasBindPage(_canvasState.pages.length - 1);
+    _canvasRedraw();
+    _canvasRefreshToolbar();
+    _canvasRenderPagesSidebar();
+  },
+  'canvas-page-switch': (el) => {
+    const idx = parseInt(el && el.dataset && el.dataset.idx, 10);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= _canvasState.pages.length) return;
+    if (idx === _canvasState.activePageIdx) {
+      _canvasState.pagesSidebarOpen = false;
+      _canvasRenderPagesSidebar();
+      return;
+    }
+    _canvasBindPage(idx);
+    _canvasRedraw();
+    _canvasRefreshToolbar();
+    _canvasState.pagesSidebarOpen = false;
+    _canvasRenderPagesSidebar();
+  },
+  'canvas-page-delete': (el) => {
+    const idx = parseInt(el && el.dataset && el.dataset.idx, 10);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= _canvasState.pages.length) return;
+    if (_canvasState.pages.length <= 1) {
+      showToast('至少保留 1 页');
+      return;
+    }
+    if (!confirm(`删除第 ${idx + 1} 页?`)) return;
+    _canvasState.pages.splice(idx, 1);
+    // 重新 bind 当前页 (如果删的是当前页, 切到前一页)
+    let newIdx = _canvasState.activePageIdx;
+    if (idx < newIdx) newIdx--;
+    if (newIdx >= _canvasState.pages.length) newIdx = _canvasState.pages.length - 1;
+    _canvasBindPage(newIdx);
+    _canvasRedraw();
+    _canvasRefreshToolbar();
+    _canvasRenderPagesSidebar();
+  },
+  'canvas-pages-toggle': () => {
+    _canvasState.pagesSidebarOpen = !_canvasState.pagesSidebarOpen;
+    _canvasRenderPagesSidebar();
+  },
+  'canvas-pages-close': () => {
+    _canvasState.pagesSidebarOpen = false;
+    _canvasRenderPagesSidebar();
   },
   // OCR — 调云函数 ocrHandwriting (用户需在 CloudBase 控制台部署, 见 cloudfunctions/ocrHandwriting/README.md)
   'canvas-ocr': async () => {

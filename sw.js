@@ -1,7 +1,7 @@
 // PSFocus mobile · Service Worker
 // 目的:Chrome / Safari iOS 杀掉 tab 重新加载时,不依赖网络也能起来 — 防「无法打开此网页」
 // 策略:app shell(html / js / css)走 stale-while-revalidate,云端 API(CloudBase)绝不拦
-const SW_BUILD = '20260529-0938';
+const SW_BUILD = '20260529-0939';
 const CACHE_NAME = 'psfocus-shell-' + SW_BUILD;
 const SHELL_URLS = ['./', './index.html', './app.js', './style.css'];
 

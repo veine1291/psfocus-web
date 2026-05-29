@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0938';
+const _PSFOCUS_BUILD = '20260529-0939';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2399,11 +2399,10 @@ function _canvasDrawStroke(ctx, s) {
     ctx.restore();
     return;
   }
-  // 有压感 → 每相邻两点一段 (短段, lineCap=round 衔接自然)
-  // Canvas 2D 的 lineWidth 一段 path 内不能渐变, 所以段越短越接近"段内渐变"。
-  // Apple Pencil 60-120Hz 采样, 相邻点 2-8px, 视觉上跟连续渐变无差别。
-  // 每段宽度 = baseWidth * map( (p[i] + p[i+1]) / 2 )
-  // 同时对 pressure 做 3 点滑动平均, 压平采样抖动
+  // 有压感 → 每相邻两点一段 Catmull-Rom→Bezier 曲线 (比 lineTo 直线段平滑得多)
+  // Catmull-Rom 4 控制点: p[i-1], p[i], p[i+1], p[i+2] → 段就是 p[i]→p[i+1] 这段曲线
+  // 转 Bezier: cp1 = p[i] + (p[i+1] - p[i-1]) / 6;  cp2 = p[i+1] - (p[i+2] - p[i]) / 6
+  // 段宽度仍按压感平均 (Canvas lineWidth 段内不能渐变, 所以靠"段细"模拟渐变)
   const smoothP = new Array(pts.length);
   for (let i = 0; i < pts.length; i++) {
     const a = pts[Math.max(0, i - 1)].p != null ? pts[Math.max(0, i - 1)].p : 1;
@@ -2413,11 +2412,18 @@ function _canvasDrawStroke(ctx, s) {
   }
   for (let i = 0; i < pts.length - 1; i++) {
     const a = pts[i], b = pts[i+1];
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(pts.length - 1, i + 2)];
     const avgP = (smoothP[i] + smoothP[i+1]) / 2;
     ctx.lineWidth = Math.max(0.3, baseW * _mapPressureToScale(avgP));
+    // Catmull-Rom → Bezier 控制点 (tension=0.5 标准)
+    const cp1x = a.x + (b.x - prev.x) / 6;
+    const cp1y = a.y + (b.y - prev.y) / 6;
+    const cp2x = b.x - (next.x - a.x) / 6;
+    const cp2y = b.y - (next.y - a.y) / 6;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, b.x, b.y);
     ctx.stroke();
   }
   ctx.restore();
@@ -2632,17 +2638,27 @@ function _canvasBindEvents() {
       e.preventDefault();
       return;
     }
-    const p = localXY(e);
+    // 笔工具 — 用 getCoalescedEvents 把 60Hz pointermove 内合并掉的所有原始 sub-events 拿出来,
+    // Apple Pencil 原始报告频率 240Hz, 一帧能合 4 个点; 不拿出来就丢 3/4 采样 → 笔触锯齿/卡
     if (_canvasState.currentStroke) {
+      const subs = (e.getCoalescedEvents && typeof e.getCoalescedEvents === 'function')
+        ? e.getCoalescedEvents() : null;
+      const events = (subs && subs.length) ? subs : [e];
       const pts = _canvasState.currentStroke.points;
-      const last = pts[pts.length - 1];
-      // 间距 < 1.5px 跳过 (减少冗余点)
-      if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return;
-      // 应用抖动修正 (开启时), 否则直接 raw 点
-      const sm = _canvasSmoothPoint(p.x, p.y);
-      pts.push({ x: sm.x, y: sm.y, p: _readPressure(e) });
+      for (const ev of events) {
+        const sp = localXY(ev);
+        const last = pts[pts.length - 1];
+        // 间距 < 0.8px 跳过 (比之前 1.5px 更密, 适合高采样率)
+        if (last && Math.hypot(sp.x - last.x, sp.y - last.y) < 0.8) continue;
+        // 应用抖动修正 (开启时), 否则直接 raw 点
+        const sm = _canvasSmoothPoint(sp.x, sp.y);
+        pts.push({ x: sm.x, y: sm.y, p: _readPressure(ev) });
+      }
       _scheduleRedraw();
-    } else if (_canvasState.tool === 'eraser' && (e.buttons & 1 || e.pressure > 0)) {
+      return;
+    }
+    const p = localXY(e);
+    if (_canvasState.tool === 'eraser' && (e.buttons & 1 || e.pressure > 0)) {
       _canvasEraseAt(p.x, p.y);
       dragLast = p;
     } else if (_canvasState.marquee) {

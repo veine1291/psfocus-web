@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0942';
+const _PSFOCUS_BUILD = '20260529-0943';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -3359,7 +3359,8 @@ function _sumTbPinned() {
 function _sumTbSetPinned(arr) {
   if (!state.settings) state.settings = {};
   state.settings.summaryToolbarPinned = arr.slice();
-  saveState();
+  // mobile 没有 saveState() (那是桌面 API), 用 pushState() 同步 + 推云
+  pushState();
 }
 function _sumTbTogglePin(fmtId) {
   const cur = _sumTbPinned();

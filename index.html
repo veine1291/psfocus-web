@@ -10,7 +10,7 @@
   <!-- 不能用 no-store,会禁掉 iOS / Chrome 的 BFCache,导致每次切回 tab 都要全量 reload -->
   <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
   <title>PS Focus</title>
-  <link rel="stylesheet" href="style.css?v=20260529-0935">
+  <link rel="stylesheet" href="style.css?v=20260529-0936">
 </head>
 <body>
 
@@ -125,7 +125,7 @@
     <button class="cvp-topbar-btn" data-action="canvas-close" aria-label="返回"><span class="ico-chevron-left"></span></button>
     <div class="cvp-topbar-title">手写画布</div>
     <button id="cvp-topbar-ocr" class="cvp-topbar-ocr" data-action="canvas-ocr" title="识别为文字">识别</button>
-    <button class="cvp-topbar-done" data-action="canvas-done">完成</button>
+    <button class="cvp-topbar-done" data-action="canvas-done" title="把画布作为附图加到笔记">插入笔记</button>
   </header>
   <div class="cvp-toolbar" id="cvp-toolbar"></div>
   <div class="cvp-stage" id="cvp-stage">
@@ -142,6 +142,6 @@
 
 <!-- 腾讯云 CloudBase SDK(暴露 window.cloudbase) -->
 <script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js?v=1"></script>
-<script src="app.js?v=20260529-0935"></script>
+<script src="app.js?v=20260529-0936"></script>
 </body>
 </html>

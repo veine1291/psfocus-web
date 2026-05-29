@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0935';
+const _PSFOCUS_BUILD = '20260529-0936';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2983,11 +2983,10 @@ async function _canvasFinish() {
   // 导出 PNG
   const blob = await new Promise(res => off.toBlob(b => res(b), 'image/png'));
   if (!blob) { showToast('导出失败'); closeCanvasPage(); return; }
-  // 上传
-  if (!window.tcbApp || !tcbApp.uploadFile) {
-    showToast('未登录云同步,无法保存画布');
-    closeCanvasPage();
-    return;
+  // 上传 — 失败时保留画布内容, 不关页, 让用户重试 (避免画了半天一关全没)
+  if (typeof tcbApp === 'undefined' || !tcbApp || !tcbApp.uploadFile) {
+    alert('云同步还没就绪 — 无法保存画布到云图。\n\n请检查登录 / 网络后重试。\n你的画布内容已保留, 可以再次按"插入笔记"。');
+    return;   // 不关画布, 不清 strokes
   }
   showToast('保存画布…');
   try {
@@ -3007,13 +3006,12 @@ async function _canvasFinish() {
       if (_summaryEditorPage.open) _renderSummaryEditorPage();
       _refreshSumPendingImagesInSheet();
     } else {
-      showToast('上传失败');
-      closeCanvasPage();
+      // 上传失败也保留画布内容, 让用户重试
+      alert('上传失败 (没拿到 fileID)。\n画布已保留, 可再次按"插入笔记"。');
     }
   } catch (err) {
     console.warn('[canvas-upload]', err);
-    showToast('上传失败: ' + (err && err.message || err));
-    closeCanvasPage();
+    alert('上传失败: ' + (err && err.message || err) + '\n\n画布已保留, 可再次按"插入笔记"。');
   }
 }
 
@@ -4718,7 +4716,10 @@ const _summaryActions = {
   'canvas-ocr': async () => {
     if (_canvasState.ocrPending) return;
     if (!_canvasState.strokes.length) { alert('画布是空的, 先画点字'); return; }
-    if (!window.tcbApp || !tcbApp.callFunction) { alert('未登录云同步, 无法识别'); return; }
+    if (typeof tcbApp === 'undefined' || !tcbApp || !tcbApp.callFunction) {
+      alert('云同步还没就绪 — 无法识别为文字。\n\n不想识别也没关系: 直接按"插入笔记"就会把画布作为图片附到笔记里。');
+      return;
+    }
     _canvasState.ocrPending = true;
     _canvasRefreshToolbar();
     try {
@@ -4756,7 +4757,7 @@ const _summaryActions = {
       if (!r || r.code !== 0) {
         const msg = (r && r.msg) || '识别失败';
         // 区分"函数未部署"和真识别失败 — 让用户能看明白
-        alert('OCR 失败:\n\n' + msg + '\n\n如果是函数未部署,请按 cloudfunctions/ocrHandwriting/README.md 在 CloudBase 控制台部署 ocrHandwriting 函数。');
+        alert('OCR 失败:\n\n' + msg + '\n\n不识别也行: 直接按"插入笔记"会把画布作为图片附到笔记里。\n\n要部署 OCR 函数请按 cloudfunctions/ocrHandwriting/README.md 操作。');
         return;
       }
       const text = (r.text || '').trim();
@@ -4778,9 +4779,9 @@ const _summaryActions = {
       const msg = (err && err.message) || String(err);
       const notDeployed = /not found|FUNCTIONS_NOT_FOUND|没找到|函数不存在/i.test(msg);
       if (notDeployed) {
-        alert('OCR 功能需要先在 CloudBase 控制台部署 ocrHandwriting 云函数。\n\n部署步骤见项目里的 cloudfunctions/ocrHandwriting/README.md');
+        alert('OCR 需要先在 CloudBase 控制台部署 ocrHandwriting 云函数。\n\n不部署也能用: 直接按"插入笔记"会把画布作为图片附到笔记里。\n\n部署步骤见 cloudfunctions/ocrHandwriting/README.md');
       } else {
-        alert('OCR 失败:\n' + msg);
+        alert('OCR 失败:\n' + msg + '\n\n不识别也行: 直接按"插入笔记"把画布作为图片。');
       }
     } finally {
       _canvasState.ocrPending = false;

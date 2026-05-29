@@ -5304,6 +5304,24 @@ body.sum-editor-open { overflow: hidden; }
   background: var(--bg-page);
   display: flex;
   flex-direction: column;
+  /* 防 iOS Pencil 触发"选择内容"高亮 / 长按复制菜单 / 拖拽选择 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-drag: none;
+}
+.canvas-page * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+/* 但 input (笔粗滑条 / 颜色拾取器) 还是要能交互 */
+.canvas-page input,
+.canvas-page input[type="color"],
+.canvas-page input[type="range"] {
+  -webkit-user-select: auto;
+  user-select: auto;
 }
 .canvas-page.hidden { display: none; }
 body.canvas-open { overflow: hidden; }
@@ -5426,6 +5444,24 @@ body.canvas-open { overflow: hidden; }
   color: var(--text-faint);
   padding: 4px 2px 0;
   line-height: 1.4;
+}
+.cvp-input-mode-row { gap: 6px; padding: 4px 0; }
+.cvp-mode-chip {
+  flex: 1 1 0;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  border-radius: 16px;
+  cursor: pointer;
+}
+.cvp-mode-chip:active { background: var(--bg-section); }
+.cvp-mode-chip.active {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-color: var(--accent);
 }
 
 /* 颜色 / 笔粗的浮窗 */

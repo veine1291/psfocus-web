@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0932';
+const _PSFOCUS_BUILD = '20260529-0933';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2108,6 +2108,18 @@ let _canvasState = {
       return Number.isFinite(v) && v >= 0 && v <= 10 ? v : 0;
     } catch (_) { return 0; }
   })(),
+  // 仅笔模式 — 强制只接 pointerType='pen' 的输入, 手指/鼠标全 reject
+  // 默认 auto: 自动判断 (一旦本次会话出现 pen, 后续 touch 全拒, palm rejection)
+  // 'pen-only': 用户手动开关, 永远只接 pen
+  inputMode: (() => {
+    try {
+      const v = localStorage.getItem('psfocus_canvasInputMode');
+      return (v === 'pen-only' || v === 'auto') ? v : 'auto';
+    } catch (_) { return 'auto'; }
+  })(),
+  // 自动 palm rejection 内部标记 — 本次会话见过 pen 则置 true, 后续 touch 拒
+  // openCanvasPage 时重置
+  _penSeen: false,
   colorHistory: (() => {
     try { return JSON.parse(localStorage.getItem('psfocus_canvasColors') || '[]'); }
     catch (_) { return []; }
@@ -2420,6 +2432,7 @@ function openCanvasPage(opts) {
   _canvasState.history = [[]];
   _canvasState.histIdx = 0;
   _canvasState._diagShown = false;
+  _canvasState._penSeen = false;
   const page = document.getElementById('canvas-page');
   if (page) page.classList.remove('hidden');
   document.body.classList.add('canvas-open');
@@ -2483,6 +2496,10 @@ function _canvasBindEvents() {
   if (!canvas || canvas._bound) return;
   canvas._bound = true;
   canvas.style.touchAction = 'none';   // 关键: 阻止 iOS 双指缩放/滑动
+  // 多层防 iOS Pencil 触发"选择内容"高亮 / "Scribble" / contextmenu
+  ['selectstart', 'dragstart', 'contextmenu', 'gesturestart'].forEach(ev => {
+    canvas.addEventListener(ev, (e) => e.preventDefault());
+  });
   let dragLast = null;     // pointermove 上次位置 (移/缩放用)
   let scaleAnchor = null;  // 缩放时的固定锚点和原始 bbox
   function localXY(e) {
@@ -2506,8 +2523,22 @@ function _canvasBindEvents() {
     _moveRAF = requestAnimationFrame(() => { _moveRAF = null; _canvasRedraw(); });
   }
   canvas.addEventListener('pointerdown', (e) => {
+    // Palm rejection — 区分手和笔 (Kayu 2026-05-29 反馈: 画字时 iOS 误把 Pencil 当"选择内容"高亮)
+    if (e.pointerType === 'pen') {
+      _canvasState._penSeen = true;   // 标记本次会话用过 pen
+    } else if (e.pointerType === 'touch') {
+      // 模式 1: 仅笔模式 — touch 全 reject
+      if (_canvasState.inputMode === 'pen-only') {
+        e.preventDefault();
+        return;
+      }
+      // 模式 2: auto + 已见 pen → 后续 touch (手掌/误触) 拒掉
+      if (_canvasState._penSeen) {
+        e.preventDefault();
+        return;
+      }
+    }
     // 关键保护 1: 只接受 primary pointer (主指), 多指 / Pencil + 手掌 同时下 → 丢非主
-    // 这避免第二个 pointerdown 覆盖正在画的 currentStroke (→ 上一笔从未入库, 看起来"消失")
     if (!e.isPrimary) { e.preventDefault(); return; }
     // 关键保护 2: 若 currentStroke 还在 (上一次 pointerup 漏触发 / cancel 没清),
     // 先把它入 strokes 库, 别让新 down 直接覆盖丢笔画
@@ -2557,6 +2588,11 @@ function _canvasBindEvents() {
   canvas.addEventListener('pointermove', (e) => {
     // 忽略非激活 pointer (多指/手掌)
     if (_activePointerId != null && e.pointerId !== _activePointerId) return;
+    // Palm rejection — touch 在 pen 模式 / 已见 pen 时直接 swallow
+    if (e.pointerType === 'touch' && (_canvasState.inputMode === 'pen-only' || _canvasState._penSeen)) {
+      e.preventDefault();
+      return;
+    }
     const p = localXY(e);
     if (_canvasState.currentStroke) {
       const pts = _canvasState.currentStroke.points;
@@ -2800,6 +2836,12 @@ function _canvasOpenWidthPopover(anchorBtn) {
       <span class="cvp-width-num" id="cvp-stab-num">${_canvasState.stabilize}</span>
     </div>
     <div class="cvp-pop-hint">0 = 关闭 · 越大笔触越平滑 (但跟随会延迟)</div>
+    <div class="cvp-pop-title">输入方式</div>
+    <div class="cvp-pop-row cvp-input-mode-row">
+      <button class="cvp-mode-chip ${_canvasState.inputMode === 'auto' ? 'active' : ''}" data-action="canvas-pick-input-mode" data-mode="auto">自动</button>
+      <button class="cvp-mode-chip ${_canvasState.inputMode === 'pen-only' ? 'active' : ''}" data-action="canvas-pick-input-mode" data-mode="pen-only">仅笔</button>
+    </div>
+    <div class="cvp-pop-hint">自动:用过 Pencil 后, 后续手指 / 手掌都拒。<br>仅笔:永远只接 Pencil 输入。</div>
   `;
   _canvasShowPopover(pop, anchorBtn);
   const slider = document.getElementById('cvp-width-slider');
@@ -4593,6 +4635,18 @@ const _summaryActions = {
     _canvasState.width = w;
     _canvasRefreshToolbar();
     _canvasHidePopover();
+  },
+  'canvas-pick-input-mode': (el) => {
+    const m = el && el.dataset && el.dataset.mode;
+    if (m !== 'auto' && m !== 'pen-only') return;
+    _canvasState.inputMode = m;
+    try { localStorage.setItem('psfocus_canvasInputMode', m); } catch (_) {}
+    // 切到仅笔模式 → 立刻视作"已见 pen", 后续 touch 一律拒
+    if (m === 'pen-only') _canvasState._penSeen = true;
+    // 切回 auto 也保留 _penSeen (这次会话见过就是见过)
+    // 重渲 popover 让 active 状态更新
+    const widthBtn = document.querySelector('[data-action="canvas-open-width"]');
+    if (widthBtn) _canvasOpenWidthPopover(widthBtn);
   },
   'canvas-undo': () => { _canvasUndo(); },
   'canvas-redo': () => { _canvasRedo(); },

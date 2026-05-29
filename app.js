@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-1344';
+const _PSFOCUS_BUILD = '20260529-1404';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1654,6 +1654,7 @@ let summaryState = {
   pendingModuleValues: {},     // { [modId]: value/valueMs }
   draftNote: '',               // 输入框未发布的笔记草稿 — 防 renderAll 时清空
   draftTitle: '',              // 概要(title)草稿 — 同 draftNote 持久化
+  draftCreatedAt: null,        // 草稿预定发布日期 (null = today), 改了录入模块也跟着切到该日的
   modulePopoverForDay: null,   // sheet 形式打开时的 dayKey
   modulePickerOpenInPopover: false,
   expandedModuleCards: new Set(),
@@ -2012,17 +2013,28 @@ function _renderSummaryEditorPage() {
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   })() : '';
   // 今日待录入模块 (只新建模式显)
-  const todayKey = _todayKey();
-  const todayMods = !isEdit ? _summaryModulesForDay(todayKey).filter(m => m.kind === 'rating' || m.kind === 'duration') : [];
+  // 新建模式: 模块按 draftCreatedAt 拉 (默认 today, 用户可点"今日"改其它日期 → 模块跟着切)
+  // 编辑模式: 不显示录入模块面板 (编辑现有笔记不录新模块)
+  const draftKey = !isEdit ? _draftDateKey() : null;
+  const todayMods = !isEdit ? _summaryModulesForDay(draftKey).filter(m => m.kind === 'rating' || m.kind === 'duration') : [];
   const inputModsCollapsed = !!summaryState.inputModsCollapsed;
+  const draftDateLabel = !isEdit ? _draftDateLabel() : '';
+  const draftDateInputVal = !isEdit ? _msToDateInputVal(summaryState.draftCreatedAt || Date.now()) : '';
+  // body 永远渲染 — collapsed CSS class 控制 display:none, 这样 toggle 不需要重渲就能立即生效
+  // 用 div 而非 button 包外层 — 这样里面可以嵌 label/input 实现"今日"日期 pill 不冲突按钮嵌套规则
+  // dispatcher 按 closest data-action 派发: 点 label 走 summary-noop (拦截不展开), 点其它走 toggle
   const todayModsHtml = todayMods.length ? `<div class="sum-input-day-mods ${inputModsCollapsed ? 'collapsed' : ''}">
-    <button class="sum-input-day-mods-head" data-action="summary-toggle-input-mods" type="button">
+    <div class="sum-input-day-mods-head" data-action="summary-toggle-input-mods">
       <span class="sum-input-day-mods-chev">${inputModsCollapsed ? '▶' : '▼'}</span>
-      <span class="sum-input-day-mods-label">今日 · 待录入 <span class="sum-input-day-mods-count">(${todayMods.length})</span></span>
-    </button>
-    ${inputModsCollapsed ? '' : `<div class="sum-input-day-mods-body">
-      ${todayMods.map(m => _renderSummaryModuleEditor(m, todayKey)).join('')}
-    </div>`}
+      <label class="sum-input-date-pill" data-action="summary-noop" title="点击改这条笔记的日期">
+        <input type="date" id="sum-draft-date-input" class="sum-draft-date-input" value="${esc(draftDateInputVal)}">
+        <span>${esc(draftDateLabel)}</span>
+      </label>
+      <span class="sum-input-day-mods-label">· 待录入 <span class="sum-input-day-mods-count">(${todayMods.length})</span></span>
+    </div>
+    <div class="sum-input-day-mods-body">
+      ${todayMods.map(m => _renderSummaryModuleEditor(m, draftKey)).join('')}
+    </div>
   </div>` : '';
   body.innerHTML = `
     <header class="sep-topbar">
@@ -2080,6 +2092,19 @@ function _renderSummaryEditorPage() {
     dateInp.addEventListener('change', () => {
       const ts = Date.parse(dateInp.value);
       if (Number.isFinite(ts)) _summaryEditorPage.editingCreatedAt = ts;
+    });
+  }
+  // 新建模式: "今日" pill 的 date input change → 更新草稿日期 + 重渲让录入模块跟着切到该日
+  const draftDateInp = body.querySelector('#sum-draft-date-input');
+  if (draftDateInp) {
+    // 防 input 的 click 冒泡触发外层 toggle (HTML 规范上 label 内点 input 会触发 input click + label click)
+    draftDateInp.addEventListener('click', e => e.stopPropagation());
+    draftDateInp.addEventListener('change', () => {
+      const ts = _dateInputValToMs(draftDateInp.value);
+      if (Number.isFinite(ts)) {
+        summaryState.draftCreatedAt = ts;
+        _renderSummaryEditorPage();   // 重渲让 label 文字 + 录入模块跟着切
+      }
     });
   }
   // 工具栏按钮 mousedown 阻止失焦 (保选区)
@@ -3251,6 +3276,25 @@ async function _canvasFinish() {
   closeCanvasPage();
   if (_summaryEditorPage.open) _renderSummaryEditorPage();
   _refreshSumPendingImagesInSheet();
+}
+
+// 新建笔记的草稿日期 helpers (Kayu 2026-05-29) — 默认 today, 可点"今日"改
+function _draftDateKey() {
+  const ts = summaryState.draftCreatedAt || Date.now();
+  return _summaryDayKey(ts);
+}
+function _draftDateLabel() {
+  const ts = summaryState.draftCreatedAt || Date.now();
+  const d = new Date(ts);
+  const today = new Date();
+  const todayKey = _summaryDayKey(today.getTime());
+  const yKey = _summaryDayKey(today.getTime() - 86400000);
+  const tKey = _summaryDayKey(today.getTime() + 86400000);
+  const k = _summaryDayKey(ts);
+  if (k === todayKey) return '今日';
+  if (k === yKey) return '昨日';
+  if (k === tKey) return '明日';
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 function _summaryPrefillFilterTagIfEmpty() {
@@ -5320,6 +5364,9 @@ const _summaryActions = {
       if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(listEl);
     }
   },
+  // 占位 action — 用于在外层 toggle 区域内放"非 toggle"子区, 阻止 dispatcher 派发到外层
+  // (示例: "今日" pill 在"待录入"行内, 点 pill 不能触发 toggle)
+  'summary-noop': () => {},
   // "今日 · 待录入" 折叠/展开 — 记到 localStorage
   'summary-toggle-input-mods': () => {
     summaryState.inputModsCollapsed = !summaryState.inputModsCollapsed;
@@ -5496,9 +5543,20 @@ const _summaryActions = {
       const wikiLinks = _extractWikilinks(text);
       for (const wn of wikiLinks) _ensureConcept(wn);
       if (!Array.isArray(state.summaries)) state.summaries = [];
+      // 用户改了草稿日期 (点了"今日" pill 选别的日子) → 用 draftCreatedAt 当 createdAt
+      // 但保留改后的时分秒 (用 now 的 hh:mm:ss + draftCreatedAt 的 y-m-d), 这样发布顺序还是按真实时间
+      let createdAt = now;
+      if (Number.isFinite(summaryState.draftCreatedAt)) {
+        const drafted = new Date(summaryState.draftCreatedAt);
+        const nowD = new Date(now);
+        createdAt = new Date(
+          drafted.getFullYear(), drafted.getMonth(), drafted.getDate(),
+          nowD.getHours(), nowD.getMinutes(), nowD.getSeconds(), nowD.getMilliseconds()
+        ).getTime();
+      }
       state.summaries.push({
         id: 'sum-' + Math.random().toString(36).slice(2, 10),
-        createdAt: now, updatedAt: now,
+        createdAt, updatedAt: now,
         note: text, title, tags, images: imgs,
       });
     }
@@ -5506,6 +5564,7 @@ const _summaryActions = {
     summaryState.pendingModuleValues = {};
     summaryState.draftNote = '';
     summaryState.draftTitle = '';
+    summaryState.draftCreatedAt = null;   // 草稿日期一并清
     if (ed) ed.innerHTML = '<div><br></div>';
     if (titleEl) titleEl.value = '';
     pushState();

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0936';
+const _PSFOCUS_BUILD = '20260529-0937';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -4756,8 +4756,12 @@ const _summaryActions = {
       const r = res && res.result;
       if (!r || r.code !== 0) {
         const msg = (r && r.msg) || '识别失败';
-        // 区分"函数未部署"和真识别失败 — 让用户能看明白
-        alert('OCR 失败:\n\n' + msg + '\n\n不识别也行: 直接按"插入笔记"会把画布作为图片附到笔记里。\n\n要部署 OCR 函数请按 cloudfunctions/ocrHandwriting/README.md 操作。');
+        const notDeployed = /FUNCTION_?S?_?NOT_?FOUND|FunctionName parameter|not found|没找到|函数不存在|function .{0,30}not exist/i.test(msg);
+        if (notDeployed) {
+          alert('"识别"需要 OCR 云函数, 但还没部署。\n\n不影响使用 — 直接按右上"插入笔记"就会把画布作为图片附到笔记里发布。\n\n要部署 OCR (可选): 见 cloudfunctions/ocrHandwriting/README.md');
+        } else {
+          alert('OCR 失败:\n\n' + msg + '\n\n不识别也行: 直接按"插入笔记"把画布作为图片附到笔记。');
+        }
         return;
       }
       const text = (r.text || '').trim();
@@ -4777,9 +4781,11 @@ const _summaryActions = {
     } catch (err) {
       console.warn('[canvas-ocr]', err);
       const msg = (err && err.message) || String(err);
-      const notDeployed = /not found|FUNCTIONS_NOT_FOUND|没找到|函数不存在/i.test(msg);
+      // 匹配多种"函数未部署"消息: CloudBase 返回 FUNCTION_NOT_FOUND (单数, 无 S)
+      // 也可能是 FunctionName parameter could not be found / function does not exist 等
+      const notDeployed = /FUNCTION_?S?_?NOT_?FOUND|FunctionName parameter|not found|没找到|函数不存在|function .{0,30}not exist/i.test(msg);
       if (notDeployed) {
-        alert('OCR 需要先在 CloudBase 控制台部署 ocrHandwriting 云函数。\n\n不部署也能用: 直接按"插入笔记"会把画布作为图片附到笔记里。\n\n部署步骤见 cloudfunctions/ocrHandwriting/README.md');
+        alert('"识别"需要 OCR 云函数, 但还没部署。\n\n不影响使用 — 直接按右上"插入笔记"就会把画布作为图片附到笔记里发布。\n\n要部署 OCR (可选): 见 cloudfunctions/ocrHandwriting/README.md');
       } else {
         alert('OCR 失败:\n' + msg + '\n\n不识别也行: 直接按"插入笔记"把画布作为图片。');
       }

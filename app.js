@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260530-0552';
+const _PSFOCUS_BUILD = '20260530-0600';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -5529,7 +5529,7 @@ const _summaryActions = {
       <div class="sheet-handle"></div>
       <div class="sheet-content sum-date-sheet">
         <div class="sum-date-sheet-title">这条笔记的日期</div>
-        <div class="sum-date-sheet-hint">选了就生效, 不用确认</div>
+        <div class="sum-date-sheet-current" id="sum-date-current-label">当前: ${esc(_draftDateLabel())}</div>
         <div class="sum-date-sheet-quick">
           <button class="sum-date-quick-btn" data-action="summary-draft-date-pick-quick" data-ms="${yMs}">昨日</button>
           <button class="sum-date-quick-btn" data-action="summary-draft-date-pick-quick" data-ms="${todayMs}">今日</button>
@@ -5540,37 +5540,61 @@ const _summaryActions = {
           <input type="date" id="sum-date-sheet-input" class="sum-date-sheet-input" value="${esc(curInputVal)}">
         </div>
         <div class="sum-date-sheet-actions">
-          <button class="modal-btn" data-action="close-sheet">取消</button>
+          <button class="modal-btn" data-action="summary-draft-date-cancel">取消</button>
+          <button class="modal-btn modal-btn-primary" data-action="summary-draft-date-done">完成</button>
         </div>
       </div>
     `, {
-      noSwipeClose: true,   // iPad 上 picker 弹起时手指容易碰 sheet 顶部, 关掉自动滑关
-      noMaskClose: true,    // iOS picker 关闭瞬间合成 click 容易落在 mask 上误关 sheet
+      noSwipeClose: true,   // iPad picker 弹起时手指容易碰 sheet 顶部, 关掉滑动关
+      noMaskClose: true,    // iPad date picker 点日期触发 mask 误关
       onMount: (body) => {
-        // input change → 立即应用 + 关 sheet (iPad 上 viewport 变化也不影响)
+        // input change → 只更新草稿日期 (不关 sheet, 让用户能反复调)
+        // 关 sheet 改成用户主动点"完成"按钮 (iPad 上 native picker 是日历样式, 点日期立刻 fire change,
+        // 如果 change 关 sheet 用户看一眼就消失了; 必须用户明确点"完成")
         const inp = body.querySelector('#sum-date-sheet-input');
+        const curLbl = body.querySelector('#sum-date-current-label');
         if (inp) {
+          // 记下打开时的原 draft, 取消时回滚
+          if (typeof summaryState._draftDateBackup === 'undefined') {
+            summaryState._draftDateBackup = summaryState.draftCreatedAt;
+          }
           inp.addEventListener('change', () => {
             const ts = _dateInputValToMs(inp.value);
             if (Number.isFinite(ts)) {
               summaryState.draftCreatedAt = ts;
-              _summaryEnsureDayHasTemplates(_summaryDayKey(ts));
+              if (curLbl) curLbl.textContent = '当前: ' + _draftDateLabel();
+              // 不关 sheet, 不重渲编辑页 (等"完成"再渲)
             }
-            closeSheet();
-            if (_summaryEditorPage.open) _renderSummaryEditorPage();
           });
         }
       },
     });
   },
-  // 选了快捷按钮 (昨/今/明) → 直接 apply + 关 sheet
+  // 选了快捷按钮 (昨/今/明) → 立即 apply, 关 sheet (快捷按钮就是一键设置, 不需要再点完成)
   'summary-draft-date-pick-quick': (el) => {
     const ms = parseInt(el && el.dataset && el.dataset.ms, 10);
     if (!Number.isFinite(ms)) return;
     summaryState.draftCreatedAt = ms;
     _summaryEnsureDayHasTemplates(_summaryDayKey(ms));
+    delete summaryState._draftDateBackup;
     closeSheet();
     if (_summaryEditorPage.open) _renderSummaryEditorPage();
+  },
+  // 完成 — 把 draftCreatedAt 落实, 关 sheet
+  'summary-draft-date-done': () => {
+    const ts = summaryState.draftCreatedAt;
+    if (Number.isFinite(ts)) _summaryEnsureDayHasTemplates(_summaryDayKey(ts));
+    delete summaryState._draftDateBackup;
+    closeSheet();
+    if (_summaryEditorPage.open) _renderSummaryEditorPage();
+  },
+  // 取消 — 回滚到打开 sheet 之前的草稿日期, 关 sheet
+  'summary-draft-date-cancel': () => {
+    if (typeof summaryState._draftDateBackup !== 'undefined') {
+      summaryState.draftCreatedAt = summaryState._draftDateBackup;
+      delete summaryState._draftDateBackup;
+    }
+    closeSheet();
   },
   // "今日 · 待录入" 折叠/展开 — 记到 localStorage
   'summary-toggle-input-mods': () => {

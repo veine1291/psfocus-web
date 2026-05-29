@@ -4991,6 +4991,12 @@ body.sum-editor-open { overflow: hidden; }
   color: var(--text-faint);
   margin-bottom: 12px;
 }
+.sum-date-sheet-current {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 500;
+  margin-bottom: 12px;
+}
 .sum-date-sheet-quick {
   display: flex;
   gap: 8px;

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0944';
+const _PSFOCUS_BUILD = '20260529-1344';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -8708,8 +8708,13 @@ function projectTimelineBodyHtml(pid) {
   };
   const renderNode = (n) => {
     const elapsedLabel = (n.type === 'created') ? '起点' : fmtTimelineElapsed(projectFocusMsBefore(p.id, n.ts));
-    const typeIcon = n.type === 'created' ? '◉' : n.type === 'task-done' ? '✓' : '◆';
-    const editable = (n.type === 'manual');
+    const typeIcon = n.type === 'created' ? '◉'
+      : n.type === 'task-done' ? '✓'
+      : n.type === 'snapshot' ? '◷'   // 进度快照 — 跟普通手动节点视觉区分
+      : '◆';
+    // manual 节点和 snapshot (PS 自动快照) 都允许编辑/删除 (Kayu 2026-05-29 反馈, 对齐桌面端)
+    // created (项目起点) 和 task-done (任务完成自动生成) 不能编辑
+    const editable = (n.type === 'manual' || n.type === 'snapshot');
     const editAttr = editable ? ` data-tl-node-id="${esc(n.id)}" data-tl-proj-id="${esc(p.id)}"` : '';
     return `<div class="proj-tl-node proj-tl-${esc(n.type || 'manual')} ${editable ? 'editable' : ''}"${editAttr}>
       <div class="proj-tl-marker">${typeIcon}</div>

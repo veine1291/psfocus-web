@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-2008';
+const _PSFOCUS_BUILD = '20260529-2015';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -5517,7 +5517,8 @@ const _summaryActions = {
   // (示例: "今日" pill 在"待录入"行内, 点 pill 不能触发 toggle)
   'summary-noop': () => {},
   // 草稿日期选择 sheet (Kayu 2026-05-29) — 替代内嵌 input[type=date] (iOS 渲染问题)
-  // 点"今日" pill → 弹底部 sheet, 含 native date input + 快捷按钮 + 确认
+  // iPad 上 picker 弹出会缩 viewport, 多种事件叠加; 让 input change 立即应用 + 关 sheet,
+  // 不靠"确认"按钮 (跟 iOS native picker 行为对齐), 避免 sheet 因 viewport 变化提前消失
   'summary-pick-draft-date': () => {
     const cur = summaryState.draftCreatedAt || Date.now();
     const curInputVal = _msToDateInputVal(cur);
@@ -5528,6 +5529,7 @@ const _summaryActions = {
       <div class="sheet-handle"></div>
       <div class="sheet-content sum-date-sheet">
         <div class="sum-date-sheet-title">这条笔记的日期</div>
+        <div class="sum-date-sheet-hint">选了就生效, 不用确认</div>
         <div class="sum-date-sheet-quick">
           <button class="sum-date-quick-btn" data-action="summary-draft-date-pick-quick" data-ms="${yMs}">昨日</button>
           <button class="sum-date-quick-btn" data-action="summary-draft-date-pick-quick" data-ms="${todayMs}">今日</button>
@@ -5539,10 +5541,26 @@ const _summaryActions = {
         </div>
         <div class="sum-date-sheet-actions">
           <button class="modal-btn" data-action="close-sheet">取消</button>
-          <button class="modal-btn modal-btn-primary" data-action="summary-draft-date-confirm">确认</button>
         </div>
       </div>
-    `);
+    `, {
+      noSwipeClose: true,   // iPad 上 picker 弹起时手指容易碰 sheet 顶部, 关掉自动滑关
+      onMount: (body) => {
+        // input change → 立即应用 + 关 sheet (iPad 上 viewport 变化也不影响)
+        const inp = body.querySelector('#sum-date-sheet-input');
+        if (inp) {
+          inp.addEventListener('change', () => {
+            const ts = _dateInputValToMs(inp.value);
+            if (Number.isFinite(ts)) {
+              summaryState.draftCreatedAt = ts;
+              _summaryEnsureDayHasTemplates(_summaryDayKey(ts));
+            }
+            closeSheet();
+            if (_summaryEditorPage.open) _renderSummaryEditorPage();
+          });
+        }
+      },
+    });
   },
   // 选了快捷按钮 (昨/今/明) → 直接 apply + 关 sheet
   'summary-draft-date-pick-quick': (el) => {
@@ -5550,18 +5568,6 @@ const _summaryActions = {
     if (!Number.isFinite(ms)) return;
     summaryState.draftCreatedAt = ms;
     _summaryEnsureDayHasTemplates(_summaryDayKey(ms));
-    closeSheet();
-    if (_summaryEditorPage.open) _renderSummaryEditorPage();
-  },
-  // 自定义日期 → 读 sheet 内 input, apply + 关 sheet
-  'summary-draft-date-confirm': () => {
-    const inp = document.getElementById('sum-date-sheet-input');
-    if (!inp) { closeSheet(); return; }
-    const ts = _dateInputValToMs(inp.value);
-    if (Number.isFinite(ts)) {
-      summaryState.draftCreatedAt = ts;
-      _summaryEnsureDayHasTemplates(_summaryDayKey(ts));
-    }
     closeSheet();
     if (_summaryEditorPage.open) _renderSummaryEditorPage();
   },
@@ -10174,14 +10180,24 @@ function openTagEditor(id) {
 }
 
 // ----- 通用 sheet 显示 -----
-function showSheet(html, onMount) {
+// 第二参数可以是 function (老接口, onMount) 或 object ({ onMount, noSwipeClose })
+function showSheet(html, onMountOrOpts) {
   const sheet = $('sheet'), body = $('sheet-body');
   body.innerHTML = html;
   body.style.transform = '';
   body.style.transition = '';
   sheet.classList.remove('hidden');
+  let onMount = null, noSwipeClose = false;
+  if (typeof onMountOrOpts === 'function') {
+    onMount = onMountOrOpts;
+  } else if (onMountOrOpts && typeof onMountOrOpts === 'object') {
+    onMount = onMountOrOpts.onMount;
+    noSwipeClose = !!onMountOrOpts.noSwipeClose;
+  }
   if (onMount) onMount(body);
-  bindSheetSwipeClose(body);
+  // noSwipeClose: 适合 iPad 上需要弹 native picker 的 sheet (date picker 等)
+  // 否则 picker 弹起时手指在 sheet 顶部滑动会误关
+  if (!noSwipeClose) bindSheetSwipeClose(body);
 }
 function closeSheet() {
   const body = $('sheet-body');

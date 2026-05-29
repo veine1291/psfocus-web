@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0937';
+const _PSFOCUS_BUILD = '20260529-0938';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2940,20 +2940,22 @@ function _canvasHidePopover() {
   if (pop) pop.classList.add('hidden');
 }
 
-// === 完成: 导出 PNG + 上传 + 进 pendingImages ===
-async function _canvasFinish() {
+// 把当前画布渲染成 PNG → 上传 CloudBase → push 到 summaryState.pendingImages
+// 成功 return true, 失败 return false (并 alert)
+// 不关 canvas — 调用方决定是否关
+async function _canvasUploadPngToPending() {
   const canvas = document.getElementById('cvp-canvas');
-  if (!canvas) { closeCanvasPage(); return; }
-  if (!_canvasState.strokes.length) {
-    showToast('画布是空的');
-    closeCanvasPage();
-    return;
+  if (!canvas) return false;
+  if (!_canvasState.strokes.length) return false;
+  if (typeof tcbApp === 'undefined' || !tcbApp || !tcbApp.uploadFile) {
+    alert('云同步还没就绪 — 无法保存画布到云图。\n请检查登录 / 网络后重试。');
+    return false;
   }
-  // 取消选区高亮再导出 (避免蓝框出现在 PNG 里)
+  // 取消选区/框选高亮再导出 (避免蓝框入 PNG)
   _canvasState.selection = null;
   _canvasState.marquee = null;
   _canvasRedraw();
-  // 裁剪到内容 bbox + padding (避免周围一大圈空白)
+  // 裁到内容 bbox + padding
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const s of _canvasState.strokes) {
     const b = _strokeBBox(s);
@@ -2964,55 +2966,61 @@ async function _canvasFinish() {
     if (b.y + b.h > maxY) maxY = b.y + b.h;
   }
   const pad = 12;
-  minX = Math.max(0, minX - pad);
-  minY = Math.max(0, minY - pad);
-  maxX = Math.min(_canvasState.w, maxX + pad);
-  maxY = Math.min(_canvasState.h, maxY + pad);
-  const cropW = Math.max(40, maxX - minX);
-  const cropH = Math.max(40, maxY - minY);
-  // 创建离屏 canvas, 按 DPR 抓取
+  minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+  maxX = Math.min(_canvasState.w, maxX + pad); maxY = Math.min(_canvasState.h, maxY + pad);
+  const cropW = Math.max(40, maxX - minX), cropH = Math.max(40, maxY - minY);
   const dpr = _canvasState.dpr || 1;
   const off = document.createElement('canvas');
   off.width = Math.round(cropW * dpr);
   off.height = Math.round(cropH * dpr);
-  const offCtx = off.getContext('2d');
-  offCtx.drawImage(canvas,
+  off.getContext('2d').drawImage(canvas,
     Math.round(minX * dpr), Math.round(minY * dpr),
     Math.round(cropW * dpr), Math.round(cropH * dpr),
     0, 0, off.width, off.height);
-  // 导出 PNG
   const blob = await new Promise(res => off.toBlob(b => res(b), 'image/png'));
-  if (!blob) { showToast('导出失败'); closeCanvasPage(); return; }
-  // 上传 — 失败时保留画布内容, 不关页, 让用户重试 (避免画了半天一关全没)
-  if (typeof tcbApp === 'undefined' || !tcbApp || !tcbApp.uploadFile) {
-    alert('云同步还没就绪 — 无法保存画布到云图。\n\n请检查登录 / 网络后重试。\n你的画布内容已保留, 可以再次按"插入笔记"。');
-    return;   // 不关画布, 不清 strokes
+  if (!blob) { alert('导出 PNG 失败'); return false; }
+  // 关键: uid 必须有效, 否则桌面端拉图找不到 (跟现有上传逻辑一致 — 不加 || 'anon' 兜底, 没 uid 就报错)
+  if (!uid) {
+    alert('未登录, 无法上传画布');
+    return false;
   }
   showToast('保存画布…');
   try {
     const fname = `handwriting-${Date.now()}.png`;
-    const cloudPath = `psfocus-summary-images/${uid || 'anon'}/${Date.now()}-${fname}`;
+    const cloudPath = `psfocus-summary-images/${uid}/${Date.now()}-${fname}`;
     const file = new File([blob], fname, { type: 'image/png' });
     const res = await tcbApp.uploadFile({ cloudPath, filePath: file });
     const fileID = res && res.fileID;
-    if (fileID) {
-      summaryState.pendingImages.push({
-        id: 'img-' + Math.random().toString(36).slice(2, 10),
-        cloudFileID: fileID, name: fname, uploadedAt: Date.now(),
-      });
-      showToast('已加到笔记');
-      // 关画布, 刷新摘要编辑页的待发布图区
-      closeCanvasPage();
-      if (_summaryEditorPage.open) _renderSummaryEditorPage();
-      _refreshSumPendingImagesInSheet();
-    } else {
-      // 上传失败也保留画布内容, 让用户重试
-      alert('上传失败 (没拿到 fileID)。\n画布已保留, 可再次按"插入笔记"。');
+    if (!fileID) {
+      alert('上传失败 (没拿到 fileID)');
+      return false;
     }
+    summaryState.pendingImages.push({
+      id: 'img-' + Math.random().toString(36).slice(2, 10),
+      cloudFileID: fileID, name: fname, uploadedAt: Date.now(),
+    });
+    psLog('LOG', '[canvas-upload] ok fileID=' + String(fileID).slice(0, 60));
+    return true;
   } catch (err) {
     console.warn('[canvas-upload]', err);
-    alert('上传失败: ' + (err && err.message || err) + '\n\n画布已保留, 可再次按"插入笔记"。');
+    alert('上传失败: ' + (err && err.message || err));
+    return false;
   }
+}
+
+// "插入笔记" 按钮 → 上传 PNG 进 pendingImages, 关 canvas, 回编辑页
+async function _canvasFinish() {
+  if (!_canvasState.strokes.length) {
+    showToast('画布是空的');
+    closeCanvasPage();
+    return;
+  }
+  const ok = await _canvasUploadPngToPending();
+  if (!ok) return;   // 失败时保留画布让用户重试
+  showToast('已加到笔记');
+  closeCanvasPage();
+  if (_summaryEditorPage.open) _renderSummaryEditorPage();
+  _refreshSumPendingImagesInSheet();
 }
 
 function _summaryPrefillFilterTagIfEmpty() {
@@ -4765,17 +4773,28 @@ const _summaryActions = {
         return;
       }
       const text = (r.text || '').trim();
-      if (!text) { alert('画布上没识别到文字'); return; }
-      // 把识别结果追加到摘要编辑页 draft (或编辑模式的 editingMd)
-      if (_summaryEditorPage.open) {
+      // 把识别结果追加到摘要编辑页 draft (或编辑模式的 editingMd) — 即使空也走 finish 流程, 至少保留图片
+      if (text && _summaryEditorPage.open) {
         if (_summaryEditorPage.mode === 'edit') {
           _summaryEditorPage.editingMd = ((_summaryEditorPage.editingMd || '').trimEnd() + '\n' + text).trim();
         } else {
           summaryState.draftNote = ((summaryState.draftNote || '').trimEnd() + '\n' + text).trim();
         }
       }
-      showToast('已插入识别文字 (' + text.length + ' 字)');
-      // 关画布回编辑页 → 重渲让新文字出现
+      // 识别后同时把画布作为图片附到笔记 (Kayu 2026-05-29) — 跟"插入笔记"一样上传 PNG
+      // 这样发布的 summary 既有识别文字也有原画布图, 用户两边都能看到 / 比对
+      const uploadOk = await _canvasUploadPngToPending();
+      if (text && uploadOk) {
+        showToast(`已插入 ${text.length} 字 + 图片`);
+      } else if (text) {
+        showToast(`已插入 ${text.length} 字 (图片上传失败)`);
+      } else if (uploadOk) {
+        alert('没识别到文字, 但画布已作为图片插入笔记。');
+      } else {
+        alert('没识别到文字, 图片也上传失败。');
+        return;
+      }
+      // 关画布回编辑页 → 重渲让新文字 + 图片出现
       closeCanvasPage();
       if (_summaryEditorPage.open) _renderSummaryEditorPage();
     } catch (err) {

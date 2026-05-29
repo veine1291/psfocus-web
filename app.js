@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0931';
+const _PSFOCUS_BUILD = '20260529-0932';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2101,6 +2101,13 @@ let _canvasState = {
   tool: 'pen',         // 'pen' | 'eraser' | 'select'
   color: '#000000',
   width: 3,
+  // 抖动修正强度 0-10 (EMA 平滑), 0 = 关闭, 10 = 最强 (但延迟也最大)
+  stabilize: (() => {
+    try {
+      const v = parseInt(localStorage.getItem('psfocus_canvasStabilize'), 10);
+      return Number.isFinite(v) && v >= 0 && v <= 10 ? v : 0;
+    } catch (_) { return 0; }
+  })(),
   colorHistory: (() => {
     try { return JSON.parse(localStorage.getItem('psfocus_canvasColors') || '[]'); }
     catch (_) { return []; }
@@ -2133,16 +2140,16 @@ function _canvasPushHistory() {
   if (_canvasState.history.length > 50) _canvasState.history.shift();
   _canvasState.histIdx = _canvasState.history.length - 1;
   _canvasRefreshToolbar();
-  _dbgUpdate('pushHist');
+  // push 不会减少 strokes, 不会触发 alarm; 跳过 dbg call 减开销
 }
 function _canvasUndo() {
   if (_canvasState.histIdx <= 0) return;
   _canvasState.histIdx--;
   _canvasState.strokes = JSON.parse(JSON.stringify(_canvasState.history[_canvasState.histIdx]));
   _canvasState.selection = null;
+  _dbgLastStrokesCount = _canvasState.strokes.length;   // 先重置 baseline 再 redraw, 防 alarm 误报
   _canvasRedraw();
   _canvasRefreshToolbar();
-  _dbgUpdate('undo');
 }
 function _canvasRedo() {
   if (_canvasState.histIdx >= _canvasState.history.length - 1) return;
@@ -2151,7 +2158,6 @@ function _canvasRedo() {
   _canvasState.selection = null;
   _canvasRedraw();
   _canvasRefreshToolbar();
-  _dbgUpdate('redo');
 }
 
 // 笔画的 bounding box (含线宽)
@@ -2224,24 +2230,49 @@ function _canvasGetCtx() {
   return canvas.getContext('2d');
 }
 
+// 抖动修正:指数移动平均 (EMA) 平滑笔尖位置
+// stab=0 → alpha=1 (无修正), stab=10 → alpha≈0.17 (强修正, 笔触跟随有 lag)
+// 平滑后的点会用作 stroke 数据存储, 渲染时直接画
+function _canvasSmoothPoint(rawX, rawY) {
+  const stab = _canvasState.stabilize || 0;
+  if (stab <= 0) return { x: rawX, y: rawY };
+  const stroke = _canvasState.currentStroke;
+  if (!stroke || !stroke.points || !stroke.points.length) return { x: rawX, y: rawY };
+  const last = stroke.points[stroke.points.length - 1];
+  const alpha = Math.max(0.1, 1 - stab / 12);
+  return {
+    x: alpha * rawX + (1 - alpha) * last.x,
+    y: alpha * rawY + (1 - alpha) * last.y,
+  };
+}
+
 // ===== 调试 overlay (Kayu 2026-05-29 报"画着画着笔画消失") =====
-// 画布左下角实时显示: 笔画数 / 历史长度 / 历史索引 / 最近事件
-// 如果 strokes 突然减少, 用 ⚠️ 标出"几→几 via 哪个事件"
+// 默认隐藏。仅当 strokes 突然减少时 (alarm) 才出现, 5 秒后自动消失。
 let _dbgLastStrokesCount = 0;
 let _dbgLastEvent = '';
+let _dbgAlarmTimer = null;
 function _dbgUpdate(eventLabel) {
   if (eventLabel) _dbgLastEvent = eventLabel;
   const cur = (_canvasState.strokes || []).length;
-  if (cur < _dbgLastStrokesCount) {
-    _dbgLastEvent = `⚠️ ${_dbgLastStrokesCount}→${cur} via "${eventLabel || _dbgLastEvent}"`;
+  const dropped = cur < _dbgLastStrokesCount;
+  if (dropped) {
+    _dbgLastEvent = `${_dbgLastStrokesCount}→${cur} via ${eventLabel || _dbgLastEvent}`;
+    const el = document.getElementById('cvp-debug');
+    if (el) {
+      el.classList.add('alarm');
+      el.textContent = `⚠ ${_dbgLastEvent}`;
+      if (_dbgAlarmTimer) clearTimeout(_dbgAlarmTimer);
+      _dbgAlarmTimer = setTimeout(() => {
+        const ee = document.getElementById('cvp-debug');
+        if (ee) ee.classList.remove('alarm');
+      }, 5000);
+    }
   }
   _dbgLastStrokesCount = cur;
-  const el = document.getElementById('cvp-debug');
-  if (!el) return;
-  const st = _canvasState;
-  el.textContent = `S:${cur} H:${st.history.length} i:${st.histIdx} | ${_dbgLastEvent}`;
 }
 function _canvasRedraw() {
+  // alarm 监测: 每次 redraw 检查 strokes 是否突然减少 (用户主动操作会更新 baseline, 这里仅捕获"莫名消失")
+  _dbgUpdate('redraw');
   const ctx = _canvasGetCtx();
   if (!ctx) return;
   const dpr = _canvasState.dpr || 1;
@@ -2400,37 +2431,23 @@ function openCanvasPage(opts) {
     _canvasBindEvents();
     _canvasBindWindowDiag();
     _canvasRedraw();
-    _dbgUpdate('open');
+    _dbgLastStrokesCount = 0;  // 重置 alarm 比对基线
   });
 }
 
-// 监听可能扰乱画布尺寸 / 数据的全局事件 (resize / orientation / visibility / scroll), 写到 debug 行
+// 保留这些 noop listener — 加上后用户反馈"笔画消失" bug 没了, 不确定根因, 保险起见保留 (Heisenbug 调试常见)
+// callback 全空, 不做任何写 DOM 操作, 避免触发额外的 layout
 function _canvasBindWindowDiag() {
   if (window._canvasDiagBound) return;
   window._canvasDiagBound = true;
-  window.addEventListener('resize', () => {
-    if (_canvasState.open) _dbgUpdate('win.resize');
-  });
-  window.addEventListener('orientationchange', () => {
-    if (_canvasState.open) _dbgUpdate('orientationchange');
-  });
-  document.addEventListener('visibilitychange', () => {
-    if (_canvasState.open) _dbgUpdate('visibility:' + document.visibilityState);
-  });
+  window.addEventListener('resize', () => {});
+  window.addEventListener('orientationchange', () => {});
+  document.addEventListener('visibilitychange', () => {});
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', () => {
-      if (_canvasState.open) _dbgUpdate(`vv.resize ${Math.round(visualViewport.width)}x${Math.round(visualViewport.height)}`);
-    });
-    window.visualViewport.addEventListener('scroll', () => {
-      if (_canvasState.open) _dbgUpdate(`vv.scroll`);
-    });
+    window.visualViewport.addEventListener('resize', () => {});
+    window.visualViewport.addEventListener('scroll', () => {});
   }
-  // 全局点击监听 — 看是不是有什么 action 偷偷打中了
-  document.addEventListener('click', (e) => {
-    if (!_canvasState.open) return;
-    const a = e.target && e.target.closest && e.target.closest('[data-action]');
-    if (a) _dbgUpdate('click:' + a.dataset.action);
-  }, true);
+  // 不监听 click capture — 那会被每次 click 触发 closest 查询, 可能拖慢 pointer events 节奏
 }
 function closeCanvasPage() {
   const page = document.getElementById('canvas-page');
@@ -2460,7 +2477,6 @@ function _canvasInitSize() {
   canvas.width = Math.round(w * dpr);
   canvas.height = Math.round(h * dpr);
   // 这次只设尺寸, transform 应用在每次 redraw 开头 (setTransform)
-  if (typeof _dbgUpdate === 'function') _dbgUpdate(`initSize ${w}x${h} dpr${dpr}`);
 }
 function _canvasBindEvents() {
   const canvas = document.getElementById('cvp-canvas');
@@ -2492,18 +2508,13 @@ function _canvasBindEvents() {
   canvas.addEventListener('pointerdown', (e) => {
     // 关键保护 1: 只接受 primary pointer (主指), 多指 / Pencil + 手掌 同时下 → 丢非主
     // 这避免第二个 pointerdown 覆盖正在画的 currentStroke (→ 上一笔从未入库, 看起来"消失")
-    if (!e.isPrimary) {
-      _dbgUpdate(`down.ignored !primary ${e.pointerType}#${e.pointerId}`);
-      e.preventDefault();
-      return;
-    }
+    if (!e.isPrimary) { e.preventDefault(); return; }
     // 关键保护 2: 若 currentStroke 还在 (上一次 pointerup 漏触发 / cancel 没清),
     // 先把它入 strokes 库, 别让新 down 直接覆盖丢笔画
     if (_canvasState.currentStroke && _canvasState.currentStroke.points && _canvasState.currentStroke.points.length >= 1) {
       _canvasState.strokes.push(_canvasState.currentStroke);
       _canvasState.currentStroke = null;
       _canvasPushHistory();
-      _dbgUpdate('down.rescue');
     }
     e.preventDefault();
     _activePointerId = e.pointerId;
@@ -2518,7 +2529,6 @@ function _canvasBindEvents() {
       };
       _canvasState.selection = null;
       _scheduleRedraw();
-      _dbgUpdate(`down.pen ${e.pointerType}#${e.pointerId}`);
     } else if (_canvasState.tool === 'eraser') {
       _canvasEraseAt(p.x, p.y);
       dragLast = p;
@@ -2553,7 +2563,9 @@ function _canvasBindEvents() {
       const last = pts[pts.length - 1];
       // 间距 < 1.5px 跳过 (减少冗余点)
       if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return;
-      pts.push({ x: p.x, y: p.y, p: _readPressure(e) });
+      // 应用抖动修正 (开启时), 否则直接 raw 点
+      const sm = _canvasSmoothPoint(p.x, p.y);
+      pts.push({ x: sm.x, y: sm.y, p: _readPressure(e) });
       _scheduleRedraw();
     } else if (_canvasState.tool === 'eraser' && (e.buttons & 1 || e.pressure > 0)) {
       _canvasEraseAt(p.x, p.y);
@@ -2600,21 +2612,26 @@ function _canvasBindEvents() {
   });
   canvas.addEventListener('pointerup', (e) => {
     // 仅处理 active pointer 的 up; 别的 (多指/手掌) up 不影响主笔
-    if (_activePointerId != null && e.pointerId !== _activePointerId) {
-      _dbgUpdate(`up.ignored ${e.pointerType}#${e.pointerId} (active=${_activePointerId})`);
-      return;
-    }
+    if (_activePointerId != null && e.pointerId !== _activePointerId) return;
     _activePointerId = null;
     // 取消 pending RAF, 立即同步落地一次, 保证 currentStroke 入库前最后一帧渲染到位
     if (_moveRAF) { cancelAnimationFrame(_moveRAF); _moveRAF = null; }
     if (_canvasState.currentStroke) {
+      // 抖动修正模式下补一个 raw 末点, 否则平滑后笔触末端会比实际位置短一截
+      if (_canvasState.stabilize > 0) {
+        const p = localXY(e);
+        const pts = _canvasState.currentStroke.points;
+        const last = pts[pts.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 2) {
+          pts.push({ x: p.x, y: p.y, p: _readPressure(e) });
+        }
+      }
       // 笔画结束 — 入 strokes
       const justFinished = _canvasState.currentStroke;
       _canvasState.strokes.push(justFinished);
       _canvasState.currentStroke = null;
       _canvasPushHistory();
       _canvasRedraw();
-      _dbgUpdate(`up.push ${e.pointerType}`);
     } else if (_canvasState.marquee) {
       // 框选结束 — 算出选中的 strokes
       const m = _canvasState.marquee;
@@ -2646,10 +2663,7 @@ function _canvasBindEvents() {
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
   });
   canvas.addEventListener('pointercancel', (e) => {
-    if (_activePointerId != null && e.pointerId !== _activePointerId) {
-      _dbgUpdate(`cancel.ignored ${e.pointerType}#${e.pointerId}`);
-      return;
-    }
+    if (_activePointerId != null && e.pointerId !== _activePointerId) return;
     _activePointerId = null;
     if (_moveRAF) { cancelAnimationFrame(_moveRAF); _moveRAF = null; }
     // cancel 不是 up — 笔画半途取消 (如 iOS 滑出/手势), 保住已画的部分: push 入 strokes
@@ -2658,9 +2672,6 @@ function _canvasBindEvents() {
       _canvasState.strokes.push(_canvasState.currentStroke);
       _canvasState.currentStroke = null;
       _canvasPushHistory();
-      _dbgUpdate(`cancel.rescue ${e.pointerType}`);
-    } else {
-      _dbgUpdate(`cancel ${e.pointerType}`);
     }
     _canvasState.marquee = null;
     if (_canvasState.selection) _canvasState.selection.mode = 'idle';
@@ -2681,8 +2692,8 @@ function _canvasEraseAt(x, y) {
   const before = _canvasState.strokes.length;
   _canvasState.strokes = _canvasState.strokes.filter(s => !_strokeNearPoint(s, x, y, th));
   if (_canvasState.strokes.length !== before) {
+    _dbgLastStrokesCount = _canvasState.strokes.length;   // 先重置 baseline, 再 redraw, 防 alarm 误报
     _canvasRedraw();
-    _dbgUpdate(`erase(${before}→${_canvasState.strokes.length})`);
   }
 }
 
@@ -2783,6 +2794,12 @@ function _canvasOpenWidthPopover(anchorBtn) {
       <input type="range" id="cvp-width-slider" min="1" max="30" value="${_canvasState.width}" class="cvp-width-slider">
       <span class="cvp-width-num" id="cvp-width-num">${_canvasState.width}</span>
     </div>
+    <div class="cvp-pop-title">抖动修正</div>
+    <div class="cvp-pop-row">
+      <input type="range" id="cvp-stab-slider" min="0" max="10" value="${_canvasState.stabilize}" class="cvp-width-slider">
+      <span class="cvp-width-num" id="cvp-stab-num">${_canvasState.stabilize}</span>
+    </div>
+    <div class="cvp-pop-hint">0 = 关闭 · 越大笔触越平滑 (但跟随会延迟)</div>
   `;
   _canvasShowPopover(pop, anchorBtn);
   const slider = document.getElementById('cvp-width-slider');
@@ -2791,6 +2808,13 @@ function _canvasOpenWidthPopover(anchorBtn) {
     _canvasState.width = parseInt(slider.value, 10) || 3;
     if (num) num.textContent = _canvasState.width;
     _canvasRefreshToolbar();
+  });
+  const stabSlider = document.getElementById('cvp-stab-slider');
+  const stabNum = document.getElementById('cvp-stab-num');
+  if (stabSlider) stabSlider.addEventListener('input', () => {
+    _canvasState.stabilize = parseInt(stabSlider.value, 10) || 0;
+    if (stabNum) stabNum.textContent = _canvasState.stabilize;
+    try { localStorage.setItem('psfocus_canvasStabilize', String(_canvasState.stabilize)); } catch (_) {}
   });
 }
 function _canvasShowPopover(pop, anchor) {
@@ -4577,6 +4601,7 @@ const _summaryActions = {
     if (!confirm('清空画布?')) return;
     _canvasState.strokes = [];
     _canvasState.selection = null;
+    _dbgLastStrokesCount = 0;   // 主动清空, alarm baseline 重置 (先于 redraw)
     _canvasPushHistory();
     _canvasRedraw();
   },

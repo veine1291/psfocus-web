@@ -5397,24 +5397,35 @@ body.canvas-open { overflow: hidden; }
   touch-action: none;
 }
 
-/* 调试 overlay — 排查"笔画消失"问题, 修完后可移除 */
+/* 调试 overlay — 默认隐藏, 仅当 strokes 突然减少时 (alarm) 才显示 */
 .cvp-debug {
+  display: none;
   position: absolute;
   left: 10px;
   bottom: 10px;
   z-index: 5;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 10px;
-  color: rgba(0, 0, 0, 0.55);
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 4px 8px;
   border-radius: 4px;
-  padding: 3px 6px;
   pointer-events: none;
   max-width: calc(100% - 20px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.cvp-debug.alarm {
+  display: block;
+  color: #FFFFFF;
+  background: #C84545;
+  border: 1px solid #A93838;
+  box-shadow: 0 2px 8px rgba(200, 69, 69, 0.3);
+}
+.cvp-pop-hint {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  padding: 4px 2px 0;
+  line-height: 1.4;
 }
 
 /* 颜色 / 笔粗的浮窗 */

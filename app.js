@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0934';
+const _PSFOCUS_BUILD = '20260529-0935';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2108,6 +2108,15 @@ let _canvasState = {
       return Number.isFinite(v) && v >= 0 && v <= 10 ? v : 0;
     } catch (_) { return 0; }
   })(),
+  // 压感曲线范围 0-10, 控制粗细对比度。
+  // 0 = 完全不响应压感 (固定宽度), 10 = 极端对比 (轻按几乎不见, 重按 2x 宽).
+  // 默认 4 → 范围 0.6x ~ 1.4x, 自然 (之前默认 0.2 ~ 1.2 太陡)
+  pressureRange: (() => {
+    try {
+      const v = parseInt(localStorage.getItem('psfocus_canvasPressureRange'), 10);
+      return Number.isFinite(v) && v >= 0 && v <= 10 ? v : 4;
+    } catch (_) { return 4; }
+  })(),
   // 仅笔模式 — 强制只接 pointerType='pen' 的输入, 手指/鼠标全 reject
   // 默认 auto: 自动判断 (一旦本次会话出现 pen, 后续 touch 全拒, palm rejection)
   // 'pen-only': 用户手动开关, 永远只接 pen
@@ -2330,12 +2339,16 @@ function _canvasRedraw() {
   }
   ctx.restore();
 }
-// 压感曲线 — pressure (0~1) → 笔粗倍数 (0.2 ~ 1.2)
-// 太轻不至于消失, 重压略大于基准宽度;曲线给中段加一点 ease-in 让中等压力看起来更"用力"
+// 压感曲线 — pressure (0~1) → 笔粗倍数, 范围受 pressureRange 控制
+// pressureRange=0 → 全 1.0 (无对比); pressureRange=10 → 范围 0~2 (极致)
+// 默认 4 → 范围约 0.6~1.4 (自然), Kayu 2026-05-29 反馈之前太陡 ↓
 function _mapPressureToScale(p) {
   if (p == null || !Number.isFinite(p)) return 1;
-  // 线性即可: 0 → 0.2; 1 → 1.2; 0.5 → 0.7
-  return Math.max(0.15, Math.min(1.5, 0.2 + p * 1.0));
+  const rangeStrength = (_canvasState.pressureRange != null ? _canvasState.pressureRange : 4) / 10;
+  // 中心点 1.0, 围绕 ±range 调整
+  // p=0 → 1 - range; p=0.5 → 1; p=1 → 1 + range
+  const scale = 1 + (p - 0.5) * rangeStrength * 2;
+  return Math.max(0.15, Math.min(2.0, scale));
 }
 // 判断这条 stroke 是否有压感数据 (任一点 p 不是 1 / 不存在 一致值)
 function _strokeHasPressure(s) {
@@ -2856,6 +2869,12 @@ function _canvasOpenWidthPopover(anchorBtn) {
       <input type="range" id="cvp-width-slider" min="1" max="30" value="${_canvasState.width}" class="cvp-width-slider">
       <span class="cvp-width-num" id="cvp-width-num">${_canvasState.width}</span>
     </div>
+    <div class="cvp-pop-title">压感曲线</div>
+    <div class="cvp-pop-row">
+      <input type="range" id="cvp-press-slider" min="0" max="10" value="${_canvasState.pressureRange}" class="cvp-width-slider">
+      <span class="cvp-width-num" id="cvp-press-num">${_canvasState.pressureRange}</span>
+    </div>
+    <div class="cvp-pop-hint">0 = 关闭压感 · 越大粗细对比越强 (Apple Pencil 等才有效)</div>
     <div class="cvp-pop-title">抖动修正</div>
     <div class="cvp-pop-row">
       <input type="range" id="cvp-stab-slider" min="0" max="10" value="${_canvasState.stabilize}" class="cvp-width-slider">
@@ -2884,6 +2903,15 @@ function _canvasOpenWidthPopover(anchorBtn) {
     if (stabNum) stabNum.textContent = _canvasState.stabilize;
     try { localStorage.setItem('psfocus_canvasStabilize', String(_canvasState.stabilize)); } catch (_) {}
   });
+  const pressSlider = document.getElementById('cvp-press-slider');
+  const pressNum = document.getElementById('cvp-press-num');
+  if (pressSlider) pressSlider.addEventListener('input', () => {
+    _canvasState.pressureRange = parseInt(pressSlider.value, 10);
+    if (!Number.isFinite(_canvasState.pressureRange)) _canvasState.pressureRange = 4;
+    if (pressNum) pressNum.textContent = _canvasState.pressureRange;
+    try { localStorage.setItem('psfocus_canvasPressureRange', String(_canvasState.pressureRange)); } catch (_) {}
+    _canvasRedraw();  // 实时刷, 让用户看到现有笔画粗细变化
+  });
 }
 function _canvasShowPopover(pop, anchor) {
   pop.classList.remove('hidden');
@@ -2897,14 +2925,15 @@ function _canvasShowPopover(pop, anchor) {
       if (pr.right > window.innerWidth - 8) pop.style.left = Math.max(8, window.innerWidth - pr.width - 8) + 'px';
     });
   }
-  // 点空白关
+  // 点空白关 — 监听 pointerdown 而非 click (canvas-page 上 touchstart preventDefault 会
+  // 阻断 iOS 的 click 合成, 所以监听 click 不会触发)
   const onDoc = (e) => {
     if (pop.contains(e.target)) return;
-    if (e.target.closest('[data-action="canvas-open-color"]') || e.target.closest('[data-action="canvas-open-width"]')) return;
+    if (e.target.closest && (e.target.closest('[data-action="canvas-open-color"]') || e.target.closest('[data-action="canvas-open-width"]'))) return;
     _canvasHidePopover();
-    document.removeEventListener('click', onDoc);
+    document.removeEventListener('pointerdown', onDoc);
   };
-  setTimeout(() => document.addEventListener('click', onDoc), 50);
+  setTimeout(() => document.addEventListener('pointerdown', onDoc), 50);
 }
 function _canvasHidePopover() {
   const pop = document.getElementById('cvp-popover');
@@ -4688,8 +4717,8 @@ const _summaryActions = {
   // OCR — 调云函数 ocrHandwriting (用户需在 CloudBase 控制台部署, 见 cloudfunctions/ocrHandwriting/README.md)
   'canvas-ocr': async () => {
     if (_canvasState.ocrPending) return;
-    if (!_canvasState.strokes.length) { showToast('画布是空的'); return; }
-    if (!window.tcbApp || !tcbApp.callFunction) { showToast('未登录云同步,无法识别'); return; }
+    if (!_canvasState.strokes.length) { alert('画布是空的, 先画点字'); return; }
+    if (!window.tcbApp || !tcbApp.callFunction) { alert('未登录云同步, 无法识别'); return; }
     _canvasState.ocrPending = true;
     _canvasRefreshToolbar();
     try {
@@ -4726,11 +4755,12 @@ const _summaryActions = {
       const r = res && res.result;
       if (!r || r.code !== 0) {
         const msg = (r && r.msg) || '识别失败';
-        showToast('OCR 失败: ' + msg);
+        // 区分"函数未部署"和真识别失败 — 让用户能看明白
+        alert('OCR 失败:\n\n' + msg + '\n\n如果是函数未部署,请按 cloudfunctions/ocrHandwriting/README.md 在 CloudBase 控制台部署 ocrHandwriting 函数。');
         return;
       }
       const text = (r.text || '').trim();
-      if (!text) { showToast('没识别到文字'); return; }
+      if (!text) { alert('画布上没识别到文字'); return; }
       // 把识别结果追加到摘要编辑页 draft (或编辑模式的 editingMd)
       if (_summaryEditorPage.open) {
         if (_summaryEditorPage.mode === 'edit') {
@@ -4745,7 +4775,13 @@ const _summaryActions = {
       if (_summaryEditorPage.open) _renderSummaryEditorPage();
     } catch (err) {
       console.warn('[canvas-ocr]', err);
-      showToast('OCR 失败: ' + (err && err.message || err));
+      const msg = (err && err.message) || String(err);
+      const notDeployed = /not found|FUNCTIONS_NOT_FOUND|没找到|函数不存在/i.test(msg);
+      if (notDeployed) {
+        alert('OCR 功能需要先在 CloudBase 控制台部署 ocrHandwriting 云函数。\n\n部署步骤见项目里的 cloudfunctions/ocrHandwriting/README.md');
+      } else {
+        alert('OCR 失败:\n' + msg);
+      }
     } finally {
       _canvasState.ocrPending = false;
       _canvasRefreshToolbar();
@@ -5045,7 +5081,8 @@ const _summaryActions = {
     if (!hasNoteOrImg && !pendingMods.length) {
       // 给用户反馈 — 之前是静默 return,Kayu 反复点都不响应根本看不出原因
       if (typeof showToast === 'function') showToast('内容是空的,先写点啥');
-      psLog('WARN', 'summary-submit: empty (ta.value=' + (ta ? JSON.stringify((ta.value||'').slice(0,50)) : 'no-ta')
+      // ed 是 _summaryInputTa() 找到的 contenteditable; .value 不存在, 改读 textContent
+      psLog('WARN', 'summary-submit: empty (ed.textContent=' + (ed ? JSON.stringify((ed.textContent||'').slice(0,50)) : 'no-ed')
         + ' draftNote=' + JSON.stringify((summaryState.draftNote||'').slice(0,50)) + ')');
       return;
     }

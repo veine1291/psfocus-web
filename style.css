@@ -5524,6 +5524,12 @@ body.canvas-open { overflow: hidden; }
   padding: 4px 2px 0;
   line-height: 1.4;
 }
+.cvp-pop-hint-inline {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-weight: 400;
+  margin-left: 6px;
+}
 .cvp-input-mode-row { gap: 6px; padding: 4px 0; }
 .cvp-mode-chip {
   flex: 1 1 0;

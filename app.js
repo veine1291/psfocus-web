@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-1957';
+const _PSFOCUS_BUILD = '20260529-2008';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2131,8 +2131,30 @@ let _canvasState = {
   strokes: [],         // [{ id, color, width, points: [{x,y}] }] — 引用 pages[active].strokes
   images: [],          // [{ id, x, y, w, h, img: HTMLImageElement, src }] — 引用 pages[active].images
   tool: 'pen',         // 'pen' | 'eraser' | 'select'
-  color: '#000000',
-  width: 3,
+  // 8 个颜色槽 (Kayu 2026-05-29) — 点槽选色 + 在 "自定义" 改 active 槽颜色
+  // localStorage 持久化, 跨会话保留
+  colorSlots: (() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('psfocus_canvasColorSlots') || 'null');
+      if (Array.isArray(v) && v.length === 8) return v;
+    } catch (_) {}
+    return ['#000000', '#1a1a1a', '#C84545', '#3B82F6', '#22A55D', '#F59E0B', '#9333EA', '#EC4899'];
+  })(),
+  activeSlotIdx: (() => {
+    try {
+      const v = parseInt(localStorage.getItem('psfocus_canvasActiveSlotIdx'), 10);
+      if (Number.isFinite(v) && v >= 0 && v < 8) return v;
+    } catch (_) {}
+    return 0;
+  })(),
+  color: '#000000',    // 派生, 初始化在下面: colorSlots[activeSlotIdx]
+  width: (() => {
+    try {
+      const v = parseInt(localStorage.getItem('psfocus_canvasWidth'), 10);
+      if (Number.isFinite(v) && v >= 1 && v <= 30) return v;
+    } catch (_) {}
+    return 3;
+  })(),
   // 抖动修正强度 0-10 (EMA 平滑), 0 = 关闭, 10 = 最强 (但延迟也最大)
   stabilize: (() => {
     try {
@@ -2177,6 +2199,52 @@ let _canvasState = {
   // 渲染 throttle
   needRedraw: false,
 };
+// 初始化 color = 当前 active 槽的色
+_canvasState.color = _canvasState.colorSlots[_canvasState.activeSlotIdx] || '#000000';
+
+// ===== 画布草稿 (Kayu 2026-05-29) — 未完成退出时保留所有页面, 下次能恢复 =====
+function _canvasHasAnyContent() {
+  for (const p of (_canvasState.pages || [])) {
+    if ((p.strokes && p.strokes.length) || (p.images && p.images.length)) return true;
+  }
+  return false;
+}
+function _canvasSaveDraft() {
+  try {
+    const data = {
+      pages: _canvasState.pages.map(p => ({
+        id: p.id,
+        strokes: p.strokes || [],
+        // images 的 src 是 base64 dataUrl, 大图占空间多; localStorage 上限 5MB
+        // 实际几张手写画布的小图不会超 — 超了 catch 报错让用户知
+        images: (p.images || []).map(im => ({
+          id: im.id, x: im.x, y: im.y, w: im.w, h: im.h, src: im.src,
+        })),
+      })),
+      activePageIdx: _canvasState.activePageIdx,
+      savedAt: Date.now(),
+    };
+    const json = JSON.stringify(data);
+    localStorage.setItem('psfocus_canvasDraft', json);
+    return { ok: true, bytes: json.length };
+  } catch (err) {
+    return { ok: false, err: (err && err.message) || String(err) };
+  }
+}
+function _canvasLoadDraft() {
+  try {
+    const s = localStorage.getItem('psfocus_canvasDraft');
+    if (!s) return null;
+    return JSON.parse(s);
+  } catch (_) { return null; }
+}
+function _canvasClearDraft() {
+  try { localStorage.removeItem('psfocus_canvasDraft'); } catch (_) {}
+}
+function _canvasHasDraft() {
+  try { return !!localStorage.getItem('psfocus_canvasDraft'); }
+  catch (_) { return false; }
+}
 
 // === 多页画布 helpers ===
 function _canvasNewPage() {
@@ -2539,10 +2607,49 @@ function _canvasHandleHit(x, y) {
 function openCanvasPage(opts) {
   _canvasState.open = true;
   _canvasState.origin = (opts && opts.origin) || 'summary-editor';
-  // 初始化为单页 + 切换引用
-  _canvasState.pages = [_canvasNewPage()];
   _canvasState.pagesSidebarOpen = false;
-  _canvasBindPage(0);
+  // 检查草稿 — 上次未保存退出过 → 询问是否恢复
+  const draft = _canvasLoadDraft();
+  if (draft && Array.isArray(draft.pages) && draft.pages.length) {
+    const ageMin = Math.max(1, Math.round((Date.now() - (draft.savedAt || 0)) / 60000));
+    const pageCount = draft.pages.length;
+    const ok = confirm(`检测到上次未保存的画布草稿 (${pageCount} 页, 保存于 ${ageMin} 分钟前)\n\n要恢复继续画吗?\n\n确定 = 恢复草稿\n取消 = 丢弃草稿, 新建空白画布`);
+    if (ok) {
+      // 恢复 pages
+      _canvasState.pages = draft.pages.map(p => {
+        const np = {
+          id: p.id || ('p-' + Math.random().toString(36).slice(2, 10)),
+          strokes: Array.isArray(p.strokes) ? p.strokes : [],
+          images: [],
+          history: [{ strokes: p.strokes || [], images: [] }],
+          histIdx: 0,
+        };
+        // 重建 Image 对象 (从 src)
+        for (const im of (p.images || [])) {
+          const obj = { id: im.id, x: im.x, y: im.y, w: im.w, h: im.h, src: im.src };
+          if (im.src) {
+            obj.img = new Image();
+            obj.img.onload = () => _canvasRedraw();
+            obj.img.src = im.src;
+          }
+          np.images.push(obj);
+        }
+        return np;
+      });
+      const restoredIdx = Math.max(0, Math.min(_canvasState.pages.length - 1, draft.activePageIdx || 0));
+      _canvasBindPage(restoredIdx);
+      _canvasClearDraft();  // 恢复后清掉草稿 (避免下次重复 prompt)
+      showToast(`已恢复草稿 (${pageCount} 页)`);
+    } else {
+      _canvasClearDraft();
+      _canvasState.pages = [_canvasNewPage()];
+      _canvasBindPage(0);
+    }
+  } else {
+    // 没草稿 → 新建空页
+    _canvasState.pages = [_canvasNewPage()];
+    _canvasBindPage(0);
+  }
   _canvasState.selection = null;
   _canvasState.currentStroke = null;
   _canvasState.marquee = null;
@@ -2954,22 +3061,19 @@ function _canvasOpenColorPopover(anchorBtn) { _canvasOpenPenSettingsPopover(anch
 function _canvasOpenPenSettingsPopover(anchorBtn) {
   const pop = document.getElementById('cvp-popover');
   if (!pop) return;
-  const recent = _canvasState.colorHistory || [];
+  const slots = _canvasState.colorSlots;
+  const active = _canvasState.activeSlotIdx;
   const cur = _canvasState.color;
   pop.innerHTML = `
     <div class="cvp-pop-section">
-      <div class="cvp-pop-title">颜色</div>
+      <div class="cvp-pop-title">颜色槽 <span class="cvp-pop-hint-inline">点选 / 用下方"自定义"改 active 槽颜色</span></div>
       <div class="cvp-pop-row">
-        ${_CV_COLOR_PRESETS.map(c => `<button class="cvp-color-chip ${c === cur ? 'active' : ''}" data-action="canvas-pick-color" data-c="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
+        ${slots.map((c, i) => `<button class="cvp-color-chip ${i === active ? 'active' : ''}" data-action="canvas-pick-color-slot" data-idx="${i}" style="background:${esc(c)};" title="槽 ${i + 1}"></button>`).join('')}
       </div>
-      ${recent.length ? `<div class="cvp-pop-subtitle">最近</div>
-      <div class="cvp-pop-row">
-        ${recent.map(c => `<button class="cvp-color-chip ${c === cur ? 'active' : ''}" data-action="canvas-pick-color" data-c="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
-      </div>` : ''}
       <div class="cvp-pop-row">
         <label class="cvp-color-custom">
           <input type="color" id="cvp-color-input" value="${esc(cur)}">
-          <span>自定义颜色</span>
+          <span>改"槽 ${active + 1}"的颜色</span>
         </label>
       </div>
     </div>
@@ -3011,19 +3115,32 @@ function _canvasOpenPenSettingsPopover(anchorBtn) {
     </div>
   `;
   _canvasShowPopover(pop, anchorBtn);
-  // 颜色 native picker
+  // 颜色 native picker — 改的是当前 active 槽的色
   const inp = document.getElementById('cvp-color-input');
-  if (inp) inp.addEventListener('input', () => {
-    _canvasState.color = inp.value;
-    _canvasSaveColorHistory(inp.value);
-    _canvasRefreshToolbar();
-  });
-  // 笔粗滑条
+  if (inp) {
+    let _slotEditTimer = null;
+    inp.addEventListener('input', () => {
+      const idx = _canvasState.activeSlotIdx;
+      _canvasState.colorSlots[idx] = inp.value;
+      _canvasState.color = inp.value;
+      _canvasRefreshToolbar();
+      // 重渲 popover 让槽颜色 chip 跟着更新 — 防抖一下别抖
+      if (_slotEditTimer) clearTimeout(_slotEditTimer);
+      _slotEditTimer = setTimeout(() => {
+        try { localStorage.setItem('psfocus_canvasColorSlots', JSON.stringify(_canvasState.colorSlots)); } catch (_) {}
+        // 刷新 popover 让槽 chip 颜色变化可见
+        const slot = document.querySelector(`.cvp-color-chip[data-idx="${idx}"]`);
+        if (slot) slot.style.background = inp.value;
+      }, 150);
+    });
+  }
+  // 笔粗滑条 — 持久化 width
   const slider = document.getElementById('cvp-width-slider');
   const num = document.getElementById('cvp-width-num');
   if (slider) slider.addEventListener('input', () => {
     _canvasState.width = parseInt(slider.value, 10) || 3;
     if (num) num.textContent = _canvasState.width;
+    try { localStorage.setItem('psfocus_canvasWidth', String(_canvasState.width)); } catch (_) {}
     _canvasRefreshToolbar();
   });
   // 抖动修正
@@ -3274,6 +3391,7 @@ async function _canvasFinish() {
     uploaded++;
   }
   showToast(uploaded > 1 ? `已加 ${uploaded} 页到笔记` : '已加到笔记');
+  _canvasClearDraft();   // 内容已上传到 pendingImages, 草稿不需要了
   closeCanvasPage();
   if (_summaryEditorPage.open) _renderSummaryEditorPage();
   _refreshSumPendingImagesInSheet();
@@ -4943,8 +5061,23 @@ const _summaryActions = {
     openCanvasPage({ origin: 'summary-editor' });
   },
   'canvas-close': () => {
-    if (_canvasState.strokes && _canvasState.strokes.length) {
-      if (!confirm('画布有内容,确定放弃?')) return;
+    // 有任何页非空 → prompt 是否存草稿 (覆盖所有页面)
+    if (_canvasHasAnyContent()) {
+      // 用 confirm: 确定=存草稿, 取消=丢弃 (不存)
+      const saveIt = confirm('画布还有内容, 要保存为草稿吗?\n\n确定 = 保存草稿 (下次打开能继续)\n取消 = 直接丢弃');
+      if (saveIt) {
+        const r = _canvasSaveDraft();
+        if (r.ok) {
+          showToast(`草稿已保存 (${Math.round(r.bytes / 1024)} KB)`);
+        } else {
+          // 失败 (可能 localStorage 超限) → 警告 + 二次确认是否继续退
+          const stillExit = confirm('草稿保存失败: ' + r.err + '\n\n这通常因为画布太大 (含大图)。\n\n确定 = 仍然退出 (内容会丢)\n取消 = 留在画布编辑');
+          if (!stillExit) return;
+        }
+      } else {
+        // 用户选不存 → 清掉旧草稿 (如果有)
+        _canvasClearDraft();
+      }
     }
     closeCanvasPage();
   },
@@ -4971,18 +5104,31 @@ const _summaryActions = {
   },
   'canvas-open-color': (el) => { _canvasOpenColorPopover(el); },
   'canvas-open-width': (el) => { _canvasOpenWidthPopover(el); },
+  // 老 action 留作兼容 (现在不再用, 但 _canvasOpenColorPopover stub 可能调到)
   'canvas-pick-color': (el) => {
     const c = el && el.dataset && el.dataset.c;
     if (!c) return;
     _canvasState.color = c;
-    _canvasSaveColorHistory(c);
     _canvasRefreshToolbar();
     _canvasHidePopover();
+  },
+  // 点颜色槽 — 切到该槽 (改 activeSlotIdx + color); 不关 popover, 让用户能继续点别的槽 / 改自定义色
+  'canvas-pick-color-slot': (el) => {
+    const idx = parseInt(el && el.dataset && el.dataset.idx, 10);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= 8) return;
+    _canvasState.activeSlotIdx = idx;
+    _canvasState.color = _canvasState.colorSlots[idx];
+    try { localStorage.setItem('psfocus_canvasActiveSlotIdx', String(idx)); } catch (_) {}
+    _canvasRefreshToolbar();
+    // 重渲 popover, 让 active 高亮 + 自定义 input 初值 + "改'槽 N'" 文案跟着切
+    const btn = document.querySelector('[data-action="canvas-tool"][data-tool="pen"]');
+    if (btn) _canvasOpenPenSettingsPopover(btn);
   },
   'canvas-pick-width': (el) => {
     const w = parseInt(el && el.dataset && el.dataset.w, 10);
     if (!Number.isFinite(w)) return;
     _canvasState.width = w;
+    try { localStorage.setItem('psfocus_canvasWidth', String(w)); } catch (_) {}
     _canvasRefreshToolbar();
     _canvasHidePopover();
   },
@@ -5199,6 +5345,8 @@ const _summaryActions = {
         alert('没识别到文字, 图也上传失败。');
         return;
       }
+      // 内容已发布到 summary, 清掉草稿
+      _canvasClearDraft();
       // 关画布回编辑页
       closeCanvasPage();
       if (_summaryEditorPage.open) _renderSummaryEditorPage();

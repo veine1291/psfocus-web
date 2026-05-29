@@ -5397,6 +5397,26 @@ body.canvas-open { overflow: hidden; }
   touch-action: none;
 }
 
+/* 调试 overlay — 排查"笔画消失"问题, 修完后可移除 */
+.cvp-debug {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 5;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 10px;
+  color: rgba(0, 0, 0, 0.55);
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
+  padding: 3px 6px;
+  pointer-events: none;
+  max-width: calc(100% - 20px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* 颜色 / 笔粗的浮窗 */
 .cvp-popover {
   position: fixed;

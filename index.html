@@ -10,7 +10,7 @@
   <!-- 不能用 no-store,会禁掉 iOS / Chrome 的 BFCache,导致每次切回 tab 都要全量 reload -->
   <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
   <title>PS Focus</title>
-  <link rel="stylesheet" href="style.css?v=20260529-0929">
+  <link rel="stylesheet" href="style.css?v=20260529-0931">
 </head>
 <body>
 
@@ -130,6 +130,8 @@
   <div class="cvp-toolbar" id="cvp-toolbar"></div>
   <div class="cvp-stage" id="cvp-stage">
     <canvas id="cvp-canvas" class="cvp-canvas"></canvas>
+    <!-- 调试: 实时显示笔画数 / 历史索引 / 最近事件, 用于排查"笔画消失"问题 -->
+    <div id="cvp-debug" class="cvp-debug">init</div>
     <!-- 颜色 / 笔粗滑条的 popover, 由 JS 动态填入 -->
     <div id="cvp-popover" class="cvp-popover hidden"></div>
   </div>
@@ -140,6 +142,6 @@
 
 <!-- 腾讯云 CloudBase SDK(暴露 window.cloudbase) -->
 <script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js?v=1"></script>
-<script src="app.js?v=20260529-0929"></script>
+<script src="app.js?v=20260529-0931"></script>
 </body>
 </html>

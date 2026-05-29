@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260529-0940';
+const _PSFOCUS_BUILD = '20260529-0941';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2548,8 +2548,9 @@ function _canvasBindPageTouchBlock() {
   ['touchstart', 'touchmove'].forEach(ev => {
     page.addEventListener(ev, (e) => {
       // 在交互元素上 (按钮 / input / 滑条 / label) 不 preventDefault, 让 iOS 处理 tap
+      // 也豁免侧栏 / popover 整个区域 — 它们里面有非 button 元素 (div 卡片 / mask) 需要点击
       const t = e.target;
-      if (t && t.closest && t.closest('button, input, label, [role="button"]')) return;
+      if (t && t.closest && t.closest('button, input, label, [role="button"], #cvp-pages-sidebar, #cvp-popover')) return;
       // 其它区域 (canvas / stage padding / topbar 空白) 全 reject
       e.preventDefault();
     }, { passive: false });

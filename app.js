@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260530-0610';
+const _PSFOCUS_BUILD = '20260530-0626';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1991,6 +1991,10 @@ function openSummaryEditorPage(opts) {
   const mode = (opts && opts.mode) || 'new';
   _summaryEditorPage.open = true;
   _summaryEditorPage.mode = mode;
+  // 记下当前 view 的滚动位置, close 后 renderAll 会重渲 list, 复位时恢复
+  // 这样筛选/搜索状态下编辑回来不会被拉到顶 (Kayu 2026-05-30)
+  const view = document.getElementById('view');
+  _summaryEditorPage._savedScrollTop = view ? view.scrollTop : 0;
   if (mode === 'edit') {
     const id = opts.id;
     const s = (state.summaries || []).find(x => x.id === id);
@@ -2015,7 +2019,15 @@ function closeSummaryEditorPage(opts) {
   _summaryEditorPage.noteId = null;
   _summaryEditorPage.editingTitle = '';
   _summaryEditorPage.editingMd = '';
-  // sheet 上的 #sheet 隐藏跟此独立, 不动
+  // 恢复 view 滚动位置 — 防筛选模式下编辑结束被拉回顶
+  // 等 renderAll 重渲列表完成后再恢复 (双 RAF: 渲染 → 布局 → restore)
+  const saved = _summaryEditorPage._savedScrollTop || 0;
+  if (saved > 0) {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const view = document.getElementById('view');
+      if (view) view.scrollTop = saved;
+    }));
+  }
 }
 
 function _renderSummaryEditorPage() {
@@ -2102,6 +2114,14 @@ function _renderSummaryEditorPage() {
   const ed = body.querySelector('.sum-input.sep-editor');
   if (ed) {
     ed.addEventListener('paste', _summaryHandlePaste);
+    // iPad Safari 已知 bug: IME compositionend 后某些情况不再 fire input event,
+    // 导致 _tagSuggestUpdate 永远不触发 → 输入 #日 没 tag 联想菜单 (Kayu 2026-05-30 报)
+    // 显式监听 compositionend, IME 完成时也走一次 update
+    ed.addEventListener('compositionend', () => {
+      requestAnimationFrame(() => {
+        try { _syncEditorToState(ed); _tagSuggestUpdate(ed); } catch (_) {}
+      });
+    });
     ed.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -5622,9 +5642,11 @@ const _summaryActions = {
     }
   },
   'summary-input-autosize': (el, e) => {
-    // contenteditable WYSIWYG — input event 时 HTML → md 同步回 draftNote / 编辑 modal value。
-    // 组词期间跳过,等 compositionend 触发的最终 input 再处理(防 IME 拼音被打断)
-    if (e && e.isComposing) return;
+    // contenteditable WYSIWYG — input / compositionend event 时 HTML → md 同步回 draftNote / 编辑 modal value。
+    // 组词期间跳过, 等 compositionend 触发再处理 (防 IME 拼音被打断)
+    // 例外: compositionend 类型本身就是 IME 完成, 不能跳过
+    const isCompEnd = e && e.type === 'compositionend';
+    if (e && e.isComposing && !isCompEnd) return;
     // 用 RAF 推一帧,避免高频输入阻塞主线程;前一帧没跑完的 cancel
     if (el._syncRAF) cancelAnimationFrame(el._syncRAF);
     el._syncRAF = requestAnimationFrame(() => {
@@ -6193,6 +6215,14 @@ function _bindSummaryGlobalDispatchers() {
     if (_isMyAction(a) && _summaryActions[a]) _summaryActions[a](el, e);
   });
   document.addEventListener('input', (e) => {
+    const el = e.target.closest && e.target.closest('[data-action-input]');
+    if (!el) return;
+    const a = el.dataset.actionInput;
+    if (_isMyAction(a) && _summaryActions[a]) _summaryActions[a](el, e);
+  });
+  // iPad Safari 已知 bug: IME compositionend 后某些情况不再 fire input,
+  // 给所有 [data-action-input] 元素的 compositionend 也派发 action (e.isComposing=false)
+  document.addEventListener('compositionend', (e) => {
     const el = e.target.closest && e.target.closest('[data-action-input]');
     if (!el) return;
     const a = el.dataset.actionInput;

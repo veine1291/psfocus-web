@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260530-0626';
+const _PSFOCUS_BUILD = '20260530-1358';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1639,6 +1639,11 @@ let summaryState = {
   // 高级筛选 (Kayu 2026-05-28): 跟 searchQuery 叠加, 不动 sidebar 的 filter
   searchTime: { mode: 'all', start: null, end: null },   // mode: all|this-week|this-month|custom
   searchTags: { mode: 'all', list: [] },                 // mode: all|none|include|exclude; list = tag 名数组
+  // 排序方式 (Kayu 2026-05-30): created (默认, 发布时间倒序) / updated (编辑时间倒序, 回退到 createdAt)
+  sortMode: (() => {
+    try { return localStorage.getItem('psfocus_sumSortMode') || 'created'; }
+    catch (_) { return 'created'; }
+  })(),
   // 日期折叠状态 — 跨刷新保留(per-device UI 偏好,不走云端)
   collapsedDays: (() => {
     try { return new Set(JSON.parse(localStorage.getItem('psfocus_collapsedDays') || '[]')); }
@@ -2122,6 +2127,89 @@ function _renderSummaryEditorPage() {
         try { _syncEditorToState(ed); _tagSuggestUpdate(ed); } catch (_) {}
       });
     });
+    // Tag chip 可编辑 (Kayu 2026-05-30):
+    // Backspace 在 chip 之后 → 解构 chip 成 plain text "#xxx" 让用户改字
+    // 空格 → 检查光标前的 plain "#xxx", wrap 回 chip
+    ed.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount) {
+          const r = sel.getRangeAt(0);
+          if (r.collapsed) {
+            // 找光标前一个 sibling 是 chip?
+            let prev = null;
+            if (r.startContainer.nodeType === 1) {
+              // element 内, 看 childNodes[startOffset - 1]
+              prev = r.startContainer.childNodes[r.startOffset - 1];
+            } else if (r.startOffset === 0) {
+              // text node 开头, 看 parent 的 previousSibling
+              prev = r.startContainer.previousSibling;
+            }
+            if (prev && prev.nodeType === 1 && prev.classList && prev.classList.contains('tag-chip-edit')) {
+              e.preventDefault();
+              const txt = prev.textContent || '';   // "#xxx"
+              const tn = document.createTextNode(txt);
+              prev.parentNode.replaceChild(tn, prev);
+              const nr = document.createRange();
+              nr.setStart(tn, txt.length);
+              nr.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(nr);
+              // 触发 input 同步 + tag suggest
+              ed.dispatchEvent(new InputEvent('input', { bubbles: true }));
+              return;
+            }
+          }
+        }
+      }
+      // 空格 → 检查光标前是否是 plain "#xxx", 是则 wrap 回 chip
+      if (e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space') {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount) {
+          const r = sel.getRangeAt(0);
+          if (r.collapsed && r.startContainer.nodeType === 3) {
+            const text = r.startContainer.textContent || '';
+            const caret = r.startOffset;
+            // 从 caret 往前找 # 或空白
+            let i = caret - 1;
+            while (i >= 0 && !/[\s　#]/.test(text[i])) i--;
+            if (i >= 0 && text[i] === '#') {
+              const tagName = text.slice(i + 1, caret);
+              if (tagName && !/[\s　]/.test(tagName)) {
+                const before = i > 0 ? text[i - 1] : '';
+                if (!before || /[\s　]/.test(before) || /[,.，。;:!?]/.test(before)) {
+                  // wrap 成 chip + 空格 + 光标
+                  e.preventDefault();
+                  const tn = r.startContainer;
+                  const after = text.slice(caret);
+                  // 拆 text node 成: 前缀 + chip + 空格 + 后缀
+                  const prefix = text.slice(0, i);
+                  tn.textContent = prefix;
+                  const span = document.createElement('span');
+                  span.className = 'sum-md-tag tag-chip-edit';
+                  span.contentEditable = 'false';
+                  span.textContent = '#' + tagName;
+                  const sp = document.createTextNode(' ' + after);
+                  tn.parentNode.insertBefore(span, tn.nextSibling);
+                  tn.parentNode.insertBefore(sp, span.nextSibling);
+                  // 光标放空格后
+                  const nr = document.createRange();
+                  nr.setStart(sp, 1);
+                  nr.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(nr);
+                  // 关 tag suggest (这里已经选完一个 tag 了)
+                  if (typeof _tagSuggestClose === 'function') _tagSuggestClose();
+                  ed.dispatchEvent(new InputEvent('input', { bubbles: true }));
+                  return;
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+    // 原 keydown (Ctrl+Enter publish 等)
     ed.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -4216,9 +4304,21 @@ function openSummaryFilterSheet() {
         </div>`;
       }
     }
+    // 排序
+    const sortMode = summaryState.sortMode || 'created';
+    const sortChips = [
+      ['created', '发布时间'],
+      ['updated', '编辑时间'],
+    ].map(([m, label]) =>
+      `<button class="sf-chip ${sortMode === m ? 'active' : ''}" data-action="summary-set-sort" data-mode="${m}">${esc(label)}</button>`
+    ).join('');
     return `
       <div class="sheet-handle"></div>
       <div class="sheet-content sf-sheet">
+        <div class="sf-section">
+          <div class="sf-section-title">排序</div>
+          <div class="sf-chip-row">${sortChips}</div>
+        </div>
         <div class="sf-section">
           <div class="sf-section-title">时间范围</div>
           <div class="sf-chip-row">${timeChips}</div>
@@ -4260,7 +4360,13 @@ function _renderSummaryList() {
   }
   // 高级筛选 (时间范围 / tag 包含-排除) — 在 q 之上再 narrow
   list = _summaryApplySearchFilters(list);
-  list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  // 排序: 按 createdAt (发布时间) 或 updatedAt (编辑时间, 回退到 createdAt)
+  const sortMode = summaryState.sortMode || 'created';
+  if (sortMode === 'updated') {
+    list.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+  } else {
+    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }
   const byDay = new Map();
   for (const s of list) {
     const k = _summaryDayKey(s.createdAt);
@@ -4691,16 +4797,25 @@ function _tagSuggestRender(editor) {
   popup.style.left = Math.max(8, editorRect.left) + 'px';
   popup.style.bottom = Math.max(8, window.innerHeight - editorRect.top + 8) + 'px';
   popup.style.maxWidth = Math.min(window.innerWidth - 16, Math.max(220, editorRect.width)) + 'px';
-  // 绑定 — mouse (desktop) 用 mousedown preventDefault 防 editor 失焦, click 拾取
-  // touch (mobile) 用 touchend preventDefault 拾取 (touchstart 不要 preventDefault,
-  //   否则 iOS Safari 会取消之后的 click 又跳过我们的 touchend pick — 之前就这么坏的)
+  // 绑定 — 用 pointerdown 统一处理所有设备 (mouse/touch/pen):
+  // - mousedown preventDefault 防 editor 失焦
+  // - pointerdown 立即触发 pick (在 click 之前, 不依赖 click 合成)
+  // iPad Safari 上 click 合成不稳, 之前的 click+touchend 在 iPad 上偶尔都不 fire (Kayu 2026-05-30 报)
   host.querySelectorAll('[data-tag-suggest-pick]').forEach(btn => {
     btn.addEventListener('mousedown', e => e.preventDefault());
-    btn.addEventListener('click', () => _tagSuggestPick(btn.dataset.tagSuggestPick));
-    btn.addEventListener('touchend', (e) => {
-      e.preventDefault();   // 跳过 synth click, 防双触
+    let _picked = false;
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (_picked) return;
+      _picked = true;
       _tagSuggestPick(btn.dataset.tagSuggestPick);
-    }, { passive: false });
+    });
+    // fallback: 老 Safari 不支持 PointerEvents → click 兜底
+    btn.addEventListener('click', () => {
+      if (_picked) return;
+      _picked = true;
+      _tagSuggestPick(btn.dataset.tagSuggestPick);
+    });
   });
 }
 
@@ -5515,6 +5630,20 @@ const _summaryActions = {
   'summary-filter-done': () => {
     closeSheet();
     renderAll();
+  },
+  // 切换排序方式
+  'summary-set-sort': (el) => {
+    const m = el && el.dataset && el.dataset.mode;
+    if (m !== 'created' && m !== 'updated') return;
+    summaryState.sortMode = m;
+    try { localStorage.setItem('psfocus_sumSortMode', m); } catch (_) {}
+    if (summaryState._filterSheetRerender) summaryState._filterSheetRerender();
+    // list 也要重渲, 因为排序变了 — 但 sheet 关之后才重渲, 避免 sheet 内 active 状态闪
+    const listEl = document.querySelector('.sum-list');
+    if (listEl) {
+      listEl.innerHTML = _renderSummaryList();
+      if (typeof bindCloudTimelineImages === 'function') bindCloudTimelineImages(listEl);
+    }
   },
   'summary-toggle-day': (el) => {
     const k = el.dataset.dayKey;

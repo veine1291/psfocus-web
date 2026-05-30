@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260530-1402';
+const _PSFOCUS_BUILD = '20260530-1808';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -8535,10 +8535,13 @@ function openConsumableEditSheet(existing) {
       <div><span>累计已花</span><b>¥${_consumableFmtNum(s.totalSpend)}</b></div>
     </div>`;
 
+    // 单位 input 嵌在每行数量后面 (Kayu 2026-05-30) — 共享 m.unit, 任一行改都同步
+    // 只第一行可见 (其它行共享同一 unit 显示成只读小标签更清爽? 用 input 让任一行都能改)
     const rowsHtml = m.purchases.map((p, i) => `
       <div class="cons-edit-row" data-row-i="${i}">
         <input type="date" class="cons-edit-date" data-field="dateStr" data-i="${i}" value="${esc(p.dateStr || '')}" />
         <input type="text" inputmode="decimal" class="cons-edit-qty" data-field="qty" data-i="${i}" value="${esc(p.qty)}" placeholder="1" />
+        <input type="text" class="cons-edit-unit-inline" data-field="unit" value="${esc(m.unit)}" placeholder="单位" />
         <input type="text" inputmode="decimal" class="cons-edit-price" data-field="price" data-i="${i}" value="${esc(p.price)}" placeholder="总价" />
         <button class="cons-edit-row-del" data-row-del="${i}" aria-label="删除这笔">×</button>
       </div>
@@ -8554,11 +8557,9 @@ function openConsumableEditSheet(existing) {
       <div class="cons-edit-body">
         <label class="cons-edit-label">名称</label>
         <input id="cons-edit-name" class="cons-edit-input" type="text" value="${esc(m.name)}" placeholder="如 牙膏" />
-        <label class="cons-edit-label">单位(可选)</label>
-        <input id="cons-edit-unit" class="cons-edit-input" type="text" value="${esc(m.unit)}" placeholder="支 / 卷 / 瓶" />
         <label class="cons-edit-label">购买记录(每次总花费,系统自动算单价)</label>
         <div class="cons-edit-row cons-edit-row-head">
-          <span>日期</span><span>数量</span><span>总价</span><span></span>
+          <span>日期</span><span>数量</span><span>单位</span><span>总价</span><span></span>
         </div>
         <div class="cons-edit-rows">${rowsHtml}</div>
         <button class="cons-edit-add-row">+ 加一笔购买</button>
@@ -8571,9 +8572,7 @@ function openConsumableEditSheet(existing) {
   // 把 DOM 输入的最新值统一回写到 m(任何重渲 / 保存 / 删行 之前都调一遍)
   const syncFromDom = (body) => {
     const nm = body.querySelector('#cons-edit-name');
-    const un = body.querySelector('#cons-edit-unit');
     if (nm) m.name = nm.value;
-    if (un) m.unit = un.value;
     body.querySelectorAll('[data-row-i]').forEach(rowEl => {
       const i = +rowEl.dataset.rowI;
       if (!m.purchases[i]) return;
@@ -8584,6 +8583,11 @@ function openConsumableEditSheet(existing) {
       if (q) m.purchases[i].qty = q.value;
       if (p) m.purchases[i].price = p.value;
     });
+    // 行内 unit 是共享的, 取最后一个非空(若都空则空字符串)
+    const unitInputs = body.querySelectorAll('[data-field="unit"]');
+    let lastUnit = m.unit || '';
+    unitInputs.forEach(u => { lastUnit = u.value; });
+    m.unit = lastUnit;
   };
 
   showSheet(`<div class="sheet-content cons-edit-sheet">${renderBody()}</div>`, (body) => {
@@ -8605,36 +8609,37 @@ function openConsumableEditSheet(existing) {
       }
     };
     const bindAll = (b) => {
-      // 输入回写 + 重算 preview
-      b.querySelectorAll('#cons-edit-name, #cons-edit-unit').forEach(inp => {
-        inp.addEventListener('input', () => {
-          if (inp.id === 'cons-edit-name') m.name = inp.value;
-          else m.unit = inp.value;
-          if (inp.id === 'cons-edit-unit') {
-            const pv = b.querySelector('.cons-edit-preview');
-            if (pv) {
-              // 只重渲 preview,不动整个 sheet(避免输入焦点丢失)
-              syncFromDom(b);
-              const tempBody = document.createElement('div');
-              tempBody.innerHTML = `<div>${renderBody()}</div>`;
-              const newPv = tempBody.querySelector('.cons-edit-preview');
-              if (newPv) pv.innerHTML = newPv.innerHTML;
-            }
-          }
-        });
-      });
+      // 名称 input
+      const nameInp = b.querySelector('#cons-edit-name');
+      if (nameInp) {
+        nameInp.addEventListener('input', () => { m.name = nameInp.value; });
+      }
+      // 局部刷新 preview(不动整体, 保留焦点)
+      const refreshPreview = () => {
+        syncFromDom(b);
+        const tempBody = document.createElement('div');
+        tempBody.innerHTML = `<div>${renderBody()}</div>`;
+        const newPv = tempBody.querySelector('.cons-edit-preview');
+        const oldPv = b.querySelector('.cons-edit-preview');
+        if (oldPv && newPv) oldPv.innerHTML = newPv.innerHTML;
+      };
+      // 行内字段(date/qty/price/unit)
       b.querySelectorAll('[data-field]').forEach(inp => {
         inp.addEventListener('input', () => {
+          const field = inp.dataset.field;
+          if (field === 'unit') {
+            // 共享 unit — 同步到其它行(避免重渲打断输入)
+            m.unit = inp.value;
+            b.querySelectorAll('[data-field="unit"]').forEach(other => {
+              if (other !== inp && other.value !== inp.value) other.value = inp.value;
+            });
+            refreshPreview();
+            return;
+          }
           const i = +inp.dataset.i;
           if (!m.purchases[i]) return;
-          m.purchases[i][inp.dataset.field] = inp.value;
-          // 重算 preview(只更新 preview,保留焦点)
-          syncFromDom(b);
-          const tempBody = document.createElement('div');
-          tempBody.innerHTML = `<div>${renderBody()}</div>`;
-          const newPv = tempBody.querySelector('.cons-edit-preview');
-          const oldPv = b.querySelector('.cons-edit-preview');
-          if (oldPv && newPv) oldPv.innerHTML = newPv.innerHTML;
+          m.purchases[i][field] = inp.value;
+          refreshPreview();
         });
       });
       // 删某行

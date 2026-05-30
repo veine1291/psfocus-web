@@ -1971,10 +1971,11 @@ body.sum-editor-open { overflow: hidden; }
 /* =========================================================
    弹层菜单(右上 ⋯)
    ========================================================= */
-.popover { z-index: 70; }
+/* sheet 是 z-index 90 (见 .sheet) — popover 从 sheet 内触发时必须比 sheet 高,
+   否则菜单被 sheet 自身遮住, 看不见菜单内容 (Kayu 2026-05-30 在日历新建任务点更多时报) */
+.popover { z-index: 95; }
 .popover.hidden { display: none !important; }
-/* z-index 必须高于 sheet-body(2)+ sheet 容器,否则 popover 会被 sheet 压在下面 */
-.popover-mask { position: fixed; inset: 0; background: transparent; z-index: 70; }
+.popover-mask { position: fixed; inset: 0; background: transparent; z-index: 95; }
 .popover-body {
   position: fixed;
   top: calc(var(--topbar-h) + var(--safe-top) + 4px);
@@ -1987,7 +1988,7 @@ body.sum-editor-open { overflow: hidden; }
   border: 1px solid var(--border-soft);
   padding: 6px;
   display: flex; flex-direction: column;
-  z-index: 71;
+  z-index: 96;
 }
 .popover-body.popover-left {
   right: auto;
@@ -6877,11 +6878,13 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .cons-edit-input:focus { border-color: var(--accent); }
 .cons-edit-row {
   display: grid;
-  grid-template-columns: 1.4fr 0.7fr 0.9fr 28px;
+  /* 日期 / 数量 / 单位 / 总价 / × — 单位窄一些, 仅承载几字符 */
+  grid-template-columns: 1.3fr 0.6fr 0.6fr 0.8fr 28px;
   gap: 6px;
   align-items: center;
   margin-top: 6px;
 }
+.cons-edit-unit-inline { text-align: center; }
 .cons-edit-row-head {
   font-size: 10.5px;
   color: var(--text-faint);

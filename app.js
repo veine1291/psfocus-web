@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260530-1358';
+const _PSFOCUS_BUILD = '20260530-1402';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -4361,15 +4361,14 @@ function _renderSummaryList() {
   // 高级筛选 (时间范围 / tag 包含-排除) — 在 q 之上再 narrow
   list = _summaryApplySearchFilters(list);
   // 排序: 按 createdAt (发布时间) 或 updatedAt (编辑时间, 回退到 createdAt)
+  // 关键: 分组 day key 也跟着 sortMode 切 — 否则一条 createdAt=5/22 即使 updatedAt=今天,
+  // 仍归在 5/22 那天显示 (Kayu 2026-05-30 反馈 "切了排序还是按日期")
   const sortMode = summaryState.sortMode || 'created';
-  if (sortMode === 'updated') {
-    list.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
-  } else {
-    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  }
+  const _sortTs = (s) => sortMode === 'updated' ? (s.updatedAt || s.createdAt || 0) : (s.createdAt || 0);
+  list.sort((a, b) => _sortTs(b) - _sortTs(a));
   const byDay = new Map();
   for (const s of list) {
-    const k = _summaryDayKey(s.createdAt);
+    const k = _summaryDayKey(_sortTs(s));
     if (!byDay.has(k)) byDay.set(k, []);
     byDay.get(k).push(s);
   }

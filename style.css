@@ -7136,7 +7136,12 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   text-transform: uppercase;
   padding: 4px 4px 8px;
 }
-.dt-list { display: flex; flex-direction: column; gap: 8px; }
+/* 多列网格 — 移动端竖屏 minmax 小一点, 横屏 / iPad 自动多列 */
+.dt-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 6px;
+}
 .dt-empty {
   padding: 24px 12px;
   text-align: center;
@@ -7145,18 +7150,19 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   border: 1px dashed var(--border-soft);
   border-radius: 8px;
 }
-/* 模板卡: 紧凑版 (顶部 + 段列表) */
+/* 模板卡 — 字号恢复正常, 横向 padding 收紧适配多列 */
 .dt-card {
   background: var(--bg-section);
   border: 1px solid var(--border-soft);
   border-left: 3px solid var(--card-accent, var(--accent));
   border-radius: 8px;
-  padding: 7px 10px;
-  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 5px;
+  min-width: 0;
 }
-.dt-card-head { display: flex; align-items: center; gap: 6px; }
+.dt-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dt-card-icon {
-  width: 20px; height: 20px;
+  width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
@@ -7171,25 +7177,27 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dt-card-edit-btn {
-  padding: 4px 10px;
+  padding: 3px 8px;
   background: var(--bg-page);
   border: 1px solid var(--border-soft);
   border-radius: 5px;
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: 11px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 .dt-card-edit-btn:active { background: var(--bg-hover); border-color: var(--accent); color: var(--accent); }
-.dt-card-segs { display: flex; flex-direction: column; gap: 1px; padding-left: 26px; }
+.dt-card-segs { display: flex; flex-direction: column; gap: 2px; padding-left: 28px; min-width: 0; }
 .dt-card-seg {
   display: flex; align-items: center; gap: 6px;
   font-size: 11.5px;
   color: var(--text-dim);
   line-height: 1.4;
+  min-width: 0;
 }
-.dt-card-seg-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dt-card-seg-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .dt-card-seg-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dt-card-seg-dur { font-variant-numeric: tabular-nums; color: var(--text-faint); font-size: 11px; }
+.dt-card-seg-dur { font-variant-numeric: tabular-nums; color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
 .dt-card-seg-empty { font-size: 11.5px; color: var(--text-faint); font-style: italic; padding-left: 4px; }
 
 .dt-add-btn {
@@ -7389,24 +7397,29 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 }
 .dte-tag-row .dp-tag-add:focus { border-color: var(--accent); }
 
-/* 周时长统计 — 紧凑 */
+/* 周时长统计 — 多列网格 */
 .dt-stat-meta { font-size: 11px; color: var(--text-faint); margin-bottom: 6px; padding: 0 4px; }
-.dt-stat-list { display: flex; flex-direction: column; gap: 2px; }
+.dt-stat-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px;
+}
 .dt-stat-row {
   display: grid;
   grid-template-columns: 10px 1fr auto auto;
   align-items: center;
   gap: 8px;
-  padding: 5px 10px;
+  padding: 7px 10px;
   background: var(--bg-section);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 12.5px;
+  min-width: 0;
 }
-.dt-stat-dot { width: 8px; height: 8px; border-radius: 50%; }
-.dt-stat-name { color: var(--text); }
-.dt-stat-total { color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.dt-stat-avg { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; min-width: 78px; text-align: right; }
+.dt-stat-dot { width: 10px; height: 10px; border-radius: 50%; }
+.dt-stat-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.dt-stat-total { color: var(--text-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
+.dt-stat-avg { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 .dt-stat-row-untag { opacity: 0.75; }
 .dte-block-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dte-block-time { font-size: 9px; opacity: 0.7; font-variant-numeric: tabular-nums; }

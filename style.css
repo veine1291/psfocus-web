@@ -7106,6 +7106,75 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .cal-block-task.plan-pending .cal-task-title { font-weight: 400; }
 .cal-block-task.plan-pending .cal-task-check { border-style: dashed; }
 
+/* 计划模式: 模板段渲染成 full-width 虚线块 — 双击 (移动 tap) 展开侧栏 tag */
+.cal-plan-block {
+  --block-color: var(--accent);
+  position: absolute;
+  left: 2px; right: 2px;
+  top: calc(var(--top-min, 0) * var(--cal-hour-px, 44) / 60 * 1px);
+  height: calc(var(--height-min, 60) * var(--cal-hour-px, 44) / 60 * 1px);
+  background: color-mix(in srgb, var(--block-color) 5%, transparent);
+  border: 1.5px dashed var(--block-color);
+  border-radius: 6px;
+  z-index: 0;
+  padding: 3px 6px;
+  font-size: 10.5px;
+  color: var(--block-color);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+.cal-plan-block:active {
+  background: color-mix(in srgb, var(--block-color) 12%, transparent);
+}
+.cal-plan-block-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.cal-plan-block-time {
+  font-size: 9px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+  display: block;
+}
+
+/* 侧栏标签 section */
+.cal-side-tags { display: flex; flex-direction: column; gap: 4px; padding: 0 12px 12px; }
+.cal-side-tag-group {
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cal-side-tag-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+}
+.cal-side-tag-head:active { background: var(--bg-hover); }
+.cal-side-tag-chevron {
+  width: 12px; height: 12px;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+  color: var(--text-mute);
+}
+.cal-side-tag-group.expanded .cal-side-tag-chevron {
+  transform: rotate(90deg);
+}
+.cal-side-tag-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.cal-side-tag-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-side-tag-num { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.cal-side-tag-empty { padding: 12px; text-align: center; font-size: 11.5px; color: var(--text-faint); }
+.cal-side-tag-list { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+
 /* 时间刻度旁的"模板颜色条" — 贴在 col 左侧, 不拦截点击 */
 .cal-plan-rail {
   position: absolute;

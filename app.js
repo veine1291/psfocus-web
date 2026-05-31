@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1253';
+const _PSFOCUS_BUILD = '20260531-1316';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12734,8 +12734,8 @@ function calBlockHtml(d, dayStartMs) {
     const sidAttr = d.scheduleId ? `data-schedule-id="${esc(d.scheduleId)}"` : '';
     const occAttr = d.occurrenceStart != null ? `data-occurrence-start="${d.occurrenceStart}"` : '';
     const animCls = _animateDoneIds.has(d.taskId) ? ' just-done-anim' : '';
-    // 计划模式: 未完成任务渲染为浅色虚线"规划框", 已完成保持实色块
-    const planCls = (_isPlanMode() && !d.done) ? ' plan-pending' : '';
+    // 未完成任务 → 浅色虚线"规划框" (常驻, 不依赖 plan mode), 完成后转实色块
+    const planCls = !d.done ? ' plan-pending' : '';
     return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}${planCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} style="${styleVars}">
       <div class="cal-task-row">
         <span class="cal-task-check ${d.done?'checked':''}" data-action="cal-task-toggle" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr}></span>
@@ -12785,19 +12785,37 @@ function calHourLabelsHtml(hours) {
   return html;
 }
 
-// 计划模式: 时间刻度旁的"模板颜色条" — 每天的 col 自己渲一条, 显示该天对应模板的 block 配色
-// hours 是 CAL_HOURS (24); dayMs 为该天 startOfDay ms
+// 时间刻度旁的"模板颜色条" — 由 state.settings.showDayTemplate 开关控制 (独立于 plan mode)
+// dayMs 为该天 startOfDay ms; CAL_HOURS 是 24, 每分钟换算到 px = var(--cal-hour-px)/60
 function calPlanRailHtml(dayMs) {
-  if (!_isPlanMode()) return '';
+  if (!(state && state.settings && state.settings.showDayTemplate === true)) return '';
   const tpl = _dayTemplateForDay(dayMs);
   if (!tpl || !Array.isArray(tpl.blocks) || !tpl.blocks.length) return '';
-  // 每个 block 用 css var(--cal-hour-px) * minute / 60 定位
   const segs = tpl.blocks.slice().sort((a, b) => a.startMin - b.startMin).map(b => {
     const color = b.color || tpl.color || 'var(--accent)';
     return `<div class="cal-plan-rail-seg" title="${esc(b.name || '')} ${pad(Math.floor(b.startMin/60))}:${pad(b.startMin%60)}-${pad(Math.floor(b.endMin/60))}:${pad(b.endMin%60)}"
       style="--seg-top-min:${b.startMin};--seg-height-min:${b.endMin - b.startMin};background:${esc(color)}"></div>`;
   }).join('');
   return `<div class="cal-plan-rail" aria-hidden="true">${segs}</div>`;
+}
+
+// 计划模式 — 把模板的每段渲染成 full-width 虚线块 (覆盖在 col 上, 双击展开侧栏对应 tag)
+function calPlanBlockHtml(dayMs) {
+  if (!_isPlanMode()) return '';
+  const tpl = _dayTemplateForDay(dayMs);
+  if (!tpl || !Array.isArray(tpl.blocks) || !tpl.blocks.length) return '';
+  return tpl.blocks.slice().sort((a, b) => a.startMin - b.startMin).map(b => {
+    const color = b.color || tpl.color || 'var(--accent)';
+    const tagsAttr = (Array.isArray(b.tags) && b.tags.length) ? `data-block-tags="${esc(b.tags.join(','))}"` : '';
+    const sh = `${pad(Math.floor(b.startMin/60))}:${pad(b.startMin%60)}`;
+    const eh = `${pad(Math.floor(b.endMin/60))}:${pad(b.endMin%60)}`;
+    return `<div class="cal-plan-block" ${tagsAttr}
+      style="--top-min:${b.startMin};--height-min:${b.endMin - b.startMin};--block-color:${esc(color)};"
+      title="${esc(b.name || '')} ${sh}-${eh}">
+      <span class="cal-plan-block-name">${esc(b.name || '')}</span>
+      <span class="cal-plan-block-time">${sh} - ${eh}</span>
+    </div>`;
+  }).join('');
 }
 
 const CAL_HOURS = 24;
@@ -13012,6 +13030,16 @@ function _calApplyScrollMemo(view, defaultHour) {
 }
 
 function _bindCalBlocks(view) {
+  // 计划模式模板虚线块 — 点(移动用 tap, 对齐桌面 dblclick 意图)→ 展开侧栏对应 tag, 打开侧栏
+  view.querySelectorAll('.cal-plan-block').forEach(el => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const raw = el.dataset.blockTags || '';
+    const tags = raw.split(',').map(t => t.trim()).filter(Boolean);
+    if (!tags.length) { showToast('该时间段未打标签'); return; }
+    if (!ui.calSideTagExpanded) ui.calSideTagExpanded = new Set();
+    for (const tg of tags) ui.calSideTagExpanded.add('tag:' + tg);
+    openCalendarSidebar();
+  }));
   // 勾选框 — 优先绑定,stopPropagation 防止冒到 task block 打开详情
   view.querySelectorAll('[data-action="cal-task-toggle"]').forEach(el => el.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -13364,6 +13392,7 @@ function renderDayView(view) {
           <div class="cal-week-col cal-day-col" data-day-ms="${dayStart}">
             ${calHourLinesHtml(CAL_HOURS)}
             ${calPlanRailHtml(dayStart)}
+            ${calPlanBlockHtml(dayStart)}
             ${blocksHtml}
             ${isToday ? renderNowLineHtml() : ''}
           </div>
@@ -13434,6 +13463,7 @@ function renderWeekView(view) {
     return `<div class="cal-week-col ${isToday?'today':''}" data-day-ms="${dStart}">
       ${calHourLinesHtml(CAL_HOURS)}
       ${calPlanRailHtml(dStart)}
+      ${calPlanBlockHtml(dStart)}
       ${descs.map(de => calBlockHtml(de, dStart)).join('')}
       ${isToday ? renderNowLineHtml() : ''}
     </div>`;
@@ -13533,12 +13563,14 @@ function openCalendarMoreMenu() {
   if (planMode) {
     items.push({ label: '日程模板规划', icon: 'ico-calendar', action: () => { closePopover(); openDayTemplatesSheet(); } });
   }
+  const showDayTpl = s.showDayTemplate === true;
   items.push(
     { divider: true },
     { toggle: true, label: '显示已完成',       icon: 'ico-check',  stateText: showDone   ? '已开' : '', action: () => { s.calShowDone      = !showDone;   pushState(); closePopover(); renderAll(); } },
     { toggle: true, label: '显示专注记录',     icon: 'ico-clock',  stateText: showFocus  ? '已开' : '', action: () => { s.calShowFocus     = !showFocus;  pushState(); closePopover(); renderAll(); } },
     { toggle: true, label: '显示所有重复周期', icon: 'ico-clock',  stateText: showRepeat ? '已开' : '', action: () => { s.calShowAllRepeat = !showRepeat; pushState(); closePopover(); renderAll(); } },
     { toggle: true, label: '颜色用标签(否则项目)', icon: 'ico-tag', stateText: colorByTag ? '已开' : '', action: () => { s.calColorMode = colorByTag ? 'project' : 'tag'; pushState(); closePopover(); renderAll(); } },
+    { toggle: true, label: '显示日程模板', icon: 'ico-calendar', stateText: showDayTpl ? '已开' : '', action: () => { s.showDayTemplate = !showDayTpl; pushState(); closePopover(); renderAll(); } },
     { numberInput: true, label: '专注合并间隔', icon: 'ico-clock', value: mergeGap, min: 0, max: 240, step: 1, unit: '分钟',
       onChange: (v) => { s.calMergeGapMin = Math.max(0, Math.min(240, v)); pushState(); renderAll(); } },
     { divider: true },
@@ -14148,6 +14180,9 @@ function closeCalendarSidebar() {
   $('drawer-right').classList.remove('open');
   setTimeout(() => $('drawer-right').classList.add('hidden'), 280);
 }
+// 侧栏 tag section 的展开状态 — 记忆在 ui (在 sheet 关掉之间保留)
+if (!ui.calSideTagExpanded) ui.calSideTagExpanded = new Set();
+
 function renderCalendarSidebar() {
   const body = $('drawer-right-body');
   if (!body) return;
@@ -14167,9 +14202,47 @@ function renderCalendarSidebar() {
     html += `<div class="card-list">${done.map(taskCardHtml).join('')}</div>`;
   }
   if (!tks.length) html += `<div class="empty" style="padding:24px;">这天没有任务</div>`;
+
+  // === 标签 section — 列出全部 tag, 展开看该 tag 下未完成任务 ===
+  const allTags = _planCollectAllTags();
+  if (allTags.length) {
+    html += `<div class="section-title">标签</div><div class="cal-side-tags">`;
+    for (const tg of allTags) {
+      const tagKey = 'tag:' + tg;
+      const expanded = ui.calSideTagExpanded.has(tagKey);
+      const c = colorOfTag(tg);
+      const items = (state.tasks || []).filter(t =>
+        !t.archived && !t.done && Array.isArray(t.tags) && t.tags.includes(tg)
+      );
+      html += `<div class="cal-side-tag-group ${expanded?'expanded':''}">
+        <button class="cal-side-tag-head" data-cal-side-tag="${esc(tg)}">
+          <span class="cal-side-tag-chevron ico-chevron-right"></span>
+          <span class="cal-side-tag-dot" style="background:${esc(c)}"></span>
+          <span class="cal-side-tag-name">${esc(tg)}</span>
+          <span class="cal-side-tag-num">${items.length}</span>
+        </button>`;
+      if (expanded) {
+        if (!items.length) {
+          html += `<div class="cal-side-tag-empty">该标签下没有未完成任务</div>`;
+        } else {
+          html += `<div class="cal-side-tag-list">${items.map(taskCardHtml).join('')}</div>`;
+        }
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
   html += `</div>`;
   body.innerHTML = html;
   bindTaskCards(body);
+  // 侧栏 tag chevron 点击 → 展开/收起
+  body.querySelectorAll('[data-cal-side-tag]').forEach(el => el.onclick = () => {
+    const tagKey = 'tag:' + el.dataset.calSideTag;
+    if (ui.calSideTagExpanded.has(tagKey)) ui.calSideTagExpanded.delete(tagKey);
+    else ui.calSideTagExpanded.add(tagKey);
+    renderCalendarSidebar();
+  });
 }
 
 // =========================================================

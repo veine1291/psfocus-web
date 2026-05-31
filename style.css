@@ -7136,7 +7136,7 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   text-transform: uppercase;
   padding: 4px 4px 8px;
 }
-.dt-list { display: flex; flex-direction: column; gap: 6px; }
+.dt-list { display: flex; flex-direction: column; gap: 8px; }
 .dt-empty {
   padding: 24px 12px;
   text-align: center;
@@ -7145,30 +7145,52 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   border: 1px dashed var(--border-soft);
   border-radius: 8px;
 }
-.dt-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+/* 模板卡: 顶部 (icon + name + 编辑按钮) + 下方段列表 */
+.dt-card {
   background: var(--bg-section);
   border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--card-accent, var(--accent));
   border-radius: 10px;
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px;
 }
-.dt-item:active { background: var(--bg-hover); }
-.dt-item-icon {
-  width: 28px; height: 28px;
+.dt-card-head { display: flex; align-items: center; gap: 8px; }
+.dt-card-icon {
+  width: 24px; height: 24px;
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
-.dt-item-icon .nav-icon-svg, .dt-item-icon .nav-icon-svg svg,
-.dt-item-icon [class^="ico-"] { width: 20px; height: 20px; }
-.dt-item-mid { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.dt-item-name { font-size: 14px; color: var(--text); }
-.dt-item-sub  { font-size: 11.5px; color: var(--text-faint); }
-.dt-item-arrow { width: 14px; height: 14px; color: var(--text-mute); flex-shrink: 0; }
+.dt-card-icon .nav-icon-svg, .dt-card-icon .nav-icon-svg svg,
+.dt-card-icon [class^="ico-"] { width: 18px; height: 18px; }
+.dt-card-name {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dt-card-edit-btn {
+  padding: 5px 12px;
+  background: var(--bg-page);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dt-card-edit-btn:active { background: var(--bg-hover); border-color: var(--accent); color: var(--accent); }
+.dt-card-segs { display: flex; flex-direction: column; gap: 4px; padding-left: 32px; }
+.dt-card-seg {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.dt-card-seg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dt-card-seg-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dt-card-seg-dur { font-variant-numeric: tabular-nums; color: var(--text-faint); font-size: 11.5px; }
+.dt-card-seg-empty { font-size: 12px; color: var(--text-faint); font-style: italic; padding-left: 4px; }
 
 .dt-add-btn {
   width: 100%;
@@ -7185,21 +7207,36 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .dt-add-btn:active { background: var(--bg-hover); }
 .dt-add-btn .ico-plus { width: 14px; height: 14px; }
 
-.dt-assign-list { display: flex; flex-direction: column; gap: 4px; }
-.dt-assign-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px;
+/* 周分配 — 横向 7 列 chip */
+.dt-assign-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.dt-chip {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 2px;
   background: var(--bg-section);
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  width: 100%;
-  text-align: left;
+  border-radius: 8px;
   cursor: pointer;
+  min-width: 0;
+  -webkit-tap-highlight-color: transparent;
 }
-.dt-assign-row:active { background: var(--bg-hover); }
-.dt-assign-wd { font-size: 13px; color: var(--text); min-width: 36px; }
-.dt-assign-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
-.dt-assign-name { flex: 1; font-size: 13px; color: var(--text); }
+.dt-chip:active { background: var(--bg-hover); border-color: var(--accent); }
+.dt-chip.has-tpl { background: color-mix(in srgb, var(--bg-section) 80%, transparent); }
+.dt-chip-wd { font-size: 11px; color: var(--text-dim); font-weight: 500; }
+.dt-chip-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+.dt-chip-dot-empty { background: transparent; border: 1px dashed var(--border-soft); }
+.dt-chip-ico { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
+.dt-chip-ico .nav-icon-svg, .dt-chip-ico .nav-icon-svg svg,
+.dt-chip-ico [class^="ico-"] { width: 14px; height: 14px; }
+.dt-chip-name {
+  font-size: 10.5px;
+  color: var(--text);
+  max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .dt-mute { color: var(--text-faint); }
 .dt-tip {
   margin-top: 14px;
@@ -7254,9 +7291,25 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .dte-content { padding: 6px 14px 16px; }
 .dte-tip { font-size: 11px; color: var(--text-faint); padding: 0 0 8px; line-height: 1.4; }
 
+/* timeline 包装: 左 gutter (hour 标签) + 右 timeline 主区, gutter 独立元素不被 overflow:hidden 裁掉 */
+.dte-timeline-wrap {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 0;
+  position: relative;
+}
+.dte-hour-gutter { position: relative; height: 100%; }
+.dte-hour-label {
+  position: absolute;
+  right: 6px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
 .dte-timeline {
   position: relative;
-  margin-left: 32px;   /* 给 hour-label 留位 */
   background: var(--bg-section);
   border-radius: 8px;
   overflow: hidden;
@@ -7270,16 +7323,6 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   pointer-events: none;
 }
 [data-theme="dark"] .dte-hour-line { background: rgba(255, 255, 255, 0.07); }
-.dte-hour-label {
-  position: absolute;
-  left: -32px; width: 28px;
-  font-size: 10px;
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  transform: translateY(-6px);
-  pointer-events: none;
-}
 .dte-block {
   --block-color: var(--accent);
   position: absolute;
@@ -7299,7 +7342,9 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   outline: 2px solid var(--accent);
   outline-offset: 1px;
   z-index: 2;
+  cursor: grab;
 }
+.dte-block.selected:active { cursor: grabbing; }
 .dte-block.dte-block-preview {
   opacity: 0.5;
   border-style: dashed;

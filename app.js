@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-0907';
+const _PSFOCUS_BUILD = '20260531-0944';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -13393,43 +13393,61 @@ function openDayTemplatesSheet() {
   const renderBody = () => {
     const tpls = state.dayTemplates;
     const assigns = state.dayTemplateAssignments;
-    const tplListHtml = tpls.length
+    const fmtDur = (mn) => {
+      const h = Math.floor(mn / 60), m2 = mn % 60;
+      if (h && m2) return `${h}h${m2}m`;
+      if (h) return `${h}h`;
+      return `${m2}m`;
+    };
+    // 模板卡片: 顶部 head (icon + name + 编辑按钮), 下方段列表
+    const tplCardHtml = tpls.length
       ? tpls.map(t => {
           const iconHtml = renderCustomIconHtml(t.icon, '', t.color) || `<span class="ico-calendar" style="color:${esc(t.color || 'var(--accent)')}"></span>`;
-          // 占用 weekday 数
-          const usedDays = _PLAN_WEEKDAYS.filter((_, i) => assigns[String(i)] === t.id);
-          const usedText = usedDays.length ? usedDays.join(' ') : '未分配';
-          return `<button class="dt-item" data-edit-tpl="${esc(t.id)}">
-            <span class="dt-item-icon">${iconHtml}</span>
-            <span class="dt-item-mid">
-              <span class="dt-item-name">${esc(t.name || '未命名模板')}</span>
-              <span class="dt-item-sub">${esc(usedText)} · ${t.blocks ? t.blocks.length : 0} 段</span>
-            </span>
-            <span class="ico-chevron-right dt-item-arrow"></span>
-          </button>`;
+          const blocks = (t.blocks || []).slice().sort((a, b) => a.startMin - b.startMin);
+          const segsHtml = blocks.length
+            ? blocks.map(b => {
+                const color = b.color || t.color || 'var(--accent)';
+                const dur = fmtDur(b.endMin - b.startMin);
+                return `<div class="dt-card-seg">
+                  <span class="dt-card-seg-dot" style="background:${esc(color)}"></span>
+                  <span class="dt-card-seg-name">${esc(b.name || '未命名段')}</span>
+                  <span class="dt-card-seg-dur">${esc(dur)}</span>
+                </div>`;
+              }).join('')
+            : '<div class="dt-card-seg-empty">还没有段, 点编辑去画</div>';
+          return `<div class="dt-card" style="--card-accent:${esc(t.color || 'var(--accent)')};">
+            <div class="dt-card-head">
+              <span class="dt-card-icon">${iconHtml}</span>
+              <span class="dt-card-name">${esc(t.name || '未命名模板')}</span>
+              <button class="dt-card-edit-btn" data-edit-tpl="${esc(t.id)}">编辑</button>
+            </div>
+            <div class="dt-card-segs">${segsHtml}</div>
+          </div>`;
         }).join('')
       : '<div class="dt-empty">还没有模板,点下方添加</div>';
-    // 周分配 — 每个 weekday 显示一个 chip, 点 chip 改模板
+    // 周分配 — 横向 7 列 chip
     const assignHtml = _PLAN_WEEKDAYS.map((wd, i) => {
       const tplId = assigns[String(i)];
       const tpl = tplId ? state.dayTemplates.find(x => x.id === tplId) : null;
-      const dotColor = tpl ? (tpl.color || 'var(--accent)') : 'transparent';
+      const color = tpl ? (tpl.color || 'var(--accent)') : '';
       const tplName = tpl ? (tpl.name || '未命名') : '无';
-      return `<button class="dt-assign-row" data-assign-dow="${i}">
-        <span class="dt-assign-wd">${esc(wd)}</span>
-        <span class="dt-assign-dot" style="background:${esc(dotColor)};${tpl?'':'border:1px dashed var(--border-soft);'}"></span>
-        <span class="dt-assign-name ${tpl?'':'dt-mute'}">${esc(tplName)}</span>
-        <span class="ico-chevron-right dt-item-arrow"></span>
+      const iconHtml = (tpl && tpl.icon)
+        ? (renderCustomIconHtml(tpl.icon, 'dt-chip-ico', color) || `<span class="dt-chip-dot" style="background:${esc(color)};"></span>`)
+        : (tpl ? `<span class="dt-chip-dot" style="background:${esc(color)};"></span>` : `<span class="dt-chip-dot dt-chip-dot-empty"></span>`);
+      return `<button class="dt-chip ${tpl?'has-tpl':'empty'}" data-assign-dow="${i}" title="${esc(wd)} → ${esc(tplName)}">
+        <span class="dt-chip-wd">${esc(wd)}</span>
+        ${iconHtml}
+        <span class="dt-chip-name ${tpl?'':'dt-mute'}">${esc(tplName)}</span>
       </button>`;
     }).join('');
     return `
       <div class="sheet-handle"></div>
       <div class="sheet-content dt-sheet">
         <div class="dt-section-title">模板</div>
-        <div class="dt-list">${tplListHtml}</div>
+        <div class="dt-list">${tplCardHtml}</div>
         <button class="dt-add-btn" data-action="dt-add"><span class="ico-plus"></span>新建模板</button>
         <div class="dt-section-title" style="margin-top:18px;">周分配</div>
-        <div class="dt-assign-list">${assignHtml}</div>
+        <div class="dt-assign-grid">${assignHtml}</div>
         <div class="dt-tip">关闭计划模式后这些设置仍然保留, 下次开启计划模式直接生效。</div>
       </div>
     `;
@@ -13515,11 +13533,12 @@ function openEditDayTemplateSheet(tplId) {
 
   const renderBody = () => {
     const iconHtml = renderCustomIconHtml(tpl.icon, '', tpl.color) || `<span class="ico-calendar" style="color:${esc(tpl.color || 'var(--accent)')}"></span>`;
-    // 24h hour 线
+    // 24h hour 线 + 单独 hour 标签 gutter (避免被 .dte-timeline 的 overflow:hidden 裁掉)
     let hourLinesHtml = '';
-    for (let h = 0; h <= 24; h++) {
+    let hourLabelsHtml = '';
+    for (let h = 0; h < 24; h++) {
       hourLinesHtml += `<div class="dte-hour-line" style="top:${h * HOUR_PX}px;"></div>`;
-      if (h < 24) hourLinesHtml += `<div class="dte-hour-label" style="top:${h * HOUR_PX}px;">${pad(h)}</div>`;
+      hourLabelsHtml += `<div class="dte-hour-label" style="top:${h * HOUR_PX}px;">${pad(h)}:00</div>`;
     }
     // 已存在的块
     const blocksHtml = tpl.blocks.slice().sort((a, b) => a.startMin - b.startMin).map(b => {
@@ -13579,10 +13598,13 @@ function openEditDayTemplateSheet(tplId) {
         </div>
       </div>
       <div class="sheet-content dte-content">
-        <div class="dte-tip">长按空白区域拖动 → 划出新时间段; 拖块顶/底可调整起止</div>
-        <div class="dte-timeline" id="dte-timeline" style="height:${TOTAL_PX}px;">
-          ${hourLinesHtml}
-          ${blocksHtml}
+        <div class="dte-tip">空白处拖动 → 新建段; 单击进入选中, 整段可上下拖动; 顶/底手柄调起止</div>
+        <div class="dte-timeline-wrap" style="height:${TOTAL_PX}px;">
+          <div class="dte-hour-gutter">${hourLabelsHtml}</div>
+          <div class="dte-timeline" id="dte-timeline" style="height:${TOTAL_PX}px;">
+            ${hourLinesHtml}
+            ${blocksHtml}
+          </div>
         </div>
         ${pickedHtml}
       </div>
@@ -13684,7 +13706,10 @@ function openEditDayTemplateSheet(tplId) {
     };
     let activePointerId = null;
     let previewEl = null;
+    let dragMoved = false;
+    let dragStartMin = 0;     // move 模式按下时鼠标对应的分钟
     const onPointerDown = (ev) => {
+      dragMoved = false;
       // resize 手柄优先
       const handle = ev.target.closest && ev.target.closest('.dte-block-resize');
       if (handle) {
@@ -13698,8 +13723,22 @@ function openEditDayTemplateSheet(tplId) {
         ev.preventDefault();
         return;
       }
-      // 点到已存在块上 → 不创建 (block 自身 click 会处理选中)
-      if (ev.target.closest && ev.target.closest('.dte-block')) return;
+      // 点已有块: 选中态 → 进入 move; 未选中态 → 不拦截 (block click 走选中)
+      const blockEl = ev.target.closest && ev.target.closest('.dte-block');
+      if (blockEl && !blockEl.classList.contains('dte-block-preview')) {
+        if (blockEl.classList.contains('selected')) {
+          const b = tpl.blocks.find(x => x.id === blockEl.dataset.blockId);
+          if (!b) return;
+          ed.dragMode = 'move';
+          ed.dragBlockId = b.id;
+          ed.dragOrigStart = b.startMin; ed.dragOrigEnd = b.endMin;
+          dragStartMin = yToMin(ev.clientY);
+          activePointerId = ev.pointerId;
+          try { timeline.setPointerCapture(activePointerId); } catch (_) {}
+          ev.preventDefault();
+        }
+        return;
+      }
       // 空白拖动 = 创建新块
       ed.dragMode = 'create';
       ed.newStartMin = yToMin(ev.clientY);
@@ -13724,6 +13763,7 @@ function openEditDayTemplateSheet(tplId) {
     };
     const onPointerMove = (ev) => {
       if (activePointerId == null || ev.pointerId !== activePointerId) return;
+      dragMoved = true;
       const min = yToMin(ev.clientY);
       if (ed.dragMode === 'create') {
         ed.newEndMin = min;
@@ -13734,6 +13774,16 @@ function openEditDayTemplateSheet(tplId) {
       } else if (ed.dragMode === 'resize-end') {
         const b = tpl.blocks.find(x => x.id === ed.dragBlockId);
         if (b) { b.endMin = Math.max(min, b.startMin + 5); _liveRedrawBlocks(); }
+      } else if (ed.dragMode === 'move') {
+        const b = tpl.blocks.find(x => x.id === ed.dragBlockId);
+        if (!b) return;
+        const len = ed.dragOrigEnd - ed.dragOrigStart;
+        let newStart = ed.dragOrigStart + (min - dragStartMin);
+        if (newStart < 0) newStart = 0;
+        if (newStart + len > 1440) newStart = 1440 - len;
+        b.startMin = _snap(newStart);
+        b.endMin = b.startMin + len;
+        _liveRedrawBlocks();
       }
     };
     const _liveRedrawBlocks = () => {
@@ -13766,12 +13816,15 @@ function openEditDayTemplateSheet(tplId) {
         if (previewEl && previewEl.parentNode) previewEl.parentNode.removeChild(previewEl);
         previewEl = null;
         rerender();
-      } else if (ed.dragMode === 'resize-start' || ed.dragMode === 'resize-end') {
-        pushState();
-        rerender();
+      } else if (ed.dragMode === 'resize-start' || ed.dragMode === 'resize-end' || ed.dragMode === 'move') {
+        if (dragMoved) {
+          pushState();
+          rerender();
+        }
       }
       ed.dragMode = null;
       ed.dragBlockId = null;
+      dragMoved = false;
     };
     timeline.addEventListener('pointerdown', onPointerDown);
     timeline.addEventListener('pointermove', onPointerMove);

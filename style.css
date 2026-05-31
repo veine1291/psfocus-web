@@ -7175,6 +7175,39 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .cal-side-tag-empty { padding: 12px; text-align: center; font-size: 11.5px; color: var(--text-faint); }
 .cal-side-tag-list { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 4px; }
 
+/* tag 下的项目 row — 比 taskCard 简洁 (无勾选 / 无日期), 点跳转到项目页 */
+.cal-side-tag-proj {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-page);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+.cal-side-tag-proj:active { background: var(--bg-hover); border-color: var(--accent); }
+.cal-side-tag-proj-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+}
+.cal-side-tag-proj-icon .nav-icon-svg, .cal-side-tag-proj-icon .nav-icon-svg svg,
+.cal-side-tag-proj-icon [class^="ico-"] { width: 14px; height: 14px; }
+.cal-side-tag-proj-name {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cal-side-tag-proj-kind {
+  font-size: 10.5px; color: var(--text-faint);
+  padding: 1px 6px;
+  background: var(--bg-section);
+  border-radius: 3px;
+}
+
 /* 时间刻度旁的"模板颜色条" — 贴在 col 左侧, 不拦截点击 */
 .cal-plan-rail {
   position: absolute;

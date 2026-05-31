@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1316';
+const _PSFOCUS_BUILD = '20260531-1324';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12514,6 +12514,7 @@ function _planCollectAllTags() {
   const out  = reg.map(t => t.name);
   for (const t of (state.tasks    || [])) for (const tg of (t.tags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
   for (const p of (state.projects || [])) for (const tg of (p.tags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
+  for (const p of (state.projects || [])) for (const tg of (p.workTags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
   for (const ev of (state.events  || [])) for (const tg of (ev.tags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
   for (const dt of (state.dayTemplates || [])) for (const b of (dt.blocks || [])) for (const tg of (b.tags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
   return out;
@@ -14203,7 +14204,7 @@ function renderCalendarSidebar() {
   }
   if (!tks.length) html += `<div class="empty" style="padding:24px;">这天没有任务</div>`;
 
-  // === 标签 section — 列出全部 tag, 展开看该 tag 下未完成任务 ===
+  // === 标签 section — 列出全部 tag, 展开看该 tag 下未完成任务 + 关联项目 ===
   const allTags = _planCollectAllTags();
   if (allTags.length) {
     html += `<div class="section-title">标签</div><div class="cal-side-tags">`;
@@ -14211,21 +14212,41 @@ function renderCalendarSidebar() {
       const tagKey = 'tag:' + tg;
       const expanded = ui.calSideTagExpanded.has(tagKey);
       const c = colorOfTag(tg);
-      const items = (state.tasks || []).filter(t =>
+      const taskItems = (state.tasks || []).filter(t =>
         !t.archived && !t.done && Array.isArray(t.tags) && t.tags.includes(tg)
       );
+      // 项目 — tags (任务面板) ∪ workTags (画廊) 任一命中
+      const projItems = (state.projects || []).filter(p =>
+        !p.archived &&
+        ((Array.isArray(p.tags) && p.tags.includes(tg)) ||
+         (Array.isArray(p.workTags) && p.workTags.includes(tg)))
+      );
+      const totalNum = taskItems.length + projItems.length;
       html += `<div class="cal-side-tag-group ${expanded?'expanded':''}">
         <button class="cal-side-tag-head" data-cal-side-tag="${esc(tg)}">
           <span class="cal-side-tag-chevron ico-chevron-right"></span>
           <span class="cal-side-tag-dot" style="background:${esc(c)}"></span>
           <span class="cal-side-tag-name">${esc(tg)}</span>
-          <span class="cal-side-tag-num">${items.length}</span>
+          <span class="cal-side-tag-num">${totalNum}</span>
         </button>`;
       if (expanded) {
-        if (!items.length) {
-          html += `<div class="cal-side-tag-empty">该标签下没有未完成任务</div>`;
+        if (!totalNum) {
+          html += `<div class="cal-side-tag-empty">该标签下没有内容</div>`;
         } else {
-          html += `<div class="cal-side-tag-list">${items.map(taskCardHtml).join('')}</div>`;
+          // 任务在前
+          html += `<div class="cal-side-tag-list">`;
+          html += taskItems.map(taskCardHtml).join('');
+          // 项目在后 — 简洁 row (色点 + 名 + 图标)
+          for (const p of projItems) {
+            const iconHtml = renderCustomIconHtml(p.icon, '', p.color)
+              || `<span class="ico-folder" style="color:${esc(p.color || 'var(--text-dim)')}"></span>`;
+            html += `<button class="cal-side-tag-proj" data-cal-tag-proj-id="${esc(p.id)}">
+              <span class="cal-side-tag-proj-icon">${iconHtml}</span>
+              <span class="cal-side-tag-proj-name">${esc(p.name || '未命名项目')}</span>
+              ${p.kind === 'tasklist' ? '<span class="cal-side-tag-proj-kind">清单</span>' : ''}
+            </button>`;
+          }
+          html += `</div>`;
         }
       }
       html += `</div>`;
@@ -14242,6 +14263,16 @@ function renderCalendarSidebar() {
     if (ui.calSideTagExpanded.has(tagKey)) ui.calSideTagExpanded.delete(tagKey);
     else ui.calSideTagExpanded.add(tagKey);
     renderCalendarSidebar();
+  });
+  // 标签下的项目行 — 点 → 跳到该项目页 + 收起侧栏
+  body.querySelectorAll('[data-cal-tag-proj-id]').forEach(el => el.onclick = () => {
+    const pid = el.dataset.calTagProjId;
+    closeCalendarSidebar();
+    ui.selectedKind = 'project';
+    ui.selectedId = pid;
+    ui.tab = 'tasks';
+    saveUI();
+    renderAll();
   });
 }
 

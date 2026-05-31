@@ -7170,14 +7170,14 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   color: var(--block-color);
 }
 
-/* 计划模式: 模板段渲染成 full-width 虚线块 — 双击 (移动 tap) 展开侧栏 tag */
+/* 计划模式: 模板段渲染成 full-width 虚线框 — 只虚线 + 标题, 无底色无时间 */
 .cal-plan-block {
   --block-color: var(--accent);
   position: absolute;
   left: 2px; right: 2px;
   top: calc(var(--top-min, 0) * var(--cal-hour-px, 44) / 60 * 1px);
   height: calc(var(--height-min, 60) * var(--cal-hour-px, 44) / 60 * 1px);
-  background: color-mix(in srgb, var(--block-color) 5%, transparent);
+  background: transparent;
   border: 1.5px dashed var(--block-color);
   border-radius: 6px;
   z-index: 0;
@@ -7189,19 +7189,13 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   -webkit-tap-highlight-color: transparent;
 }
 .cal-plan-block:active {
-  background: color-mix(in srgb, var(--block-color) 12%, transparent);
+  background: color-mix(in srgb, var(--block-color) 8%, transparent);
 }
 .cal-plan-block-name {
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: block;
-}
-.cal-plan-block-time {
-  font-size: 9px;
-  opacity: 0.7;
-  font-variant-numeric: tabular-nums;
   display: block;
 }
 

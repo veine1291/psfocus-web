@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1555';
+const _PSFOCUS_BUILD = '20260531-1651';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12852,7 +12852,6 @@ function calPlanBlockHtml(dayMs) {
       style="--top-min:${b.startMin};--height-min:${b.endMin - b.startMin};--block-color:${esc(color)};"
       title="${esc(b.name || '')} ${sh}-${eh}">
       <span class="cal-plan-block-name">${esc(b.name || '')}</span>
-      <span class="cal-plan-block-time">${sh} - ${eh}</span>
     </div>`;
   }).join('');
 }

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1338';
+const _PSFOCUS_BUILD = '20260531-1345';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12735,8 +12735,10 @@ function calBlockHtml(d, dayStartMs) {
     const sidAttr = d.scheduleId ? `data-schedule-id="${esc(d.scheduleId)}"` : '';
     const occAttr = d.occurrenceStart != null ? `data-occurrence-start="${d.occurrenceStart}"` : '';
     const animCls = _animateDoneIds.has(d.taskId) ? ' just-done-anim' : '';
-    // 未完成任务 → 浅色虚线"规划框" (常驻, 不依赖 plan mode), 完成后转实色块
-    const planCls = !d.done ? ' plan-pending' : '';
+    // 未完成任务样式: 规划模式开 = 实色底浅字 (plan-scheduled); 关 = 虚线 (plan-pending)
+    const planCls = !d.done
+      ? (_isPlanMode() ? ' plan-scheduled' : ' plan-pending')
+      : '';
     return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}${planCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} style="${styleVars}">
       <div class="cal-task-row">
         <span class="cal-task-check ${d.done?'checked':''}" data-action="cal-task-toggle" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr}></span>

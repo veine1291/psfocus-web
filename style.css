@@ -7096,7 +7096,7 @@ body.cal-block-editing .sheet-body { touch-action: none; }
    计划模式 (Plan Mode) — 日历额外渲染层
    ========================================================= */
 
-/* 未完成任务: 浅色虚线"规划框" — 同色, 但底色更淡 + 虚线边框, 暗示"这是打算" */
+/* 非规划模式 — 未完成任务: 浅色虚线"规划框" */
 .cal-block-task.plan-pending {
   background: color-mix(in srgb, var(--block-color) 4%, transparent);
   border-style: dashed;
@@ -7105,6 +7105,30 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 }
 .cal-block-task.plan-pending .cal-task-title { font-weight: 400; }
 .cal-block-task.plan-pending .cal-task-check { border-style: dashed; }
+
+/* 规划模式 — 未完成任务: 实色底 + 浅色字 (跟下层模板虚线块区分) */
+.cal-block-task.plan-scheduled {
+  background: var(--block-color) !important;
+  color: #fff !important;
+  border-color: var(--block-color);
+  border-style: solid;
+  border-width: 1.5px;
+  opacity: 1;
+  z-index: 2;
+}
+.cal-block-task.plan-scheduled .cal-task-title { color: #fff; font-weight: 500; }
+.cal-block-task.plan-scheduled .cal-task-sub  { color: rgba(255, 255, 255, 0.8); }
+.cal-block-task.plan-scheduled .cal-task-meta { color: rgba(255, 255, 255, 0.75); }
+.cal-block-task.plan-scheduled .cal-task-check {
+  border-color: #fff;
+  background: transparent;
+}
+.cal-block-task.plan-scheduled .cal-task-check.checked {
+  background: #fff;
+}
+.cal-block-task.plan-scheduled .cal-task-check.checked::after {
+  color: var(--block-color);
+}
 
 /* 计划模式: 模板段渲染成 full-width 虚线块 — 双击 (移动 tap) 展开侧栏 tag */
 .cal-plan-block {

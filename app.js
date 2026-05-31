@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1345';
+const _PSFOCUS_BUILD = '20260531-1520';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12528,12 +12528,14 @@ function _planEnsureTagRegistered(name) {
   state.settings.tags.push({ name, color: '', order: maxOrder + 100 });
   return true;
 }
-// 周时长统计 (同桌面 _planWeeklyTagStats)
+// 周时长统计 (同桌面 _planWeeklyTagStats) — 加 tagDays / untaggedDays 让日均按 per-tag 出现天数算
 function _planWeeklyTagStats() {
   _ensurePlanState();
   const assigns = state.dayTemplateAssignments || {};
   const tagMinutes = new Map();
+  const tagDays = new Map();
   let untaggedMinutes = 0;
+  let untaggedDays = 0;
   let assignedDays = 0;
   for (let dow = 0; dow < 7; dow++) {
     const tplId = assigns[String(dow)];
@@ -12541,15 +12543,22 @@ function _planWeeklyTagStats() {
     const tpl = _dayTemplateById(tplId);
     if (!tpl || !Array.isArray(tpl.blocks)) continue;
     assignedDays++;
+    const dayTags = new Set();
+    let dayHadUntagged = false;
     for (const b of tpl.blocks) {
       const dur = Math.max(0, (b.endMin || 0) - (b.startMin || 0));
       if (!dur) continue;
       const tags = Array.isArray(b.tags) ? b.tags : [];
-      if (!tags.length) { untaggedMinutes += dur; continue; }
-      for (const tg of tags) tagMinutes.set(tg, (tagMinutes.get(tg) || 0) + dur);
+      if (!tags.length) { untaggedMinutes += dur; dayHadUntagged = true; continue; }
+      for (const tg of tags) {
+        tagMinutes.set(tg, (tagMinutes.get(tg) || 0) + dur);
+        dayTags.add(tg);
+      }
     }
+    for (const tg of dayTags) tagDays.set(tg, (tagDays.get(tg) || 0) + 1);
+    if (dayHadUntagged) untaggedDays++;
   }
-  return { totalAssignedDays: assignedDays, tagMinutes, untaggedMinutes };
+  return { totalAssignedDays: assignedDays, tagMinutes, tagDays, untaggedMinutes, untaggedDays };
 }
 function _planFmtMinutesHM(mn) {
   const h = Math.floor(mn / 60), m = Math.round(mn % 60);
@@ -13559,13 +13568,11 @@ function openCalendarMoreMenu() {
   const items = [
     { label: '展开任务侧栏', icon: 'ico-list', action: () => { closePopover(); openCalendarSidebar(); } },
     { divider: true },
-    // 计划模式开关 — 关闭时下方"日程模板规划"入口隐藏 (复杂↔简洁两种模式)
     { toggle: true, label: '计划模式', icon: 'ico-target', stateText: planMode ? '已开' : '',
       action: () => { s.planMode = !planMode; pushState(); closePopover(); renderAll(); } },
   ];
-  if (planMode) {
-    items.push({ label: '日程模板规划', icon: 'ico-calendar', action: () => { closePopover(); openDayTemplatesSheet(); } });
-  }
+  // 日程模板规划入口常驻 — 不需要开规划模式也能进
+  items.push({ label: '日程模板规划', icon: 'ico-calendar', action: () => { closePopover(); openDayTemplatesSheet(); } });
   const showDayTpl = s.showDayTemplate === true;
   items.push(
     { divider: true },
@@ -13641,33 +13648,33 @@ function openDayTemplatesSheet() {
         <span class="dt-chip-name ${tpl?'':'dt-mute'}">${esc(tplName)}</span>
       </button>`;
     }).join('');
-    // 周时长统计 — 同桌面: 同段多 tag 各计一份
+    // 周时长统计 — 同桌面: 同段多 tag 各计一份, 日均按该 tag 出现的天数算
     const stats = _planWeeklyTagStats();
     let statsHtml = '';
     if (stats.totalAssignedDays) {
       const rows = Array.from(stats.tagMinutes.entries()).sort((a, b) => b[1] - a[1]);
       if (rows.length || stats.untaggedMinutes) {
-        const dayDiv = stats.totalAssignedDays;
         const rowHtml = rows.map(([tg, mn]) => {
           const c = colorOfTag(tg);
+          const days = stats.tagDays.get(tg) || 1;
           return `<div class="dt-stat-row">
             <span class="dt-stat-dot" style="background:${esc(c)}"></span>
             <span class="dt-stat-name">${esc(tg)}</span>
-            <span class="dt-stat-total">${_planFmtMinutesHM(mn)}</span>
-            <span class="dt-stat-avg">日均 ${_planFmtMinutesHM(mn / dayDiv)}</span>
+            <span class="dt-stat-total">${_planFmtMinutesHM(mn)} · ${days}天</span>
+            <span class="dt-stat-avg">日均 ${_planFmtMinutesHM(mn / days)}</span>
           </div>`;
         }).join('');
         const untagHtml = stats.untaggedMinutes
           ? `<div class="dt-stat-row dt-stat-row-untag">
                <span class="dt-stat-dot" style="background:transparent;border:1px dashed var(--border-soft);"></span>
                <span class="dt-stat-name">未打标签</span>
-               <span class="dt-stat-total">${_planFmtMinutesHM(stats.untaggedMinutes)}</span>
-               <span class="dt-stat-avg">日均 ${_planFmtMinutesHM(stats.untaggedMinutes / dayDiv)}</span>
+               <span class="dt-stat-total">${_planFmtMinutesHM(stats.untaggedMinutes)} · ${stats.untaggedDays || 1}天</span>
+               <span class="dt-stat-avg">日均 ${_planFmtMinutesHM(stats.untaggedMinutes / (stats.untaggedDays || 1))}</span>
              </div>`
           : '';
         statsHtml = `
           <div class="dt-section-title" style="margin-top:18px;">周时长统计</div>
-          <div class="dt-stat-meta">基于 ${dayDiv} 天分配 · 同段多 tag 各算一份</div>
+          <div class="dt-stat-meta">日均 = 该 tag 总时长 / 该 tag 出现的天数</div>
           <div class="dt-stat-list">${rowHtml}${untagHtml}</div>`;
       }
     }

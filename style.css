@@ -7350,6 +7350,64 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   border-style: dashed;
   pointer-events: none;
 }
+/* 块上的小 tag 点 — 右上角, 不抢点击 */
+.dte-block-tags {
+  position: absolute;
+  top: 3px; right: 6px;
+  display: flex; gap: 3px; align-items: center;
+  pointer-events: none;
+}
+.dte-block-tag-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dte-block-tag-more { font-size: 9px; color: var(--text-faint); margin-left: 1px; }
+
+/* tag input + chips 行 */
+.dte-tag-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+.dte-tag-row .dp-tags-row {
+  display: flex; flex-wrap: wrap; gap: 6px; width: 100%;
+}
+.dte-tag-row .dp-tag-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.dte-tag-row .dp-tag-chip-x {
+  background: none; border: none; cursor: pointer; padding: 0;
+  font-size: 14px; line-height: 1; color: currentColor; opacity: 0.7;
+}
+.dte-tag-row .dp-tag-chip-x:active { opacity: 1; }
+.dte-tag-row .dp-tag-add {
+  flex: 1; min-width: 120px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  outline: none;
+}
+.dte-tag-row .dp-tag-add:focus { border-color: var(--accent); }
+
+/* 周时长统计 */
+.dt-stat-meta { font-size: 11.5px; color: var(--text-faint); margin-bottom: 8px; padding: 0 4px; }
+.dt-stat-list { display: flex; flex-direction: column; gap: 4px; }
+.dt-stat-row {
+  display: grid;
+  grid-template-columns: 12px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.dt-stat-dot { width: 10px; height: 10px; border-radius: 50%; }
+.dt-stat-name { color: var(--text); }
+.dt-stat-total { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.dt-stat-avg { color: var(--text-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; min-width: 84px; text-align: right; }
+.dt-stat-row-untag { opacity: 0.75; }
 .dte-block-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dte-block-time { font-size: 9px; opacity: 0.7; font-variant-numeric: tabular-nums; }
 .dte-block-resize {

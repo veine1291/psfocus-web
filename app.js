@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1007';
+const _PSFOCUS_BUILD = '20260531-1223';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12422,6 +12422,56 @@ function _dayTemplateById(id) {
 const _PLAN_PRESET_COLORS = ['#FF6B6B','#FFB86B','#FFD93D','#6BCB77','#4D96FF','#9B5DE5','#FF6FB5','#888888'];
 const _PLAN_WEEKDAYS = ['周一','周二','周三','周四','周五','周六','周日'];
 
+// 与桌面端 collectAllTags 等价 — reg 表 + 任务/项目/事件/dayTemplates 出现过的 tag
+function _planCollectAllTags() {
+  const reg = ((state && state.settings && state.settings.tags) || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+  const seen = new Set(reg.map(t => t.name));
+  const out  = reg.map(t => t.name);
+  for (const t of (state.tasks    || [])) for (const tg of (t.tags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
+  for (const p of (state.projects || [])) for (const tg of (p.tags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
+  for (const ev of (state.events  || [])) for (const tg of (ev.tags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
+  for (const dt of (state.dayTemplates || [])) for (const b of (dt.blocks || [])) for (const tg of (b.tags || [])) if (!seen.has(tg)) { seen.add(tg); out.push(tg); }
+  return out;
+}
+function _planEnsureTagRegistered(name) {
+  if (!name) return false;
+  if (!state.settings) state.settings = {};
+  if (!Array.isArray(state.settings.tags)) state.settings.tags = [];
+  if (state.settings.tags.find(t => t.name === name)) return false;
+  const maxOrder = state.settings.tags.length ? Math.max(...state.settings.tags.map(t => t.order || 0)) : 0;
+  state.settings.tags.push({ name, color: '', order: maxOrder + 100 });
+  return true;
+}
+// 周时长统计 (同桌面 _planWeeklyTagStats)
+function _planWeeklyTagStats() {
+  _ensurePlanState();
+  const assigns = state.dayTemplateAssignments || {};
+  const tagMinutes = new Map();
+  let untaggedMinutes = 0;
+  let assignedDays = 0;
+  for (let dow = 0; dow < 7; dow++) {
+    const tplId = assigns[String(dow)];
+    if (!tplId) continue;
+    const tpl = _dayTemplateById(tplId);
+    if (!tpl || !Array.isArray(tpl.blocks)) continue;
+    assignedDays++;
+    for (const b of tpl.blocks) {
+      const dur = Math.max(0, (b.endMin || 0) - (b.startMin || 0));
+      if (!dur) continue;
+      const tags = Array.isArray(b.tags) ? b.tags : [];
+      if (!tags.length) { untaggedMinutes += dur; continue; }
+      for (const tg of tags) tagMinutes.set(tg, (tagMinutes.get(tg) || 0) + dur);
+    }
+  }
+  return { totalAssignedDays: assignedDays, tagMinutes, untaggedMinutes };
+}
+function _planFmtMinutesHM(mn) {
+  const h = Math.floor(mn / 60), m = Math.round(mn % 60);
+  if (h && m) return `${h}h${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+
 // 通用色板 — 优先用用户在桌面设的 active palette, 没有 fallback 到 preset
 function _planActivePaletteColors() {
   if (!state || !state.settings) return _PLAN_PRESET_COLORS.slice();
@@ -13470,6 +13520,36 @@ function openDayTemplatesSheet() {
         <span class="dt-chip-name ${tpl?'':'dt-mute'}">${esc(tplName)}</span>
       </button>`;
     }).join('');
+    // 周时长统计 — 同桌面: 同段多 tag 各计一份
+    const stats = _planWeeklyTagStats();
+    let statsHtml = '';
+    if (stats.totalAssignedDays) {
+      const rows = Array.from(stats.tagMinutes.entries()).sort((a, b) => b[1] - a[1]);
+      if (rows.length || stats.untaggedMinutes) {
+        const dayDiv = stats.totalAssignedDays;
+        const rowHtml = rows.map(([tg, mn]) => {
+          const c = colorOfTag(tg);
+          return `<div class="dt-stat-row">
+            <span class="dt-stat-dot" style="background:${esc(c)}"></span>
+            <span class="dt-stat-name">${esc(tg)}</span>
+            <span class="dt-stat-total">${_planFmtMinutesHM(mn)}</span>
+            <span class="dt-stat-avg">日均 ${_planFmtMinutesHM(mn / dayDiv)}</span>
+          </div>`;
+        }).join('');
+        const untagHtml = stats.untaggedMinutes
+          ? `<div class="dt-stat-row dt-stat-row-untag">
+               <span class="dt-stat-dot" style="background:transparent;border:1px dashed var(--border-soft);"></span>
+               <span class="dt-stat-name">未打标签</span>
+               <span class="dt-stat-total">${_planFmtMinutesHM(stats.untaggedMinutes)}</span>
+               <span class="dt-stat-avg">日均 ${_planFmtMinutesHM(stats.untaggedMinutes / dayDiv)}</span>
+             </div>`
+          : '';
+        statsHtml = `
+          <div class="dt-section-title" style="margin-top:18px;">周时长统计</div>
+          <div class="dt-stat-meta">基于 ${dayDiv} 天分配 · 同段多 tag 各算一份</div>
+          <div class="dt-stat-list">${rowHtml}${untagHtml}</div>`;
+      }
+    }
     return `
       <div class="sheet-handle"></div>
       <div class="sheet-content dt-sheet">
@@ -13478,6 +13558,7 @@ function openDayTemplatesSheet() {
         <button class="dt-add-btn" data-action="dt-add"><span class="ico-plus"></span>新建模板</button>
         <div class="dt-section-title" style="margin-top:18px;">周分配</div>
         <div class="dt-assign-grid">${assignHtml}</div>
+        ${statsHtml}
         <div class="dt-tip">关闭计划模式后这些设置仍然保留, 下次开启计划模式直接生效。</div>
       </div>
     `;
@@ -13576,10 +13657,16 @@ function openEditDayTemplateSheet(tplId) {
       const height = Math.max(8, (b.endMin - b.startMin) * HOUR_PX / 60);
       const color = b.color || tpl.color || 'var(--accent)';
       const sel = ed.pickedBlockId === b.id ? ' selected' : '';
+      // 块上小 tag 点 (最多 3 个, 多了显示 +N)
+      const blockTags = Array.isArray(b.tags) ? b.tags : [];
+      const tagDotsHtml = blockTags.length
+        ? `<span class="dte-block-tags">${blockTags.slice(0,3).map(tg => `<span class="dte-block-tag-dot" style="background:${esc(colorOfTag(tg))}" title="${esc(tg)}"></span>`).join('')}${blockTags.length > 3 ? `<span class="dte-block-tag-more">+${blockTags.length - 3}</span>` : ''}</span>`
+        : '';
       return `<div class="dte-block${sel}" data-block-id="${esc(b.id)}" style="top:${top}px;height:${height}px;--block-color:${esc(color)};">
         <span class="dte-block-resize dte-block-resize-top" data-resize="start" data-block-id="${esc(b.id)}"></span>
         <span class="dte-block-name">${esc(b.name || '')}</span>
         <span class="dte-block-time">${_fmtMin(b.startMin)} - ${_fmtMin(b.endMin)}</span>
+        ${tagDotsHtml}
         <span class="dte-block-resize dte-block-resize-bot" data-resize="end" data-block-id="${esc(b.id)}"></span>
       </div>`;
     }).join('');
@@ -13588,6 +13675,16 @@ function openEditDayTemplateSheet(tplId) {
     const picked = ed.pickedBlockId ? tpl.blocks.find(b => b.id === ed.pickedBlockId) : null;
     let pickedHtml = '';
     if (picked) {
+      const pickedTags = Array.isArray(picked.tags) ? picked.tags : [];
+      const tagChipsHtml = pickedTags.map(tg => {
+        const c = colorOfTag(tg);
+        return `<span class="dp-tag-chip" style="background:color-mix(in srgb,${esc(c)} 24%,transparent);color:${esc(c)};">
+          <span>${esc(tg)}</span>
+          <button class="dp-tag-chip-x" data-remove-block-tag="${esc(tg)}" title="移除">×</button>
+        </span>`;
+      }).join('');
+      const datalistId = `plan-tpl-tags-${picked.id}`;
+      const suggestList = _planCollectAllTags().filter(t => !pickedTags.includes(t));
       pickedHtml = `
         <div class="dte-edit-panel">
           <div class="dte-edit-row">
@@ -13602,6 +13699,16 @@ function openEditDayTemplateSheet(tplId) {
             <span class="dte-edit-label">颜色</span>
             <div class="ep-color-swatches">
               ${_planSwatchesHtml({ currentColor: picked.color || '', action: 'pick-color', allowNone: true, nativeId: 'dte-block-color-native' })}
+            </div>
+          </div>
+          <div class="dte-edit-row dte-tag-row">
+            <span class="dte-edit-label">标签</span>
+            <div class="dp-tags-row">
+              ${tagChipsHtml}
+              <input type="text" class="dp-tag-add" id="dte-block-add-tag" placeholder="加标签, 回车 (与任务共享)" list="${datalistId}" />
+              <datalist id="${datalistId}">
+                ${suggestList.map(t => `<option value="${esc(t)}"></option>`).join('')}
+              </datalist>
             </div>
           </div>
           <div class="dte-edit-row">
@@ -13729,6 +13836,30 @@ function openEditDayTemplateSheet(tplId) {
           rerender();
         };
       }
+    });
+    // 块加标签 — 共享 state.settings.tags 库
+    const addTagInp = body.querySelector('#dte-block-add-tag');
+    if (addTagInp) addTagInp.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      const name = (addTagInp.value || '').trim();
+      if (!name) return;
+      const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
+      if (!b) return;
+      if (!Array.isArray(b.tags)) b.tags = [];
+      if (!b.tags.includes(name)) b.tags.push(name);
+      _planEnsureTagRegistered(name);
+      pushState();
+      addTagInp.value = '';
+      rerender();
+    });
+    body.querySelectorAll('[data-remove-block-tag]').forEach(el => el.onclick = (ev) => {
+      ev.stopPropagation();
+      const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
+      if (!b || !Array.isArray(b.tags)) return;
+      b.tags = b.tags.filter(t => t !== el.dataset.removeBlockTag);
+      pushState();
+      rerender();
     });
     const delBlockBtn = body.querySelector('[data-del-block]');
     if (delBlockBtn) delBlockBtn.onclick = () => {

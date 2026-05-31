@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-0944';
+const _PSFOCUS_BUILD = '20260531-1007';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12422,6 +12422,36 @@ function _dayTemplateById(id) {
 const _PLAN_PRESET_COLORS = ['#FF6B6B','#FFB86B','#FFD93D','#6BCB77','#4D96FF','#9B5DE5','#FF6FB5','#888888'];
 const _PLAN_WEEKDAYS = ['周一','周二','周三','周四','周五','周六','周日'];
 
+// 通用色板 — 优先用用户在桌面设的 active palette, 没有 fallback 到 preset
+function _planActivePaletteColors() {
+  if (!state || !state.settings) return _PLAN_PRESET_COLORS.slice();
+  const pals = Array.isArray(state.settings.palettes) ? state.settings.palettes : [];
+  if (!pals.length) return _PLAN_PRESET_COLORS.slice();
+  const apId = state.settings.activePaletteId;
+  const ap = pals.find(p => p.id === apId) || pals[0];
+  return (ap && Array.isArray(ap.colors) && ap.colors.length) ? ap.colors.slice() : _PLAN_PRESET_COLORS.slice();
+}
+// 给单选 swatch 列表 + 原生 HSV picker 入口的统一 HTML
+// opts: { currentColor, action (data-action 属性值), allowNone (bool), nativeId (color input id) }
+function _planSwatchesHtml({ currentColor, action, allowNone, nativeId }) {
+  const cols = _planActivePaletteColors();
+  const cur = (currentColor || '').toLowerCase();
+  let html = '';
+  if (allowNone) {
+    html += `<button class="ep-color-swatch ${!currentColor?'active':''}" data-${action}="" title="继承模板色" style="background:transparent;border:1px dashed var(--border-soft);">×</button>`;
+  }
+  for (const c of cols) {
+    const active = cur === c.toLowerCase() ? 'active' : '';
+    html += `<button class="ep-color-swatch ${active}" data-${action}="${esc(c)}" style="background:${esc(c)};" title="${esc(c)}"></button>`;
+  }
+  // 原生颜色选择器 — iOS / Android 系统 picker, 跟其它 mobile 场景一致
+  html += `<label class="ep-color-native-wrap" title="自定义">
+    <input type="color" id="${esc(nativeId)}" value="${esc(currentColor || '#7eb6e8')}" data-${action}-native="1">
+    <span class="ep-color-native-label">+</span>
+  </label>`;
+  return html;
+}
+
 // ===== 时间轴块描述符(对齐桌面 _renderColumnBlocks)— 含 sessions / events / tasks =====
 // 一天范围内取所有"时间块"(非全天的)
 function dayTimedBlockDescs(dayStartMs) {
@@ -13554,13 +13584,10 @@ function openEditDayTemplateSheet(tplId) {
       </div>`;
     }).join('');
 
-    // 选中块的编辑面板
+    // 选中块的编辑面板 — 使用通用色板 (palette + native HSV)
     const picked = ed.pickedBlockId ? tpl.blocks.find(b => b.id === ed.pickedBlockId) : null;
     let pickedHtml = '';
     if (picked) {
-      const presetSwatches = _PLAN_PRESET_COLORS.map(c =>
-        `<button class="ep-color-swatch ${c === (picked.color || tpl.color) ? 'active' : ''}" data-pick-color="${esc(c)}" style="background:${esc(c)};"></button>`
-      ).join('');
       pickedHtml = `
         <div class="dte-edit-panel">
           <div class="dte-edit-row">
@@ -13574,8 +13601,7 @@ function openEditDayTemplateSheet(tplId) {
           <div class="dte-edit-row dte-color-row">
             <span class="dte-edit-label">颜色</span>
             <div class="ep-color-swatches">
-              ${presetSwatches}
-              <button class="ep-color-swatch ${!picked.color ? 'active' : ''}" data-pick-color="" title="继承模板色" style="background:transparent;border:1px dashed var(--border-soft);">默</button>
+              ${_planSwatchesHtml({ currentColor: picked.color || '', action: 'pick-color', allowNone: true, nativeId: 'dte-block-color-native' })}
             </div>
           </div>
           <div class="dte-edit-row">
@@ -13594,7 +13620,7 @@ function openEditDayTemplateSheet(tplId) {
       <div class="dte-meta-row">
         <span class="dte-icon-box" data-action="dte-pick-icon" title="设置图标">${iconHtml}</span>
         <div class="dte-color-row-top">
-          ${_PLAN_PRESET_COLORS.map(c => `<button class="ep-color-swatch ${c === tpl.color ? 'active' : ''}" data-tpl-color="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
+          ${_planSwatchesHtml({ currentColor: tpl.color || '', action: 'tpl-color', allowNone: false, nativeId: 'dte-tpl-color-native' })}
         </div>
       </div>
       <div class="sheet-content dte-content">
@@ -13623,11 +13649,14 @@ function openEditDayTemplateSheet(tplId) {
     const nameInp = body.querySelector('#dte-name');
     if (nameInp) nameInp.oninput = () => { tpl.name = nameInp.value; };
 
-    // 顶部色板
-    body.querySelectorAll('[data-tpl-color]').forEach(el => el.onclick = () => {
-      tpl.color = el.dataset.tplColor;
-      pushState();
-      rerender();
+    // 顶部色板 (palette swatches)
+    body.querySelectorAll('[data-tpl-color]').forEach(el => {
+      // input[type="color"] 用 change, button 用 click
+      if (el.tagName === 'INPUT') {
+        el.onchange = () => { tpl.color = el.value; pushState(); rerender(); };
+      } else {
+        el.onclick = () => { tpl.color = el.dataset.tplColor; pushState(); rerender(); };
+      }
     });
 
     // 图标 — 简单 prompt (mobile 没图标库管理 UI, 至少能粘 svg)
@@ -13681,12 +13710,25 @@ function openEditDayTemplateSheet(tplId) {
         rerender();
       };
     });
-    body.querySelectorAll('[data-pick-color]').forEach(el => el.onclick = () => {
-      const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
-      if (!b) return;
-      b.color = el.dataset.pickColor;
-      pushState();
-      rerender();
+    // 块颜色 swatches + 原生 HSV (input[type=color] 走 change 事件)
+    body.querySelectorAll('[data-pick-color]').forEach(el => {
+      if (el.tagName === 'INPUT') {
+        el.onchange = () => {
+          const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
+          if (!b) return;
+          b.color = el.value;
+          pushState();
+          rerender();
+        };
+      } else {
+        el.onclick = () => {
+          const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
+          if (!b) return;
+          b.color = el.dataset.pickColor;
+          pushState();
+          rerender();
+        };
+      }
     });
     const delBlockBtn = body.querySelector('[data-del-block]');
     if (delBlockBtn) delBlockBtn.onclick = () => {

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1740';
+const _PSFOCUS_BUILD = '20260531-1820';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -10457,11 +10457,55 @@ function bindSheetSwipeClose(body) {
 }
 
 // ----- 详情更多菜单 -----
+// 任务 → 事件 转换 — 复用 schedules/color/tags/note 等; 丢 done/completedOccurrences/subtasks 重挂为 parentEventId
+// (与桌面 _convertTaskEventKind 同语义, 只是命名加 Mobile 前缀避免冲突)
+function _mobileConvertTaskToEvent(task) {
+  if (!task) return null;
+  const newId = genId('e');
+  const now = Date.now();
+  if (!Array.isArray(state.events)) state.events = [];
+  const newEv = {
+    id: newId,
+    title: task.title || '',
+    schedules: Array.isArray(task.schedules) ? task.schedules.slice() : [],
+    color: task.color || '',
+    tags: Array.isArray(task.tags) ? task.tags.slice() : [],
+    icon: task.icon || '',
+    note: task.note || '',
+    images: Array.isArray(task.images) ? task.images.slice() : [],
+    projectId: task.projectId || null,
+    createdAt: task.createdAt || now,
+    updatedAt: now,
+  };
+  // legacy 镜像 — 从 schedules[0] 复制 start/end/allDay (mobile 没 _syncLegacyFromSchedules)
+  const s0 = (newEv.schedules || [])[0];
+  if (s0) {
+    newEv.start = s0.start;
+    newEv.end = (s0.kind === 'range') ? s0.end : null;
+    newEv.allDay = !!s0.allDay;
+  }
+  state.events.push(newEv);
+  // 子任务 (parentTaskId === task.id) 改成 parentEventId
+  for (const sub of (state.tasks || [])) {
+    if (sub.parentTaskId === task.id) {
+      delete sub.parentTaskId;
+      sub.parentEventId = newId;
+    }
+  }
+  state.tasks = (state.tasks || []).filter(x => x.id !== task.id);
+  return newEv;
+}
+
 function openTaskDetailMenu(id, anchor) {
   const t = state.tasks.find(x => x.id === id);
   if (!t) return;
   const items = [
     { label: '保存为模板', icon: 'ico-template', action: () => { closePopover(); openSaveTaskAsTemplateSheet(id); } },
+    { label: '转换为事件', icon: 'ico-calendar', action: () => {
+      closePopover(); closeSheet();
+      const ev = _mobileConvertTaskToEvent(t);
+      if (ev) { pushState(); showToast('已转换为事件'); renderAll(); }
+    }},
   ];
   // 重复任务专属: 一键把过往所有未完成 occurrence 跳过 (已完成的保留)
   const hasRecurring = Array.isArray(t.schedules) && t.schedules.some(s => s && s.repeat && s.repeat !== 'none');
@@ -13204,6 +13248,7 @@ let _calBlockEditDocBound = false;
 function _exitBlockEdit(commit) {
   if (!_calBlockEditing) return;
   const { el, taskId, scheduleId, occStart } = _calBlockEditing;
+  // 跨日拖动: dayMs 在 touchmove 里可能被换成当前 col 的 dayMs
   const dayMs = _calBlockEditing.dayMs;
   if (commit) {
     const t = state.tasks.find(x => x.id === taskId);
@@ -13212,25 +13257,29 @@ function _exitBlockEdit(commit) {
       const newH = parseFloat(el.style.getPropertyValue('--height-min')) || 30;
       const newStart = dayMs + Math.round(newTop) * 60000;
       const newEnd = dayMs + Math.round(newTop + newH) * 60000;
-      const isRecurring = (t.schedules || []).some(s => s && s.repeat && s.repeat !== 'none');
+      const sched = scheduleId ? (t.schedules || []).find(s => s.id === scheduleId)
+                  : ((t.schedules || [])[0]);
+      const isRecurring = sched && sched.repeat && sched.repeat !== 'none';
       if (isRecurring && occStart != null) {
-        showToast('重复任务暂不支持单次编辑');
-      } else {
-        let sched = scheduleId ? (t.schedules || []).find(s => s.id === scheduleId) : null;
-        if (!sched && (t.schedules || []).length) sched = t.schedules[0];
-        if (sched) {
-          sched.start = newStart;
-          sched.end = newEnd;
-          sched.allDay = false;
-          sched.kind = 'range';
-          // 同步 legacy
-          t.start = newStart;
-          t.end = newEnd;
-          t.allDay = false;
-          t.dueAt = newStart;
-          t.updatedAt = Date.now();
-          pushState();
+        // 重复任务: 写 per-occurrence override, key 是原 rule-生成的 occStart
+        if (!sched.occurrenceOverrides || typeof sched.occurrenceOverrides !== 'object') {
+          sched.occurrenceOverrides = {};
         }
+        sched.occurrenceOverrides[occStart] = { start: newStart, end: newEnd };
+        t.updatedAt = Date.now();
+        pushState();
+      } else if (sched) {
+        sched.start = newStart;
+        sched.end = newEnd;
+        sched.allDay = false;
+        sched.kind = 'range';
+        // 同步 legacy
+        t.start = newStart;
+        t.end = newEnd;
+        t.allDay = false;
+        t.dueAt = newStart;
+        t.updatedAt = Date.now();
+        pushState();
       }
     }
   }
@@ -13238,6 +13287,7 @@ function _exitBlockEdit(commit) {
   // 移除手柄
   el.querySelectorAll('.cal-block-handle').forEach(h => h.remove());
   document.body.classList.remove('cal-block-editing');
+  el.style.transform = '';   // 清掉跨日拖动的 translateX
   _calBlockEditing = null;
   if (commit) renderAll();
 }
@@ -13351,6 +13401,25 @@ function bindCalBlockEdit(view) {
           let nt = snap(startTop + dMin);
           nt = Math.max(0, Math.min(24 * 60 - startH, nt));
           setVars(nt, startH);
+          // 跨日拖动 (仅 move; resize 不允许跨日, start>end 没意义) — 用 elementFromPoint 找当前 col
+          // 周视图才有多列; 日视图只有一列, _calBlockEditing.dayMs 不会动
+          const probe = (typeof document !== 'undefined') ? document.elementFromPoint(t.clientX, t.clientY) : null;
+          const overCol = probe && probe.closest ? probe.closest('.cal-week-col[data-day-ms]') : null;
+          if (overCol) {
+            const overDayMs = +overCol.dataset.dayMs;
+            if (Number.isFinite(overDayMs) && overDayMs !== _calBlockEditing.dayMs) {
+              const origDayMs = _calBlockEditing.origDayMs || _calBlockEditing.dayMs;
+              if (!_calBlockEditing.origDayMs) _calBlockEditing.origDayMs = origDayMs;
+              _calBlockEditing.dayMs = overDayMs;
+              // 视觉反馈: translateX 到目标列 (列宽 = 当前 col 宽)
+              const myCol = el.closest('.cal-week-col');
+              if (myCol) {
+                const colW = myCol.getBoundingClientRect().width;
+                const dayDelta = Math.round((overDayMs - origDayMs) / 86400000);
+                el.style.transform = `translateX(${dayDelta * colW}px)`;
+              }
+            }
+          }
         } else if (dragMode === 'resize-top') {
           let nt = snap(startTop + dMin);
           let nh = startH - (nt - startTop);

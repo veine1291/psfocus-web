@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1324';
+const _PSFOCUS_BUILD = '20260531-1338';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -14204,8 +14204,15 @@ function renderCalendarSidebar() {
   }
   if (!tks.length) html += `<div class="empty" style="padding:24px;">这天没有任务</div>`;
 
-  // === 标签 section — 列出全部 tag, 展开看该 tag 下未完成任务 + 关联项目 ===
-  const allTags = _planCollectAllTags();
+  // === 标签 section — 只列规划标签 (dayTemplate 上的 tag), 不混项目自带 tag ===
+  // 项目/任务通过 .tags / .workTags 名字匹配, 由用户自己同名
+  const planTagsSet = new Set();
+  for (const dt of (state.dayTemplates || [])) {
+    for (const b of (dt.blocks || [])) {
+      for (const tg of (b.tags || [])) planTagsSet.add(tg);
+    }
+  }
+  const allTags = Array.from(planTagsSet).sort((a, b) => a.localeCompare(b));
   if (allTags.length) {
     html += `<div class="section-title">标签</div><div class="cal-side-tags">`;
     for (const tg of allTags) {

@@ -7184,6 +7184,7 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   padding: 3px 6px;
   font-size: 10.5px;
   color: var(--block-color);
+  cursor: crosshair;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
 }

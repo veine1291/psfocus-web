@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260530-1808';
+const _PSFOCUS_BUILD = '20260531-0907';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12387,6 +12387,41 @@ function mergeAdjacentSessions(sessions, gapMs) {
   return out;
 }
 
+// =========================================================
+// ===== 计划模式 (Plan Mode) =====
+// state.settings.planMode (bool): 开启后, 日历进入"规划"模式 —
+//   1) 未完成任务渲染为虚线浅色框 (代表"打算做的")
+//   2) 显示日程模板配色段在时间刻度上 (代表"日常节奏")
+//   3) 更多菜单中显示"日程模板规划"入口
+// state.dayTemplates: [{ id, name, color, icon: 'lib:<id>', blocks: [{ id, startMin, endMin, name, color? }] }]
+//   blocks 用分钟数 0..1440, 必须不重叠, 按 startMin 升序; 颜色为空时继承模板色
+// state.dayTemplateAssignments: { '0': tplId, '1': tplId, ..., '6': tplId }
+//   key 是周中的 dow 索引 (周一=0, 周日=6) — 与 startOfWeek 周一首日 / week head '一二三...日' 一致
+// =========================================================
+function _isPlanMode() { return !!(state && state.settings && state.settings.planMode); }
+function _ensurePlanState() {
+  if (!state.settings) state.settings = {};
+  if (!Array.isArray(state.dayTemplates)) state.dayTemplates = [];
+  if (!state.dayTemplateAssignments || typeof state.dayTemplateAssignments !== 'object') {
+    state.dayTemplateAssignments = {};
+  }
+}
+function _dayTemplateForDay(dayMs) {
+  _ensurePlanState();
+  // 与 startOfWeek (周一为首日) 对齐: 周一=0, 周日=6
+  const dow = (new Date(dayMs).getDay() + 6) % 7;
+  const tplId = state.dayTemplateAssignments[String(dow)];
+  if (!tplId) return null;
+  return state.dayTemplates.find(t => t.id === tplId) || null;
+}
+function _dayTemplateById(id) {
+  _ensurePlanState();
+  return state.dayTemplates.find(t => t.id === id) || null;
+}
+// 默认色板 (与项目编辑共用)
+const _PLAN_PRESET_COLORS = ['#FF6B6B','#FFB86B','#FFD93D','#6BCB77','#4D96FF','#9B5DE5','#FF6FB5','#888888'];
+const _PLAN_WEEKDAYS = ['周一','周二','周三','周四','周五','周六','周日'];
+
 // ===== 时间轴块描述符(对齐桌面 _renderColumnBlocks)— 含 sessions / events / tasks =====
 // 一天范围内取所有"时间块"(非全天的)
 function dayTimedBlockDescs(dayStartMs) {
@@ -12533,7 +12568,9 @@ function calBlockHtml(d, dayStartMs) {
     const sidAttr = d.scheduleId ? `data-schedule-id="${esc(d.scheduleId)}"` : '';
     const occAttr = d.occurrenceStart != null ? `data-occurrence-start="${d.occurrenceStart}"` : '';
     const animCls = _animateDoneIds.has(d.taskId) ? ' just-done-anim' : '';
-    return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} style="${styleVars}">
+    // 计划模式: 未完成任务渲染为浅色虚线"规划框", 已完成保持实色块
+    const planCls = (_isPlanMode() && !d.done) ? ' plan-pending' : '';
+    return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}${planCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} style="${styleVars}">
       <div class="cal-task-row">
         <span class="cal-task-check ${d.done?'checked':''}" data-action="cal-task-toggle" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr}></span>
         <div class="cal-task-title">${esc(d.title)}</div>
@@ -12580,6 +12617,21 @@ function calHourLabelsHtml(hours) {
     html += `<div class="cal-hour-label" style="--hour-idx:${h};">${pad(h)}:00</div>`;
   }
   return html;
+}
+
+// 计划模式: 时间刻度旁的"模板颜色条" — 每天的 col 自己渲一条, 显示该天对应模板的 block 配色
+// hours 是 CAL_HOURS (24); dayMs 为该天 startOfDay ms
+function calPlanRailHtml(dayMs) {
+  if (!_isPlanMode()) return '';
+  const tpl = _dayTemplateForDay(dayMs);
+  if (!tpl || !Array.isArray(tpl.blocks) || !tpl.blocks.length) return '';
+  // 每个 block 用 css var(--cal-hour-px) * minute / 60 定位
+  const segs = tpl.blocks.slice().sort((a, b) => a.startMin - b.startMin).map(b => {
+    const color = b.color || tpl.color || 'var(--accent)';
+    return `<div class="cal-plan-rail-seg" title="${esc(b.name || '')} ${pad(Math.floor(b.startMin/60))}:${pad(b.startMin%60)}-${pad(Math.floor(b.endMin/60))}:${pad(b.endMin%60)}"
+      style="--seg-top-min:${b.startMin};--seg-height-min:${b.endMin - b.startMin};background:${esc(color)}"></div>`;
+  }).join('');
+  return `<div class="cal-plan-rail" aria-hidden="true">${segs}</div>`;
 }
 
 const CAL_HOURS = 24;
@@ -13145,6 +13197,7 @@ function renderDayView(view) {
         <div class="cal-week-cols">
           <div class="cal-week-col cal-day-col" data-day-ms="${dayStart}">
             ${calHourLinesHtml(CAL_HOURS)}
+            ${calPlanRailHtml(dayStart)}
             ${blocksHtml}
             ${isToday ? renderNowLineHtml() : ''}
           </div>
@@ -13214,6 +13267,7 @@ function renderWeekView(view) {
     const descs = assignLanes(dayTimedBlockDescs(dStart));
     return `<div class="cal-week-col ${isToday?'today':''}" data-day-ms="${dStart}">
       ${calHourLinesHtml(CAL_HOURS)}
+      ${calPlanRailHtml(dStart)}
       ${descs.map(de => calBlockHtml(de, dStart)).join('')}
       ${isToday ? renderNowLineHtml() : ''}
     </div>`;
@@ -13301,9 +13355,19 @@ function openCalendarMoreMenu() {
   const showRepeat = s.calShowAllRepeat !== false;
   const colorByTag = (s.calColorMode || 'project') === 'tag';
   const mergeGap   = (typeof s.calMergeGapMin === 'number') ? s.calMergeGapMin : 15;
+  const planMode   = !!s.planMode;
   // 视图切换在左上 pill 已经能用,这里不重复
   const items = [
     { label: '展开任务侧栏', icon: 'ico-list', action: () => { closePopover(); openCalendarSidebar(); } },
+    { divider: true },
+    // 计划模式开关 — 关闭时下方"日程模板规划"入口隐藏 (复杂↔简洁两种模式)
+    { toggle: true, label: '计划模式', icon: 'ico-target', stateText: planMode ? '已开' : '',
+      action: () => { s.planMode = !planMode; pushState(); closePopover(); renderAll(); } },
+  ];
+  if (planMode) {
+    items.push({ label: '日程模板规划', icon: 'ico-calendar', action: () => { closePopover(); openDayTemplatesSheet(); } });
+  }
+  items.push(
     { divider: true },
     { toggle: true, label: '显示已完成',       icon: 'ico-check',  stateText: showDone   ? '已开' : '', action: () => { s.calShowDone      = !showDone;   pushState(); closePopover(); renderAll(); } },
     { toggle: true, label: '显示专注记录',     icon: 'ico-clock',  stateText: showFocus  ? '已开' : '', action: () => { s.calShowFocus     = !showFocus;  pushState(); closePopover(); renderAll(); } },
@@ -13317,8 +13381,449 @@ function openCalendarMoreMenu() {
       ui.calSelectedDay = startOfDay(new Date()).getTime();
       saveUI(); closePopover(); renderAll();
     }},
-  ];
+  );
   showPopover(items);
+}
+
+// =========================================================
+// ===== 日程模板规划 sheet (计划模式专属) =====
+// =========================================================
+function openDayTemplatesSheet() {
+  _ensurePlanState();
+  const renderBody = () => {
+    const tpls = state.dayTemplates;
+    const assigns = state.dayTemplateAssignments;
+    const tplListHtml = tpls.length
+      ? tpls.map(t => {
+          const iconHtml = renderCustomIconHtml(t.icon, '', t.color) || `<span class="ico-calendar" style="color:${esc(t.color || 'var(--accent)')}"></span>`;
+          // 占用 weekday 数
+          const usedDays = _PLAN_WEEKDAYS.filter((_, i) => assigns[String(i)] === t.id);
+          const usedText = usedDays.length ? usedDays.join(' ') : '未分配';
+          return `<button class="dt-item" data-edit-tpl="${esc(t.id)}">
+            <span class="dt-item-icon">${iconHtml}</span>
+            <span class="dt-item-mid">
+              <span class="dt-item-name">${esc(t.name || '未命名模板')}</span>
+              <span class="dt-item-sub">${esc(usedText)} · ${t.blocks ? t.blocks.length : 0} 段</span>
+            </span>
+            <span class="ico-chevron-right dt-item-arrow"></span>
+          </button>`;
+        }).join('')
+      : '<div class="dt-empty">还没有模板,点下方添加</div>';
+    // 周分配 — 每个 weekday 显示一个 chip, 点 chip 改模板
+    const assignHtml = _PLAN_WEEKDAYS.map((wd, i) => {
+      const tplId = assigns[String(i)];
+      const tpl = tplId ? state.dayTemplates.find(x => x.id === tplId) : null;
+      const dotColor = tpl ? (tpl.color || 'var(--accent)') : 'transparent';
+      const tplName = tpl ? (tpl.name || '未命名') : '无';
+      return `<button class="dt-assign-row" data-assign-dow="${i}">
+        <span class="dt-assign-wd">${esc(wd)}</span>
+        <span class="dt-assign-dot" style="background:${esc(dotColor)};${tpl?'':'border:1px dashed var(--border-soft);'}"></span>
+        <span class="dt-assign-name ${tpl?'':'dt-mute'}">${esc(tplName)}</span>
+        <span class="ico-chevron-right dt-item-arrow"></span>
+      </button>`;
+    }).join('');
+    return `
+      <div class="sheet-handle"></div>
+      <div class="sheet-content dt-sheet">
+        <div class="dt-section-title">模板</div>
+        <div class="dt-list">${tplListHtml}</div>
+        <button class="dt-add-btn" data-action="dt-add"><span class="ico-plus"></span>新建模板</button>
+        <div class="dt-section-title" style="margin-top:18px;">周分配</div>
+        <div class="dt-assign-list">${assignHtml}</div>
+        <div class="dt-tip">关闭计划模式后这些设置仍然保留, 下次开启计划模式直接生效。</div>
+      </div>
+    `;
+  };
+  const bindAll = (body) => {
+    body.querySelectorAll('[data-edit-tpl]').forEach(el => el.onclick = () => {
+      openEditDayTemplateSheet(el.dataset.editTpl);
+    });
+    const addBtn = body.querySelector('[data-action="dt-add"]');
+    if (addBtn) addBtn.onclick = () => {
+      const tpl = {
+        id: 'dt-' + Math.random().toString(36).slice(2, 10),
+        name: '新模板',
+        color: _PLAN_PRESET_COLORS[state.dayTemplates.length % _PLAN_PRESET_COLORS.length],
+        icon: '',
+        blocks: [],
+      };
+      state.dayTemplates.push(tpl);
+      pushState();
+      openEditDayTemplateSheet(tpl.id);
+    };
+    body.querySelectorAll('[data-assign-dow]').forEach(el => el.onclick = () => {
+      const dow = el.dataset.assignDow;
+      openAssignTemplateForDowPopover(dow, el);
+    });
+  };
+  showSheet(`<div>${renderBody()}</div>`, (body) => bindAll(body));
+}
+
+function openAssignTemplateForDowPopover(dow, anchorEl) {
+  _ensurePlanState();
+  const items = [];
+  const curId = state.dayTemplateAssignments[String(dow)];
+  items.push({ label: '不使用模板', icon: 'ico-x', stateText: !curId ? '已选' : '', action: () => {
+    delete state.dayTemplateAssignments[String(dow)];
+    pushState(); closePopover();
+    openDayTemplatesSheet();
+  } });
+  if (state.dayTemplates.length) items.push({ divider: true });
+  for (const t of state.dayTemplates) {
+    const dotHtml = `<span class="color-dot" style="background:${esc(t.color || 'var(--accent)')}"></span>`;
+    items.push({
+      label: t.name || '未命名',
+      iconHtml: dotHtml,
+      stateText: curId === t.id ? '已选' : '',
+      action: () => {
+        state.dayTemplateAssignments[String(dow)] = t.id;
+        pushState(); closePopover();
+        openDayTemplatesSheet();
+      },
+    });
+  }
+  showPopover(items, { anchor: anchorEl });
+}
+
+// 单模板编辑 sheet — 24h 时间轴拖动划区
+function openEditDayTemplateSheet(tplId) {
+  _ensurePlanState();
+  const tpl = _dayTemplateById(tplId);
+  if (!tpl) { showToast('模板不存在'); return; }
+  if (!Array.isArray(tpl.blocks)) tpl.blocks = [];
+
+  // 像素/分钟 = HOUR_PX / 60; HOUR_PX 取窄一些, 24h 视图能塞进 sheet 不过分长
+  const HOUR_PX = 26;
+  const TOTAL_PX = HOUR_PX * 24;
+
+  // 拖动 / 编辑 状态 (局部)
+  const ed = {
+    pickedBlockId: null,   // 当前选中的 block (用于显示编辑面板)
+    dragMode: null,        // 'create' | 'move' | 'resize-start' | 'resize-end' | null
+    dragBlockId: null,
+    dragStartY: 0,
+    dragStartMin: 0,
+    dragOrigStart: 0,
+    dragOrigEnd: 0,
+    // 临时新建块的 min/max
+    newStartMin: 0,
+    newEndMin: 0,
+  };
+
+  const _snap = (min) => Math.max(0, Math.min(1440, Math.round(min / 5) * 5));
+  const _fmtMin = (min) => `${pad(Math.floor(min / 60))}:${pad(min % 60)}`;
+
+  const renderBody = () => {
+    const iconHtml = renderCustomIconHtml(tpl.icon, '', tpl.color) || `<span class="ico-calendar" style="color:${esc(tpl.color || 'var(--accent)')}"></span>`;
+    // 24h hour 线
+    let hourLinesHtml = '';
+    for (let h = 0; h <= 24; h++) {
+      hourLinesHtml += `<div class="dte-hour-line" style="top:${h * HOUR_PX}px;"></div>`;
+      if (h < 24) hourLinesHtml += `<div class="dte-hour-label" style="top:${h * HOUR_PX}px;">${pad(h)}</div>`;
+    }
+    // 已存在的块
+    const blocksHtml = tpl.blocks.slice().sort((a, b) => a.startMin - b.startMin).map(b => {
+      const top = b.startMin * HOUR_PX / 60;
+      const height = Math.max(8, (b.endMin - b.startMin) * HOUR_PX / 60);
+      const color = b.color || tpl.color || 'var(--accent)';
+      const sel = ed.pickedBlockId === b.id ? ' selected' : '';
+      return `<div class="dte-block${sel}" data-block-id="${esc(b.id)}" style="top:${top}px;height:${height}px;--block-color:${esc(color)};">
+        <span class="dte-block-resize dte-block-resize-top" data-resize="start" data-block-id="${esc(b.id)}"></span>
+        <span class="dte-block-name">${esc(b.name || '')}</span>
+        <span class="dte-block-time">${_fmtMin(b.startMin)} - ${_fmtMin(b.endMin)}</span>
+        <span class="dte-block-resize dte-block-resize-bot" data-resize="end" data-block-id="${esc(b.id)}"></span>
+      </div>`;
+    }).join('');
+
+    // 选中块的编辑面板
+    const picked = ed.pickedBlockId ? tpl.blocks.find(b => b.id === ed.pickedBlockId) : null;
+    let pickedHtml = '';
+    if (picked) {
+      const presetSwatches = _PLAN_PRESET_COLORS.map(c =>
+        `<button class="ep-color-swatch ${c === (picked.color || tpl.color) ? 'active' : ''}" data-pick-color="${esc(c)}" style="background:${esc(c)};"></button>`
+      ).join('');
+      pickedHtml = `
+        <div class="dte-edit-panel">
+          <div class="dte-edit-row">
+            <input class="dte-edit-name" type="text" value="${esc(picked.name || '')}" placeholder="时间段名称, 如 工作 / 午休">
+          </div>
+          <div class="dte-edit-row dte-edit-time-row">
+            <input class="dte-edit-time" type="time" data-time-field="start" value="${_fmtMin(picked.startMin)}">
+            <span class="dte-edit-time-sep">—</span>
+            <input class="dte-edit-time" type="time" data-time-field="end" value="${_fmtMin(picked.endMin)}">
+          </div>
+          <div class="dte-edit-row dte-color-row">
+            <span class="dte-edit-label">颜色</span>
+            <div class="ep-color-swatches">
+              ${presetSwatches}
+              <button class="ep-color-swatch ${!picked.color ? 'active' : ''}" data-pick-color="" title="继承模板色" style="background:transparent;border:1px dashed var(--border-soft);">默</button>
+            </div>
+          </div>
+          <div class="dte-edit-row">
+            <button class="dte-del-block" data-del-block="${esc(picked.id)}">删除该时间段</button>
+          </div>
+        </div>`;
+    }
+
+    return `
+      <div class="sheet-handle"></div>
+      <div class="dte-head">
+        <button class="dte-back" data-action="dte-back">< 模板列表</button>
+        <input class="dte-name-input" id="dte-name" type="text" value="${esc(tpl.name || '')}" placeholder="模板名" />
+        <button class="dte-del-tpl" data-action="dte-del-tpl">删除</button>
+      </div>
+      <div class="dte-meta-row">
+        <span class="dte-icon-box" data-action="dte-pick-icon" title="设置图标">${iconHtml}</span>
+        <div class="dte-color-row-top">
+          ${_PLAN_PRESET_COLORS.map(c => `<button class="ep-color-swatch ${c === tpl.color ? 'active' : ''}" data-tpl-color="${esc(c)}" style="background:${esc(c)};"></button>`).join('')}
+        </div>
+      </div>
+      <div class="sheet-content dte-content">
+        <div class="dte-tip">长按空白区域拖动 → 划出新时间段; 拖块顶/底可调整起止</div>
+        <div class="dte-timeline" id="dte-timeline" style="height:${TOTAL_PX}px;">
+          ${hourLinesHtml}
+          ${blocksHtml}
+        </div>
+        ${pickedHtml}
+      </div>
+    `;
+  };
+
+  const rerender = () => {
+    const sb = $('sheet-body');
+    if (!sb) return;
+    sb.innerHTML = `<div>${renderBody()}</div>`;
+    bindAll(sb);
+  };
+
+  const bindAll = (body) => {
+    // 顶部模板名 input
+    const nameInp = body.querySelector('#dte-name');
+    if (nameInp) nameInp.oninput = () => { tpl.name = nameInp.value; };
+
+    // 顶部色板
+    body.querySelectorAll('[data-tpl-color]').forEach(el => el.onclick = () => {
+      tpl.color = el.dataset.tplColor;
+      pushState();
+      rerender();
+    });
+
+    // 图标 — 简单 prompt (mobile 没图标库管理 UI, 至少能粘 svg)
+    const iconBox = body.querySelector('[data-action="dte-pick-icon"]');
+    if (iconBox) iconBox.onclick = () => openTemplateIconPicker(tpl, () => {
+      pushState();
+      // picker 切走 sheet 内容, 用 openEditDayTemplateSheet 重新打开本 sheet
+      openEditDayTemplateSheet(tpl.id);
+    });
+
+    // 返回 & 删模板
+    const backBtn = body.querySelector('[data-action="dte-back"]');
+    if (backBtn) backBtn.onclick = () => { pushState(); openDayTemplatesSheet(); };
+    const delTplBtn = body.querySelector('[data-action="dte-del-tpl"]');
+    if (delTplBtn) delTplBtn.onclick = () => {
+      if (!confirm('删除该模板?周分配中引用它的日子会改为"无模板"。')) return;
+      state.dayTemplates = state.dayTemplates.filter(t => t.id !== tpl.id);
+      // 清掉对该模板的分配
+      Object.keys(state.dayTemplateAssignments).forEach(k => {
+        if (state.dayTemplateAssignments[k] === tpl.id) delete state.dayTemplateAssignments[k];
+      });
+      pushState();
+      openDayTemplatesSheet();
+    };
+
+    // 块点击 → 选中
+    body.querySelectorAll('.dte-block').forEach(el => {
+      el.addEventListener('click', (ev) => {
+        // resize 把子上的 click 不冒到这里, 但 safari 偶尔冒, 加守门
+        if (ev.target && ev.target.classList && ev.target.classList.contains('dte-block-resize')) return;
+        ed.pickedBlockId = el.dataset.blockId;
+        rerender();
+      });
+    });
+
+    // 编辑面板内的输入
+    const editNameInp = body.querySelector('.dte-edit-name');
+    if (editNameInp) editNameInp.oninput = () => {
+      const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
+      if (b) b.name = editNameInp.value;
+    };
+    body.querySelectorAll('[data-time-field]').forEach(inp => {
+      inp.onchange = () => {
+        const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
+        if (!b) return;
+        const [hh, mm] = inp.value.split(':').map(x => parseInt(x, 10));
+        const v = (hh * 60 + mm) || 0;
+        if (inp.dataset.timeField === 'start') b.startMin = Math.min(v, b.endMin - 5);
+        else b.endMin = Math.max(v, b.startMin + 5);
+        pushState();
+        rerender();
+      };
+    });
+    body.querySelectorAll('[data-pick-color]').forEach(el => el.onclick = () => {
+      const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
+      if (!b) return;
+      b.color = el.dataset.pickColor;
+      pushState();
+      rerender();
+    });
+    const delBlockBtn = body.querySelector('[data-del-block]');
+    if (delBlockBtn) delBlockBtn.onclick = () => {
+      tpl.blocks = tpl.blocks.filter(x => x.id !== ed.pickedBlockId);
+      ed.pickedBlockId = null;
+      pushState();
+      rerender();
+    };
+
+    // 时间轴 — 空白拖动 = 创建; resize 手柄拖动 = 调起止
+    const timeline = body.querySelector('#dte-timeline');
+    if (!timeline) return;
+    const yToMin = (clientY) => {
+      const rect = timeline.getBoundingClientRect();
+      const y = clientY - rect.top;
+      return _snap(y / HOUR_PX * 60);
+    };
+    let activePointerId = null;
+    let previewEl = null;
+    const onPointerDown = (ev) => {
+      // resize 手柄优先
+      const handle = ev.target.closest && ev.target.closest('.dte-block-resize');
+      if (handle) {
+        const b = tpl.blocks.find(x => x.id === handle.dataset.blockId);
+        if (!b) return;
+        ed.dragMode = handle.dataset.resize === 'start' ? 'resize-start' : 'resize-end';
+        ed.dragBlockId = b.id;
+        ed.dragOrigStart = b.startMin; ed.dragOrigEnd = b.endMin;
+        activePointerId = ev.pointerId;
+        try { timeline.setPointerCapture(activePointerId); } catch (_) {}
+        ev.preventDefault();
+        return;
+      }
+      // 点到已存在块上 → 不创建 (block 自身 click 会处理选中)
+      if (ev.target.closest && ev.target.closest('.dte-block')) return;
+      // 空白拖动 = 创建新块
+      ed.dragMode = 'create';
+      ed.newStartMin = yToMin(ev.clientY);
+      ed.newEndMin = ed.newStartMin + 30;
+      activePointerId = ev.pointerId;
+      try { timeline.setPointerCapture(activePointerId); } catch (_) {}
+      // 预览块
+      previewEl = document.createElement('div');
+      previewEl.className = 'dte-block dte-block-preview';
+      previewEl.style.setProperty('--block-color', tpl.color || 'var(--accent)');
+      timeline.appendChild(previewEl);
+      _updatePreview();
+      ev.preventDefault();
+    };
+    const _updatePreview = () => {
+      if (!previewEl) return;
+      const a = Math.min(ed.newStartMin, ed.newEndMin);
+      const b = Math.max(ed.newStartMin, ed.newEndMin);
+      previewEl.style.top = (a * HOUR_PX / 60) + 'px';
+      previewEl.style.height = Math.max(8, (b - a) * HOUR_PX / 60) + 'px';
+      previewEl.textContent = `${_fmtMin(a)} - ${_fmtMin(b)}`;
+    };
+    const onPointerMove = (ev) => {
+      if (activePointerId == null || ev.pointerId !== activePointerId) return;
+      const min = yToMin(ev.clientY);
+      if (ed.dragMode === 'create') {
+        ed.newEndMin = min;
+        _updatePreview();
+      } else if (ed.dragMode === 'resize-start') {
+        const b = tpl.blocks.find(x => x.id === ed.dragBlockId);
+        if (b) { b.startMin = Math.min(min, b.endMin - 5); _liveRedrawBlocks(); }
+      } else if (ed.dragMode === 'resize-end') {
+        const b = tpl.blocks.find(x => x.id === ed.dragBlockId);
+        if (b) { b.endMin = Math.max(min, b.startMin + 5); _liveRedrawBlocks(); }
+      }
+    };
+    const _liveRedrawBlocks = () => {
+      // 只更新尺寸, 不重渲整个 sheet (避免拖动期间 layout 跳)
+      timeline.querySelectorAll('.dte-block:not(.dte-block-preview)').forEach(el => {
+        const b = tpl.blocks.find(x => x.id === el.dataset.blockId);
+        if (!b) return;
+        el.style.top = (b.startMin * HOUR_PX / 60) + 'px';
+        el.style.height = Math.max(8, (b.endMin - b.startMin) * HOUR_PX / 60) + 'px';
+        const tEl = el.querySelector('.dte-block-time');
+        if (tEl) tEl.textContent = `${_fmtMin(b.startMin)} - ${_fmtMin(b.endMin)}`;
+      });
+    };
+    const onPointerUp = (ev) => {
+      if (activePointerId == null || ev.pointerId !== activePointerId) return;
+      try { timeline.releasePointerCapture(activePointerId); } catch (_) {}
+      activePointerId = null;
+      if (ed.dragMode === 'create') {
+        const a = Math.min(ed.newStartMin, ed.newEndMin);
+        const b = Math.max(ed.newStartMin, ed.newEndMin);
+        if (b - a >= 5) {
+          const nb = {
+            id: 'b-' + Math.random().toString(36).slice(2, 8),
+            startMin: a, endMin: b, name: '', color: '',
+          };
+          tpl.blocks.push(nb);
+          ed.pickedBlockId = nb.id;
+          pushState();
+        }
+        if (previewEl && previewEl.parentNode) previewEl.parentNode.removeChild(previewEl);
+        previewEl = null;
+        rerender();
+      } else if (ed.dragMode === 'resize-start' || ed.dragMode === 'resize-end') {
+        pushState();
+        rerender();
+      }
+      ed.dragMode = null;
+      ed.dragBlockId = null;
+    };
+    timeline.addEventListener('pointerdown', onPointerDown);
+    timeline.addEventListener('pointermove', onPointerMove);
+    timeline.addEventListener('pointerup', onPointerUp);
+    timeline.addEventListener('pointercancel', onPointerUp);
+  };
+
+  showSheet(`<div>${renderBody()}</div>`, (body) => bindAll(body));
+}
+
+// 模板图标 — 简易 picker: 选已有 lib 项 / 粘贴 SVG 新建
+function openTemplateIconPicker(tpl, onDone) {
+  if (!state.settings) state.settings = {};
+  if (!Array.isArray(state.settings.iconLib)) state.settings.iconLib = [];
+  const lib = state.settings.iconLib;
+  const libHtml = lib.length
+    ? lib.map(it => {
+        const sel = tpl.icon === ('lib:' + it.id) ? ' selected' : '';
+        return `<button class="dt-icon-pick${sel}" data-pick-icon="lib:${esc(it.id)}" title="${esc(it.name || '')}">${it.content}</button>`;
+      }).join('')
+    : '<div class="dt-icon-empty">图标库为空,粘贴 SVG 添加</div>';
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="dt-section-title">选择图标</div>
+      <div class="dt-icon-grid">
+        ${libHtml}
+        <button class="dt-icon-pick dt-icon-clear" data-pick-icon="" title="无图标">×</button>
+      </div>
+      <div class="dt-section-title" style="margin-top:18px;">粘贴新 SVG</div>
+      <textarea id="dt-svg-input" class="dt-svg-input" rows="4" placeholder="<svg ...>...</svg>"></textarea>
+      <button class="dt-icon-add" data-action="dt-icon-add">添加到图标库</button>
+    </div>
+  `, (body) => {
+    body.querySelectorAll('[data-pick-icon]').forEach(el => el.onclick = () => {
+      tpl.icon = el.dataset.pickIcon;
+      if (typeof onDone === 'function') onDone();   // 上层重新 showSheet 覆盖 picker
+    });
+    const addBtn = body.querySelector('[data-action="dt-icon-add"]');
+    if (addBtn) addBtn.onclick = () => {
+      const txt = (body.querySelector('#dt-svg-input').value || '').trim();
+      if (!txt || !/<svg[\s\S]*<\/svg>/i.test(txt)) { showToast('请粘贴完整 SVG 标记'); return; }
+      const it = {
+        id: 'ic-' + Math.random().toString(36).slice(2, 8),
+        name: '自定义',
+        content: txt,
+      };
+      lib.push(it);
+      tpl.icon = 'lib:' + it.id;
+      if (typeof onDone === 'function') onDone();
+    };
+  });
 }
 
 // ----- 右抽屉(任务侧栏)-----

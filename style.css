@@ -7091,3 +7091,328 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   border-radius: 6px; color: var(--text); font-size: 13px; cursor: pointer;
 }
 .settings-mini-btn:active { background: var(--bg-hover); }
+
+/* =========================================================
+   计划模式 (Plan Mode) — 日历额外渲染层
+   ========================================================= */
+
+/* 未完成任务: 浅色虚线"规划框" — 同色, 但底色更淡 + 虚线边框, 暗示"这是打算" */
+.cal-block-task.plan-pending {
+  background: color-mix(in srgb, var(--block-color) 4%, transparent);
+  border-style: dashed;
+  border-width: 1px;
+  opacity: 0.85;
+}
+.cal-block-task.plan-pending .cal-task-title { font-weight: 400; }
+.cal-block-task.plan-pending .cal-task-check { border-style: dashed; }
+
+/* 时间刻度旁的"模板颜色条" — 贴在 col 左侧, 不拦截点击 */
+.cal-plan-rail {
+  position: absolute;
+  left: 0; top: 0;
+  width: 3px;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+.cal-plan-rail-seg {
+  position: absolute;
+  left: 0; width: 3px;
+  top: calc(var(--seg-top-min, 0) * var(--cal-hour-px, 44) / 60 * 1px);
+  height: calc(var(--seg-height-min, 60) * var(--cal-hour-px, 44) / 60 * 1px);
+  border-radius: 2px;
+  opacity: 0.7;
+}
+
+/* =========================================================
+   日程模板规划 sheet
+   ========================================================= */
+.dt-sheet { padding-bottom: 16px; }
+.dt-section-title {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 4px 8px;
+}
+.dt-list { display: flex; flex-direction: column; gap: 6px; }
+.dt-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-faint);
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+}
+.dt-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.dt-item:active { background: var(--bg-hover); }
+.dt-item-icon {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.dt-item-icon .nav-icon-svg, .dt-item-icon .nav-icon-svg svg,
+.dt-item-icon [class^="ico-"] { width: 20px; height: 20px; }
+.dt-item-mid { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dt-item-name { font-size: 14px; color: var(--text); }
+.dt-item-sub  { font-size: 11.5px; color: var(--text-faint); }
+.dt-item-arrow { width: 14px; height: 14px; color: var(--text-mute); flex-shrink: 0; }
+
+.dt-add-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.dt-add-btn:active { background: var(--bg-hover); }
+.dt-add-btn .ico-plus { width: 14px; height: 14px; }
+
+.dt-assign-list { display: flex; flex-direction: column; gap: 4px; }
+.dt-assign-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+.dt-assign-row:active { background: var(--bg-hover); }
+.dt-assign-wd { font-size: 13px; color: var(--text); min-width: 36px; }
+.dt-assign-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.dt-assign-name { flex: 1; font-size: 13px; color: var(--text); }
+.dt-mute { color: var(--text-faint); }
+.dt-tip {
+  margin-top: 14px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  padding: 0 4px;
+  line-height: 1.5;
+}
+
+/* =========================================================
+   单模板编辑 sheet (24h timeline)
+   ========================================================= */
+.dte-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 14px 6px;
+}
+.dte-back, .dte-del-tpl {
+  background: none; border: none; color: var(--text-dim);
+  font-size: 13px; cursor: pointer; padding: 4px 6px;
+  flex-shrink: 0;
+}
+.dte-del-tpl { color: var(--danger, #e57373); }
+.dte-name-input {
+  flex: 1;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+}
+.dte-name-input:focus { border-color: var(--accent); }
+.dte-meta-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 14px 8px;
+}
+.dte-icon-box {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-section);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.dte-icon-box .nav-icon-svg, .dte-icon-box .nav-icon-svg svg,
+.dte-icon-box [class^="ico-"] { width: 20px; height: 20px; }
+.dte-color-row-top { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+
+.dte-content { padding: 6px 14px 16px; }
+.dte-tip { font-size: 11px; color: var(--text-faint); padding: 0 0 8px; line-height: 1.4; }
+
+.dte-timeline {
+  position: relative;
+  margin-left: 32px;   /* 给 hour-label 留位 */
+  background: var(--bg-section);
+  border-radius: 8px;
+  overflow: hidden;
+  touch-action: none;   /* pointermove 不要被滚动吃掉 */
+}
+.dte-hour-line {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.06);
+  pointer-events: none;
+}
+[data-theme="dark"] .dte-hour-line { background: rgba(255, 255, 255, 0.07); }
+.dte-hour-label {
+  position: absolute;
+  left: -32px; width: 28px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+.dte-block {
+  --block-color: var(--accent);
+  position: absolute;
+  left: 4px; right: 4px;
+  background: color-mix(in srgb, var(--block-color) 18%, transparent);
+  border: 1.5px solid var(--block-color);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 10.5px;
+  color: var(--block-color);
+  cursor: pointer;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  justify-content: center;
+}
+.dte-block.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  z-index: 2;
+}
+.dte-block.dte-block-preview {
+  opacity: 0.5;
+  border-style: dashed;
+  pointer-events: none;
+}
+.dte-block-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dte-block-time { font-size: 9px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.dte-block-resize {
+  position: absolute;
+  left: 0; right: 0;
+  height: 10px;
+  cursor: ns-resize;
+  z-index: 3;
+  background: transparent;
+}
+.dte-block-resize-top { top: -2px; }
+.dte-block-resize-bot { bottom: -2px; }
+
+.dte-edit-panel {
+  margin-top: 14px;
+  padding: 10px;
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.dte-edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dte-edit-name {
+  flex: 1; width: 100%;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+}
+.dte-edit-name:focus { border-color: var(--accent); }
+.dte-edit-time {
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.dte-edit-time-sep { color: var(--text-faint); }
+.dte-edit-time-row { gap: 6px; }
+.dte-edit-label { font-size: 12px; color: var(--text-dim); min-width: 28px; }
+.dte-color-row .ep-color-swatches { gap: 6px; }
+.dte-del-block {
+  width: 100%;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--border-soft);
+  color: var(--danger, #e57373);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.dte-del-block:active { background: color-mix(in srgb, var(--danger, #e57373) 8%, transparent); }
+
+/* 图标 picker */
+.dt-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+.dt-icon-pick {
+  aspect-ratio: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 6px;
+  overflow: hidden;
+}
+.dt-icon-pick.selected { outline: 2px solid var(--accent); }
+.dt-icon-pick svg { width: 100%; height: 100%; }
+.dt-icon-pick.dt-icon-clear { color: var(--text-faint); font-size: 18px; }
+.dt-icon-empty {
+  grid-column: 1 / -1;
+  padding: 18px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-faint);
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+}
+.dt-svg-input {
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+.dt-icon-add {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}

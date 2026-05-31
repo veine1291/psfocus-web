@@ -1474,6 +1474,46 @@ body.sum-editor-open { overflow: hidden; }
   outline: none;
   font-family: inherit;
 }
+/* 每 N 天 副控件 */
+.sa-n-row {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+.sa-n-input {
+  width: 56px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: center;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.sa-n-input:focus { border-color: var(--accent); }
+/* 每周指定天 chips */
+.sa-wd-row { align-items: flex-start; padding-top: 4px; }
+.sa-wd-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.sa-wd-chip {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.sa-wd-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.sa-wd-chip:active { transform: scale(0.92); }
 .sa-actions {
   display: flex;
   justify-content: flex-end;

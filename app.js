@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1520';
+const _PSFOCUS_BUILD = '20260531-1552';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12279,11 +12279,22 @@ function expandItemOccurrencesInDay(item, dayStart, dayEnd) {
       occ.setHours(anchorD.getHours(), anchorD.getMinutes(), 0, 0);
       if (occ.getTime() >= s.start) {
         const dow = dayD.getDay();
-        const hit = (repeat === 'daily')   ? true
-                  : (repeat === 'weekly')  ? (anchorD.getDay() === dow)
-                  : (repeat === 'monthly') ? (anchorD.getDate() === dayD.getDate())
-                  : (repeat === 'workday') ? (dow !== 0 && dow !== 6)
-                  : false;
+        let hit;
+        if (repeat === 'daily')   hit = true;
+        else if (repeat === 'weekly')  hit = (anchorD.getDay() === dow);
+        else if (repeat === 'monthly') hit = (anchorD.getDate() === dayD.getDate());
+        else if (repeat === 'workday') hit = (dow !== 0 && dow !== 6);
+        else if (repeat === 'every-n-days') {
+          const n = Math.max(1, Math.min(365, parseInt(s.repeatN, 10) || 2));
+          const anchorDay = startOfDay(new Date(s.start)).getTime();
+          const diff = Math.round((dayStart - anchorDay) / 86400000);
+          hit = (diff >= 0) && (diff % n === 0);
+        }
+        else if (repeat === 'weekdays') {
+          const set = new Set((Array.isArray(s.weekdays) ? s.weekdays : []).map(n => +n));
+          hit = set.has(dow);
+        }
+        else hit = false;
         if (hit) pushOcc(occ.getTime());
       }
     }
@@ -12364,17 +12375,33 @@ function _nextPendingOccurrence(t) {
   }
   return bestTs;
 }
+// 每周指定天 label: weekdays=[1,3,5] → "每周一三五" (周一→周日 顺序)
+function _formatWeekdaysLabel(weekdays) {
+  if (!Array.isArray(weekdays) || !weekdays.length) return '每周?';
+  const chars = '日一二三四五六';
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const set = new Set(weekdays.map(n => +n));
+  let s = '';
+  for (const d of order) if (set.has(d)) s += chars[d];
+  return '每周' + s;
+}
+function _repeatLabelOfSched(s) {
+  if (!s.repeat || s.repeat === 'none') return '';
+  if (s.repeat === 'daily')   return '每天';
+  if (s.repeat === 'weekly')  return '每周';
+  if (s.repeat === 'monthly') return '每月';
+  if (s.repeat === 'workday') return '工作日';
+  if (s.repeat === 'every-n-days') return `每${parseInt(s.repeatN, 10) || 2}天`;
+  if (s.repeat === 'weekdays') return _formatWeekdaysLabel(s.weekdays);
+  return s.repeat;
+}
 function fmtSchedule(s) {
   if (!s || !s.start) return '';
   const d = new Date(s.start);
   const pad = n => String(n).padStart(2, '0');
   const dateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-  const repeatLabel = (s.repeat && s.repeat !== 'none') ? ` · ${
-    s.repeat === 'daily' ? '每天' :
-    s.repeat === 'weekly' ? '每周' :
-    s.repeat === 'monthly' ? '每月' :
-    s.repeat === 'workday' ? '工作日' : s.repeat
-  }` : '';
+  const repL = _repeatLabelOfSched(s);
+  const repeatLabel = repL ? ` · ${repL}` : '';
   if (s.allDay) return `${dateStr}${repeatLabel}`;
   const startTime = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (s.end && s.end > s.start) {
@@ -15327,6 +15354,9 @@ function openQuickTimePickerSheet(currentSched, onSave) {
   let allDay = currentSched ? !!currentSched.allDay : false;
   let repeat = currentSched ? (currentSched.repeat || 'none') : 'none';
   let reminderOffset = currentSched && currentSched.reminderOffset != null ? currentSched.reminderOffset : null;
+  // 新增 2 种 repeat 的参数
+  let repeatN  = currentSched && currentSched.repeatN ? +currentSched.repeatN : 2;
+  let weekdays = Array.isArray(currentSched && currentSched.weekdays) ? currentSched.weekdays.slice() : null;
 
   function _dtLocalValue(ts) {
     const d = new Date(ts);
@@ -15389,12 +15419,36 @@ function openQuickTimePickerSheet(currentSched, onSave) {
             <div class="sa-toggle-row sa-sub-row">
               <span class="sa-toggle-label">规则</span>
               <select class="sa-select" id="sa-repeat-rule">
-                <option value="daily"   ${repeat==='daily'?'selected':''}>每天</option>
-                <option value="weekly"  ${repeat==='weekly'?'selected':''}>每周</option>
-                <option value="monthly" ${repeat==='monthly'?'selected':''}>每月</option>
-                <option value="workday" ${repeat==='workday'?'selected':''}>工作日</option>
+                <option value="daily"        ${repeat==='daily'?'selected':''}>每天</option>
+                <option value="every-n-days" ${repeat==='every-n-days'?'selected':''}>每 N 天</option>
+                <option value="weekly"       ${repeat==='weekly'?'selected':''}>每周</option>
+                <option value="weekdays"     ${repeat==='weekdays'?'selected':''}>每周指定天</option>
+                <option value="monthly"      ${repeat==='monthly'?'selected':''}>每月</option>
+                <option value="workday"      ${repeat==='workday'?'selected':''}>工作日</option>
               </select>
             </div>
+            ${repeat === 'every-n-days' ? `
+              <div class="sa-toggle-row sa-sub-row">
+                <span class="sa-toggle-label">间隔</span>
+                <span class="sa-n-row">
+                  <span>每</span>
+                  <input type="number" class="sa-n-input" id="sa-repeat-n" min="1" max="365" step="1" value="${repeatN}">
+                  <span>天</span>
+                </span>
+              </div>
+            ` : ''}
+            ${repeat === 'weekdays' ? `
+              <div class="sa-toggle-row sa-sub-row sa-wd-row">
+                <span class="sa-toggle-label">星期</span>
+                <span class="sa-wd-chips">
+                  ${[1,2,3,4,5,6,0].map((wd, i) => {
+                    const chosen = Array.isArray(weekdays) && weekdays.map(n=>+n).includes(wd);
+                    const lbl = '一二三四五六日'[i];
+                    return `<button type="button" class="sa-wd-chip ${chosen?'active':''}" data-sa-wd="${wd}">${lbl}</button>`;
+                  }).join('')}
+                </span>
+              </div>
+            ` : ''}
           ` : ''}
           <div class="sa-toggle-row">
             <span class="sa-toggle-label">提醒</span>
@@ -15465,7 +15519,30 @@ function openQuickTimePickerSheet(currentSched, onSave) {
       _rerender();
     };
     const repeatRule = body.querySelector('#sa-repeat-rule');
-    if (repeatRule) repeatRule.onchange = () => { repeat = repeatRule.value; };
+    if (repeatRule) repeatRule.onchange = () => {
+      repeat = repeatRule.value;
+      // 切到新规则时给合理默认
+      if (repeat === 'every-n-days' && !repeatN) repeatN = 2;
+      if (repeat === 'weekdays' && !(Array.isArray(weekdays) && weekdays.length)) {
+        weekdays = [new Date(start).getDay()];
+      }
+      _rerender();   // 需要展示对应副控件
+    };
+    const repeatNEl = body.querySelector('#sa-repeat-n');
+    if (repeatNEl) repeatNEl.onchange = () => {
+      let n = parseInt(repeatNEl.value, 10);
+      if (!Number.isFinite(n) || n < 1) n = 1;
+      if (n > 365) n = 365;
+      repeatN = n;
+    };
+    body.querySelectorAll('[data-sa-wd]').forEach(b => b.onclick = () => {
+      const wd = parseInt(b.dataset.saWd, 10);
+      if (!Array.isArray(weekdays)) weekdays = [];
+      const set = new Set(weekdays.map(n => +n));
+      if (set.has(wd)) set.delete(wd); else set.add(wd);
+      weekdays = Array.from(set).sort((a, b) => a - b);
+      _rerender();
+    });
     const reminderToggle = body.querySelector('#sa-reminder-toggle');
     if (reminderToggle) reminderToggle.onchange = () => {
       _readInputs(body);
@@ -15491,6 +15568,15 @@ function openQuickTimePickerSheet(currentSched, onSave) {
         reminderOffset,
       };
       if (mode === 'range') out.end = end;
+      // 新增 2 种 repeat 的参数
+      if (repeat === 'every-n-days') {
+        out.repeatN = Math.max(1, Math.min(365, parseInt(repeatN, 10) || 2));
+      }
+      if (repeat === 'weekdays') {
+        out.weekdays = Array.isArray(weekdays) && weekdays.length
+          ? weekdays.map(n => +n).filter(n => n >= 0 && n <= 6).sort((a, b) => a - b)
+          : [new Date(start).getDay()];
+      }
       closeSheet();
       onSave(out);
     };

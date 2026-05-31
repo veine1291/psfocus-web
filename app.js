@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1651';
+const _PSFOCUS_BUILD = '20260531-1740';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -13633,29 +13633,22 @@ function openDayTemplatesSheet() {
       if (h) return `${h}h`;
       return `${m2}m`;
     };
-    // 模板卡片: 顶部 head (icon + name + 编辑按钮), 下方段列表
+    // 模板卡片: 单行紧凑 — icon + 名 + (段数·总时长) + ›  点整张卡进编辑
     const tplCardHtml = tpls.length
       ? tpls.map(t => {
           const iconHtml = renderCustomIconHtml(t.icon, '', t.color) || `<span class="ico-calendar" style="color:${esc(t.color || 'var(--accent)')}"></span>`;
-          const blocks = (t.blocks || []).slice().sort((a, b) => a.startMin - b.startMin);
-          const segsHtml = blocks.length
-            ? blocks.map(b => {
-                const color = b.color || t.color || 'var(--accent)';
-                const dur = fmtDur(b.endMin - b.startMin);
-                return `<div class="dt-card-seg">
-                  <span class="dt-card-seg-dot" style="background:${esc(color)}"></span>
-                  <span class="dt-card-seg-name">${esc(b.name || '未命名段')}</span>
-                  <span class="dt-card-seg-dur">${esc(dur)}</span>
-                </div>`;
-              }).join('')
-            : '<div class="dt-card-seg-empty">还没有段, 点编辑去画</div>';
-          return `<div class="dt-card" style="--card-accent:${esc(t.color || 'var(--accent)')};">
-            <div class="dt-card-head">
-              <span class="dt-card-icon">${iconHtml}</span>
+          const blocks = (t.blocks || []).slice();
+          const totalMin = blocks.reduce((s, b) => s + Math.max(0, (b.endMin - b.startMin)), 0);
+          const summary = blocks.length
+            ? `${blocks.length} 段 · ${fmtDur(totalMin)}`
+            : '空模板';
+          return `<div class="dt-card" style="--card-accent:${esc(t.color || 'var(--accent)')};" data-edit-tpl="${esc(t.id)}">
+            <span class="dt-card-icon">${iconHtml}</span>
+            <div class="dt-card-main">
               <span class="dt-card-name">${esc(t.name || '未命名模板')}</span>
-              <button class="dt-card-edit-btn" data-edit-tpl="${esc(t.id)}">编辑</button>
+              <span class="dt-card-summary">${esc(summary)}</span>
             </div>
-            <div class="dt-card-segs">${segsHtml}</div>
+            <span class="dt-card-edit-mark">›</span>
           </div>`;
         }).join('')
       : '<div class="dt-empty">还没有模板,点下方添加</div>';
@@ -13739,7 +13732,9 @@ function openDayTemplatesSheet() {
       openAssignTemplateForDowPopover(dow, el);
     });
   };
-  showSheet(`<div>${renderBody()}</div>`, (body) => bindAll(body));
+  // 注意: 不能再额外裹一层 <div> — sheet-body 是 flex column, 外层 div 会破坏
+  //       .sheet-content 的 flex:1+overflow:auto, 导致内容超过 sheet 时无法下滑
+  showSheet(renderBody(), (body) => bindAll(body));
 }
 
 function openAssignTemplateForDowPopover(dow, anchorEl) {
@@ -13825,9 +13820,10 @@ function openEditDayTemplateSheet(tplId) {
       </div>`;
     }).join('');
 
-    // 选中块的编辑面板 — 使用通用色板 (palette + native HSV)
+    // 选中块的编辑面板 — 改成浮窗 popup, 不再占用 timeline 下方空间
+    // (原来 inline 在 sheet-content 底部, 加上 24h 时间轴撑得 sheet 几乎看不见编辑栏)
     const picked = ed.pickedBlockId ? tpl.blocks.find(b => b.id === ed.pickedBlockId) : null;
-    let pickedHtml = '';
+    let pickedPopupHtml = '';
     if (picked) {
       const pickedTags = Array.isArray(picked.tags) ? picked.tags : [];
       const tagChipsHtml = pickedTags.map(tg => {
@@ -13839,8 +13835,13 @@ function openEditDayTemplateSheet(tplId) {
       }).join('');
       const datalistId = `plan-tpl-tags-${picked.id}`;
       const suggestList = _planCollectAllTags().filter(t => !pickedTags.includes(t));
-      pickedHtml = `
-        <div class="dte-edit-panel">
+      pickedPopupHtml = `
+        <div class="dte-edit-popup-mask" data-action="dte-close-edit-popup"></div>
+        <div class="dte-edit-popup" role="dialog" aria-label="编辑时间段">
+          <div class="dte-edit-popup-head">
+            <span class="dte-edit-popup-title">编辑时间段</span>
+            <button class="dte-popup-close" data-action="dte-close-edit-popup" aria-label="关闭">×</button>
+          </div>
           <div class="dte-edit-row">
             <input class="dte-edit-name" type="text" value="${esc(picked.name || '')}" placeholder="时间段名称, 如 工作 / 午休">
           </div>
@@ -13893,8 +13894,8 @@ function openEditDayTemplateSheet(tplId) {
             ${blocksHtml}
           </div>
         </div>
-        ${pickedHtml}
       </div>
+      ${pickedPopupHtml}
     `;
   };
 
@@ -14022,6 +14023,13 @@ function openEditDayTemplateSheet(tplId) {
       pushState();
       rerender();
     };
+
+    // 浮窗关闭: × 按钮 / 点 mask 都关
+    body.querySelectorAll('[data-action="dte-close-edit-popup"]').forEach(el => el.onclick = (ev) => {
+      ev.stopPropagation();
+      ed.pickedBlockId = null;
+      rerender();
+    });
 
     // 时间轴 — 空白拖动 = 创建; resize 手柄拖动 = 调起止
     const timeline = body.querySelector('#dte-timeline');
@@ -14159,7 +14167,8 @@ function openEditDayTemplateSheet(tplId) {
     timeline.addEventListener('pointercancel', onPointerUp);
   };
 
-  showSheet(`<div>${renderBody()}</div>`, (body) => bindAll(body));
+  // 同 openDayTemplatesSheet: 不能裹外层 div, 否则 .sheet-content 不滚, 24h 时间轴看不全
+  showSheet(renderBody(), (body) => bindAll(body));
 }
 
 // 模板图标 — 简易 picker: 选已有 lib 项 / 粘贴 SVG 新建

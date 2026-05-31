@@ -7311,17 +7311,19 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   border: 1px dashed var(--border-soft);
   border-radius: 8px;
 }
-/* 模板卡 — 字号恢复正常, 横向 padding 收紧适配多列 */
+/* 模板卡 — 单行紧凑: icon | name+summary | › 整张卡可点进编辑 */
 .dt-card {
   background: var(--bg-section);
   border: 1px solid var(--border-soft);
   border-left: 3px solid var(--card-accent, var(--accent));
   border-radius: 8px;
   padding: 8px 10px;
-  display: flex; flex-direction: column; gap: 5px;
+  display: flex; align-items: center; gap: 8px;
   min-width: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
-.dt-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dt-card:active { background: var(--bg-hover); }
 .dt-card-icon {
   width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -7329,37 +7331,29 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 }
 .dt-card-icon .nav-icon-svg, .dt-card-icon .nav-icon-svg svg,
 .dt-card-icon [class^="ico-"] { width: 16px; height: 16px; }
+.dt-card-main {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 1px;
+}
 .dt-card-name {
-  flex: 1;
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
-  min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.dt-card-edit-btn {
-  padding: 3px 8px;
-  background: var(--bg-page);
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  color: var(--text-dim);
+.dt-card-summary {
   font-size: 11px;
-  cursor: pointer;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dt-card-edit-mark {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-faint);
   flex-shrink: 0;
+  padding: 0 2px 0 4px;
 }
-.dt-card-edit-btn:active { background: var(--bg-hover); border-color: var(--accent); color: var(--accent); }
-.dt-card-segs { display: flex; flex-direction: column; gap: 2px; padding-left: 28px; min-width: 0; }
-.dt-card-seg {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11.5px;
-  color: var(--text-dim);
-  line-height: 1.4;
-  min-width: 0;
-}
-.dt-card-seg-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.dt-card-seg-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dt-card-seg-dur { font-variant-numeric: tabular-nums; color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
-.dt-card-seg-empty { font-size: 11.5px; color: var(--text-faint); font-style: italic; padding-left: 4px; }
 
 .dt-add-btn {
   width: 100%;
@@ -7641,6 +7635,52 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   cursor: pointer;
 }
 .dte-del-block:active { background: color-mix(in srgb, var(--danger, #e57373) 8%, transparent); }
+
+/* 时间段编辑浮窗 — 替代原 .dte-edit-panel inline 渲染
+ * 位置: sheet-body 内 absolute 浮在底部, 不挤占 timeline 滚动区
+ * mask: 点空白关闭, popup 内部点击不冒泡 */
+.dte-edit-popup-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.18);
+  z-index: 4;
+  -webkit-tap-highlight-color: transparent;
+}
+.dte-edit-popup {
+  position: absolute;
+  left: 10px; right: 10px;
+  bottom: calc(10px + var(--safe-bottom));
+  z-index: 5;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  padding: 12px 14px 14px;
+  max-height: 62%;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.dte-edit-popup-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: -2px -2px 0;
+}
+.dte-edit-popup-title {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.dte-popup-close {
+  background: none; border: none;
+  font-size: 22px; line-height: 1;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 2px 6px;
+  margin: -4px -4px -4px 0;
+}
+.dte-popup-close:active { color: var(--text); }
+/* popup 内嵌的 edit-row 不需要 .dte-edit-panel 的外框 */
+.dte-edit-popup .dte-edit-row { flex-wrap: wrap; }
 
 /* 图标 picker */
 .dt-icon-grid {

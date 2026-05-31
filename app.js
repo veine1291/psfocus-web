@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1236';
+const _PSFOCUS_BUILD = '20260531-1253';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -10460,14 +10460,59 @@ function bindSheetSwipeClose(body) {
 function openTaskDetailMenu(id, anchor) {
   const t = state.tasks.find(x => x.id === id);
   if (!t) return;
-  showPopover([
+  const items = [
     { label: '保存为模板', icon: 'ico-template', action: () => { closePopover(); openSaveTaskAsTemplateSheet(id); } },
-    { divider: true },
-    { label: '删除任务', icon: 'ico-trash', danger: true, action: () => {
-      state.tasks = state.tasks.filter(x => x.id !== id);
-      pushState(); closePopover(); closeSheet(); renderAll();
-    }},
-  ], { anchor });
+  ];
+  // 重复任务专属: 一键把过往所有未完成 occurrence 跳过 (已完成的保留)
+  const hasRecurring = Array.isArray(t.schedules) && t.schedules.some(s => s && s.repeat && s.repeat !== 'none');
+  if (hasRecurring) {
+    items.push({ label: '删除所有此前未完成', icon: 'ico-x', action: () => {
+      const now = Date.now();
+      const completed = new Set(Array.isArray(t.completedOccurrences) ? t.completedOccurrences : []);
+      let skippedCount = 0;
+      for (const s of t.schedules) {
+        if (!s || !s.repeat || s.repeat === 'none') continue;
+        if (!Array.isArray(s.skippedOccurrences)) s.skippedOccurrences = [];
+        const already = new Set(s.skippedOccurrences);
+        // 用循环展开 — 从 s.start 起按 repeat 走, 到 now-1 截止
+        let occ = new Date(s.start);
+        if (s.repeat === 'workday' && (occ.getDay() === 0 || occ.getDay() === 6)) {
+          do { occ.setDate(occ.getDate() + 1); } while (occ.getDay() === 0 || occ.getDay() === 6);
+        }
+        let safety = 5000;
+        while (safety-- > 0) {
+          const ts = occ.getTime();
+          if (ts >= now) break;
+          if (typeof s.endDate === 'number' && ts > s.endDate) break;
+          if (!completed.has(ts) && !already.has(ts)) {
+            s.skippedOccurrences.push(ts);
+            already.add(ts);
+            skippedCount++;
+          }
+          const next = new Date(occ);
+          if (s.repeat === 'daily')   next.setDate(next.getDate() + 1);
+          else if (s.repeat === 'weekly')  next.setDate(next.getDate() + 7);
+          else if (s.repeat === 'monthly') next.setMonth(next.getMonth() + 1);
+          else if (s.repeat === 'workday') {
+            do { next.setDate(next.getDate() + 1); } while (next.getDay() === 0 || next.getDay() === 6);
+          } else break;
+          occ = next;
+        }
+        s.skippedOccurrences.sort((a, b) => a - b);
+      }
+      t.updatedAt = Date.now();
+      pushState();
+      closePopover();
+      showToast(skippedCount > 0 ? `已隐藏 ${skippedCount} 个过往未完成出现` : '没有过往未完成的出现');
+      renderAll();
+    }});
+  }
+  items.push({ divider: true });
+  items.push({ label: '删除任务', icon: 'ico-trash', danger: true, action: () => {
+    state.tasks = state.tasks.filter(x => x.id !== id);
+    pushState(); closePopover(); closeSheet(); renderAll();
+  }});
+  showPopover(items, { anchor });
 }
 
 // ===== 模板系统 =====
@@ -11650,7 +11695,8 @@ function tasksOnDay(dayMs) {
     }
     if (!occ) continue;
     const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
-    const occDone = occ.schedule ? isOccDone(t, occ.schedule, occ.start) : !!t.done;
+    const occKey = occ._origStart != null ? occ._origStart : occ.start;
+    const occDone = occ.schedule ? isOccDone(t, occ.schedule, occKey) : !!t.done;
     if (!showDone && occDone) continue;
     if (!showRepeat && isRepeat && a > today0) continue;
     out.push(t);
@@ -11698,8 +11744,9 @@ function renderMonthView(view) {
       const occs = expandItemOccurrencesInDay(item, dms, dayEnd);
       for (const occ of occs) {
         let occDone = false;
+        const occKey = occ._origStart != null ? occ._origStart : occ.start;
         if (kind === 'task') {
-          occDone = (typeof isOccDone === 'function') ? isOccDone(item, occ.schedule, occ.start) : !!item.done;
+          occDone = (typeof isOccDone === 'function') ? isOccDone(item, occ.schedule, occKey) : !!item.done;
           if (!showDone && occDone) continue;
         }
         const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
@@ -12193,37 +12240,72 @@ function expandItemOccurrencesInDay(item, dayStart, dayEnd) {
   const sched = (Array.isArray(item.schedules) && item.schedules[0])
     || (item.start ? { start: item.start, end: item.end || null, allDay: !!item.allDay, repeat: 'none' } : null);
   if (!sched || !sched.start) return [];
-  const dur = (sched.end && sched.end > sched.start) ? (sched.end - sched.start) : 0;
-  const repeat = sched.repeat || 'none';
-  const allDay = !!sched.allDay;
+  // 多 schedule (例如 ctrl-drag 分裂后) — 遍历所有, 不只第一个
+  const allSchedules = (Array.isArray(item.schedules) && item.schedules.length)
+    ? item.schedules : [sched];
   const out = [];
-  const addOcc = (occStart) => {
-    const occEnd = occStart + (dur || 30 * 60000); // 没 duration 给 30 分钟,占位可见
-    if (occEnd <= dayStart || occStart >= dayEnd) return;
-    out.push({ start: occStart, end: occEnd, allDay, schedule: sched });
-  };
-  if (repeat === 'none') {
-    addOcc(sched.start);
-    return out;
-  }
-  // 计算该天对应的 occurrence 时刻(同 anchor 的小时:分)
-  const anchorD = new Date(sched.start);
-  const dayD = new Date(dayStart);
-  const occ = new Date(dayStart);
-  occ.setHours(anchorD.getHours(), anchorD.getMinutes(), 0, 0);
-  if (occ.getTime() < sched.start) return out; // 第一次实例之前不展开
-  const dow = dayD.getDay();
-  if (repeat === 'daily') {
-    addOcc(occ.getTime());
-  } else if (repeat === 'weekly') {
-    if (anchorD.getDay() === dow) addOcc(occ.getTime());
-  } else if (repeat === 'monthly') {
-    if (anchorD.getDate() === dayD.getDate()) addOcc(occ.getTime());
-  } else if (repeat === 'workday') {
-    if (dow !== 0 && dow !== 6) addOcc(occ.getTime());
-  } else {
-    // 不识别的 repeat → 单次
-    addOcc(sched.start);
+
+  for (const s of allSchedules) {
+    if (!s || !s.start) continue;
+    const dur = (s.end && s.end > s.start) ? (s.end - s.start) : 0;
+    const repeat = s.repeat || 'none';
+    const allDay = !!s.allDay;
+    const skipSet = new Set(s.skippedOccurrences || []);
+    const overrides = (s.occurrenceOverrides && typeof s.occurrenceOverrides === 'object') ? s.occurrenceOverrides : null;
+
+    // 把 origStart 推入 out, 应用 override/skip/endDate
+    const pushOcc = (origStart) => {
+      if (skipSet.has(origStart)) return;
+      if (typeof s.endDate === 'number' && origStart > s.endDate) return;
+      let instStart = origStart;
+      let instEnd = origStart + (dur || 30 * 60000);
+      if (overrides && overrides[origStart]) {
+        const ovr = overrides[origStart];
+        if (typeof ovr.start === 'number') instStart = ovr.start;
+        if (typeof ovr.end === 'number') instEnd = ovr.end;
+      }
+      // 范围相交检查 (visual times)
+      if (instEnd <= dayStart || instStart >= dayEnd) return;
+      out.push({ start: instStart, end: instEnd, allDay, schedule: s, _origStart: origStart });
+    };
+
+    if (repeat === 'none') {
+      pushOcc(s.start);
+    } else {
+      // 计算该天对应的 origStart 时刻(同 anchor 的小时:分)
+      const anchorD = new Date(s.start);
+      const dayD = new Date(dayStart);
+      const occ = new Date(dayStart);
+      occ.setHours(anchorD.getHours(), anchorD.getMinutes(), 0, 0);
+      if (occ.getTime() >= s.start) {
+        const dow = dayD.getDay();
+        const hit = (repeat === 'daily')   ? true
+                  : (repeat === 'weekly')  ? (anchorD.getDay() === dow)
+                  : (repeat === 'monthly') ? (anchorD.getDate() === dayD.getDate())
+                  : (repeat === 'workday') ? (dow !== 0 && dow !== 6)
+                  : false;
+        if (hit) pushOcc(occ.getTime());
+      }
+    }
+
+    // override 单独再过一遍: 处理"原 occurrence 在别的日子, 被 override 拖到 dayStart..dayEnd"
+    if (overrides) {
+      for (const origStartStr of Object.keys(overrides)) {
+        const origStart = parseInt(origStartStr, 10);
+        if (!Number.isFinite(origStart)) continue;
+        if (skipSet.has(origStart)) continue;
+        if (typeof s.endDate === 'number' && origStart > s.endDate) continue;
+        const ovr = overrides[origStartStr];
+        const dur2 = (s.end && s.end > s.start) ? (s.end - s.start) : 0;
+        const origEnd = origStart + (dur2 || 30 * 60000);
+        // 已被上面 pushOcc 覆盖 (origStart 落在 dayStart..dayEnd) → 跳过避免重复
+        if (origEnd > dayStart && origStart < dayEnd) continue;
+        const instStart = typeof ovr.start === 'number' ? ovr.start : origStart;
+        const instEnd   = typeof ovr.end   === 'number' ? ovr.end   : origEnd;
+        if (instEnd <= dayStart || instStart >= dayEnd) continue;
+        out.push({ start: instStart, end: instEnd, allDay: !!s.allDay, schedule: s, _origStart: origStart });
+      }
+    }
   }
   return out;
 }
@@ -12234,7 +12316,10 @@ function allDayTaskOnDay(t, dStart) {
   const dEnd = dStart + 86400000;
   const occs = expandItemOccurrencesInDay(t, dStart, dEnd);
   for (const o of occs) {
-    if (o.allDay) return { done: isOccDone(t, o.schedule, o.start) };
+    if (o.allDay) {
+      const occKey = o._origStart != null ? o._origStart : o.start;
+      return { done: isOccDone(t, o.schedule, occKey) };
+    }
   }
   if (!t.start && t.dueAt != null && t.dueAt >= dStart && t.dueAt < dEnd) {
     return { done: !!t.done };
@@ -12571,7 +12656,8 @@ function dayTimedBlockDescs(dayStartMs) {
     const occs = expandItemOccurrencesInDay(t, dayStartMs, dayEnd);
     for (const occ of occs) {
       if (occ.allDay) continue;
-      const occDone = isOccDone(t, occ.schedule, occ.start);
+      const occKey = occ._origStart != null ? occ._origStart : occ.start;
+      const occDone = isOccDone(t, occ.schedule, occKey);
       if (!showDone && occDone) continue;
       const isRepeat = occ.schedule && occ.schedule.repeat && occ.schedule.repeat !== 'none';
       if (!showRepeat && isRepeat && occ.start > today0 + 86400000 - 1) continue;
@@ -12584,7 +12670,7 @@ function dayTimedBlockDescs(dayStartMs) {
         title: t.title || '(无标题)',
         taskId: t.id, done: occDone,
         scheduleId: occ.schedule && occ.schedule.id,
-        occurrenceStart: occ.start,
+        occurrenceStart: occKey,    // 用 origStart 作为 completion 的 key (从 data-occurrence-start 读)
         project: t.projectId ? state.projects.find(p => p.id === t.projectId) : null,
       });
     }

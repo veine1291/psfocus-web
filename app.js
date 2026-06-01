@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1820';
+const _PSFOCUS_BUILD = '20260531-1900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -987,7 +987,12 @@ async function _performPush(attempt) {
   try {
     setSync('syncing', '同步中…');
     lastPushAt = Date.now();
-    const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'push', docId: uid, state } });
+    // 关键: 手机端永远不要 push currentSession 字段
+    //   手机端不跟踪专注计时, 这字段只是 pull 回来的 stale snapshot,
+    //   一旦 push 上去, tray watcher 会把活的 currentSession 用旧值覆盖,
+    //   用户停止专注时 finalize 算出的 duration 就变成 0 / 几秒 (4m → 0m bug 元凶之一)
+    const _payload = Object.assign({}, state, { currentSession: null });
+    const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'push', docId: uid, state: _payload } });
     const r = res && res.result;
     if (!r || r.ok !== true) throw new Error((r && r.error) || '云函数返回失败');
     _lastKnownGoodTaskCount = (state.tasks || []).length;  // push 成功后更新基准

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-1100';
+const _PSFOCUS_BUILD = '20260601-1230';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -3208,9 +3208,6 @@ function _canvasRefreshToolbar() {
   }
 }
 
-// 已废弃 - 整合到 _canvasOpenPenSettingsPopover (留 stub 防止旧引用挂掉)
-function _canvasOpenColorPopover(anchorBtn) { _canvasOpenPenSettingsPopover(anchorBtn); }
-
 // 笔工具设置 — 整合颜色 + 笔粗 + 压感 + 抖动修正 + 输入方式 (Kayu 2026-05-29)
 // 单击笔按钮:首次切到笔工具, 再单击 toggle 此 popover
 function _canvasOpenPenSettingsPopover(anchorBtn) {
@@ -5290,16 +5287,6 @@ const _summaryActions = {
     _canvasRefreshToolbar();
     _canvasRedraw();
   },
-  'canvas-open-color': (el) => { _canvasOpenColorPopover(el); },
-  'canvas-open-width': (el) => { _canvasOpenWidthPopover(el); },
-  // 老 action 留作兼容 (现在不再用, 但 _canvasOpenColorPopover stub 可能调到)
-  'canvas-pick-color': (el) => {
-    const c = el && el.dataset && el.dataset.c;
-    if (!c) return;
-    _canvasState.color = c;
-    _canvasRefreshToolbar();
-    _canvasHidePopover();
-  },
   // 点颜色槽 — 切到该槽 (改 activeSlotIdx + color); 不关 popover, 让用户能继续点别的槽 / 改自定义色
   'canvas-pick-color-slot': (el) => {
     const idx = parseInt(el && el.dataset && el.dataset.idx, 10);
@@ -6042,63 +6029,11 @@ const _summaryActions = {
     pushState();
     renderAll();
   },
-  // 打开编辑笔记 — 现在改用全屏页 (Kayu 2026-05-29 反馈)
-  // 仍保留旧 sheet 实现作为 _legacy 留作 fallback (理论上无人触发)
+  // 打开编辑笔记 — 全屏页 (Kayu 2026-05-29 反馈)
   'summary-item-edit': (el) => {
     const id = el.dataset.id;
     closeSheet();
     openSummaryEditorPage({ mode: 'edit', id });
-  },
-  'summary-item-edit-legacy-sheet': (el) => {
-    const id = el.dataset.id;
-    const s = (state.summaries || []).find(x => x.id === id);
-    if (!s) return;
-    const pad = n => String(n).padStart(2, '0');
-    const dt = new Date(s.createdAt || Date.now());
-    const dtLocal = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-    summaryState._editingNoteMd = s.note || '';
-    showSheet(`
-      <div class="sheet-handle"></div>
-      <div class="sheet-content">
-        <div class="section-title" style="padding:0 0 8px;">编辑笔记</div>
-        <label class="sum-edit-date-row">
-          <span class="sum-edit-date-label">日期 / 时间</span>
-          <input id="sum-edit-note-date" class="sum-edit-date-input" type="datetime-local" value="${dtLocal}">
-        </label>
-        <input id="sum-edit-note-title" type="text" class="sum-edit-title-input"
-          value="${esc(s.title || '')}" />
-        <div class="sum-input-card sum-edit-card" style="margin-top:8px;">
-          <div id="sum-edit-note-text" class="sum-input sum-edit-note-textarea" contenteditable="true"
-            data-action-input="summary-input-autosize">${_mdToEditHtml(s.note || '')}</div>
-          <div class="sum-input-toolbar">
-            <button class="sum-tb-btn" data-action="summary-tb-tag" title="加标签 #"><span class="sum-tb-hash">#</span></button>
-            <button class="sum-tb-btn sum-tb-wiki" data-action="summary-tb-wikilink" title="加概念链接 [[xxx]]">[[]]</button>
-            <span class="sum-tb-sep"></span>
-            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="bold" title="粗体"><b>B</b></button>
-            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="italic" title="斜体"><i>I</i></button>
-            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="head" title="标题">H</button>
-            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ul" title="无序"><span class="ico-list"></span></button>
-            <button class="sum-tb-btn" data-action="summary-tb-format" data-fmt="ol" title="有序">1.</button>
-            <button class="sum-tb-btn sum-tb-quote" data-action="summary-tb-format" data-fmt="quote" title="引用">&#8220;</button>
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:14px;">
-          <button class="modal-btn" data-action="close-sheet" style="flex:1;">取消</button>
-          <button class="modal-btn modal-btn-primary" data-action="summary-edit-note-save" data-id="${esc(id)}" style="flex:1;">保存</button>
-        </div>
-      </div>
-    `, (body) => {
-      const ed = body.querySelector('#sum-edit-note-text');
-      if (ed) {
-        ed.addEventListener('paste', _summaryHandlePaste);
-        ed.focus();
-        _caretToEnd(ed);
-      }
-      // 工具栏 mousedown 保护选区(同主输入)
-      body.querySelectorAll('.sum-input-toolbar .sum-tb-btn').forEach(b => {
-        b.addEventListener('mousedown', e => e.preventDefault());
-      });
-    });
   },
   // 保存编辑后的笔记 — note + createdAt + 重新解析 tags
   'summary-edit-note-save': (el) => {

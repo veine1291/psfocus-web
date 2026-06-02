@@ -769,42 +769,7 @@ body.sum-editor-open { overflow: hidden; }
   padding: 8px 16px 4px;
   gap: 8px;
 }
-.sheet-list-pill {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 13px;
-  color: var(--text-dim);
-  padding: 6px 12px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-section);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
 .sheet-content { flex: 1 1 auto; overflow-y: auto; padding: 6px 18px 12px; min-height: 200px; }
-
-.sheet-task-title {
-  width: 100%;
-  font-size: 19px;
-  font-weight: 600;
-  color: var(--text-strong);
-  background: transparent;
-  border: 0;
-  padding: 8px 0;
-  outline: none;
-  resize: none;
-}
-.sheet-task-desc {
-  width: 100%;
-  font-size: 14px;
-  color: var(--text-dim);
-  background: transparent;
-  border: 0;
-  padding: 4px 0 12px;
-  outline: none;
-  resize: none;
-  min-height: 20px;
-}
 
 .sheet-row {
   display: flex; align-items: center;
@@ -1536,27 +1501,6 @@ body.sum-editor-open { overflow: hidden; }
   border-color: var(--accent);
 }
 .sa-btn:active { opacity: .85; }
-.dp-head {
-  display: flex; align-items: center;
-  padding: 4px 0 12px;
-}
-.dp-head-kind {
-  font-size: 11px;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  flex: 1;
-}
-.dp-head-close {
-  width: 28px; height: 28px;
-  border-radius: 50%;
-  background: var(--bg-section);
-  color: var(--text-dim);
-  font-size: 18px;
-  line-height: 1;
-}
-.dp-head-close:active { background: var(--bg-hover); }
-
 /* 时间属性 pill 行 */
 .dp-time-bar {
   display: flex;
@@ -2094,19 +2038,6 @@ body.sum-editor-open { overflow: hidden; }
   line-height: 1.2;
 }
 .cal-nav-today:active { background: var(--bg-active); }
-/* 兼容老 class — 防 cache 期没刷到 JS */
-.topbar-mode-pill {
-  display: inline-flex; align-items: center;
-  padding: 4px 12px;
-  height: 28px;
-  background: var(--bg-section);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-}
-
 .popover-item {
   display: flex; align-items: center;
   gap: 10px;
@@ -2822,61 +2753,6 @@ body.sum-editor-open { overflow: hidden; }
 .drawer-right-title { font-size: 18px; font-weight: 600; color: var(--text-strong); }
 .drawer-right-sub { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
 
-/* =========================================================
-   子任务
-   ========================================================= */
-.subtasks {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-soft);
-}
-.subtasks-head {
-  display: flex; align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-dim);
-  padding: 4px 0 8px;
-}
-.subtasks-head .ico-list { width: 14px; height: 14px; }
-.subtask-list { display: flex; flex-direction: column; gap: 2px; }
-.subtask-row {
-  display: flex; align-items: center;
-  gap: 10px;
-  padding: 6px 0;
-}
-.subtask-row .card-checkbox {
-  width: 18px; height: 18px;
-  border-width: 1.4px;
-}
-.subtask-row .card-checkbox.checked .ico-check { width: 11px; height: 11px; }
-.subtask-title { flex: 1 1 0; font-size: 14px; word-break: break-word; }
-.subtask-row[data-sub-id]:has(.card-checkbox.checked) .subtask-title {
-  text-decoration: line-through;
-  color: var(--text-faint);
-}
-.icon-btn-mini {
-  width: 24px; height: 24px;
-  display: inline-flex; align-items: center; justify-content: center;
-  color: var(--text-mute);
-  font-size: 14px;
-  border-radius: 50%;
-}
-.icon-btn-mini:active { background: var(--bg-active); }
-.subtask-add {
-  margin-top: 6px;
-}
-.subtask-add-input {
-  border: 0;
-  background: var(--bg-section);
-  padding: 8px 12px;
-  font-size: 13px;
-  width: 100%;
-}
-.subtask-empty {
-  padding: 8px 0;
-  font-size: 12px;
-  color: var(--text-faint);
-}
 .sheet-row[data-action]:active { background: var(--bg-hover); }
 .sheet-row-arrow { width: 14px; height: 14px; color: var(--text-mute); }
 
@@ -4772,12 +4648,6 @@ body.sum-editor-open { overflow: hidden; }
 }
 .concept-sheet .sum-input-card {
   overflow: hidden;
-}
-.concept-drawer-close {
-  width: 28px; height: 28px;
-  border: 0; background: transparent;
-  border-radius: 6px;
-  display: inline-flex; align-items: center; justify-content: center;
 }
 .concept-title-input {
   flex: 1;

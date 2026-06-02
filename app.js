@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-1230';
+const _PSFOCUS_BUILD = '20260601-1300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -10916,7 +10916,12 @@ function openListMoreMenu() {
     if (isProj) items.push({ label: '专注详情', icon: 'ico-clock', action: () => { closePopover(); openProjectFocusDetailSheet(p.id); } });
     items.push({ label: p.pinned ? '取消置顶' : '置顶', icon: 'ico-pin', action: () => { p.pinned = !p.pinned; pushState(); closePopover(); renderAll(); } });
     items.push({ label: p.archived ? '取消归档' : '归档', icon: 'ico-archive', action: () => { p.archived = !p.archived; pushState(); closePopover(); renderAll(); } });
-    items.push({ label: '设置自动标签', icon: 'ico-magic', action: () => { showToast('自动标签:暂未实现'); closePopover(); } });
+    // 自动标签 — 只在任务清单上有意义 (新任务自动加这些标签); 项目用 workTags 走另外路径
+    if (!isProj) {
+      const n = (p.autoTag || []).length;
+      items.push({ label: '设置自动标签' + (n ? ` (${n})` : ''), icon: 'ico-magic',
+        action: () => { closePopover(); openAutoTagSheet({ kind: 'tasklist', item: p }); } });
+    }
     items.push({ divider: true });
     items.push({ sectionTitle: '视图' });
     [
@@ -10942,6 +10947,11 @@ function openListMoreMenu() {
   } else if (cl.kind === 'folder' && cl.folder) {
     const f = cl.folder;
     items.push({ label: '编辑文件夹', icon: 'ico-edit', action: () => { closePopover(); openEditFolderSheet(f); } });
+    {
+      const n = (f.autoTag || []).length;
+      items.push({ label: '设置自动标签' + (n ? ` (${n})` : ''), icon: 'ico-magic',
+        action: () => { closePopover(); openAutoTagSheet({ kind: 'folder', item: f }); } });
+    }
     items.push({ divider: true });
     items.push({ label: '删除文件夹', icon: 'ico-trash', danger: true, action: () => {
       if (!confirm('删除文件夹「' + (f.name||'未命名') + '」?里面的项目会变成"未分组"。')) return;
@@ -10968,6 +10978,88 @@ function openListMoreMenu() {
     items.push({ label: '从模板创建任务', icon: 'ico-template', action: () => { closePopover(); openCreateFromTemplatePicker(); } });
   }
   showPopover(items);
+}
+
+// ----- 自动标签编辑 sheet (任务清单 / 文件夹) -----
+// 跟桌面 'auto-tag-edit' 同一份数据 (item.autoTag) 和同一份回溯语义:
+//   - 加 tag → 注册 settings.tags + 现有子级未完成 task / 项目 都补上
+//   - 删 tag → 仅从 autoTag 移除, 不回收子级 (跟桌面一致, 用户可单独清子级)
+function openAutoTagSheet(opts) {
+  const isFolder = opts && opts.kind === 'folder';
+  const item = opts && opts.item;
+  if (!item) return;
+  const childLabel = isFolder ? '加入此文件夹的项目' : '加到此清单的任务';
+
+  function renderSheet() {
+    const tags = Array.isArray(item.autoTag) ? item.autoTag : [];
+    const chipsHtml = tags.map(tg => {
+      const c = colorOfTag(tg);
+      return `<span class="dp-tag-chip" style="background:color-mix(in srgb,${esc(c)} 24%,transparent);color:${esc(c)};">
+        <span>${esc(tg)}</span>
+        <button class="dp-tag-chip-x" data-at-remove="${esc(tg)}" title="移除">×</button>
+      </span>`;
+    }).join('');
+    const datalistId = `auto-tag-${isFolder?'f':'p'}-${item.id}-dl`;
+    const suggestList = _planCollectAllTags().filter(t => !tags.includes(t));
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 4px;">自动标签</div>
+        <div class="settings-hint" style="padding:0 0 12px;">${esc(childLabel)}时,会自动加上这些标签</div>
+        <div class="dp-tags-row" style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${chipsHtml}
+          <input type="text" class="dp-tag-add" id="auto-tag-add-input" placeholder="加标签,回车确认" list="${datalistId}" autocomplete="off" />
+          <datalist id="${datalistId}">
+            ${suggestList.map(t => `<option value="${esc(t)}"></option>`).join('')}
+          </datalist>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:18px;">
+          <button class="modal-btn modal-btn-primary" data-action="close-sheet" style="flex:1;">完成</button>
+        </div>
+      </div>
+    `, (body) => {
+      const inp = body.querySelector('#auto-tag-add-input');
+      if (inp) {
+        inp.addEventListener('keydown', (ev) => {
+          if (ev.key !== 'Enter') return;
+          ev.preventDefault();
+          const name = (inp.value || '').trim();
+          if (!name) return;
+          if (!Array.isArray(item.autoTag)) item.autoTag = [];
+          if (!item.autoTag.includes(name)) item.autoTag.push(name);
+          _planEnsureTagRegistered(name);
+          // 回溯应用到现有子级 (跟桌面 auto-tag-add 同语义)
+          if (isFolder) {
+            for (const p of (state.projects || [])) {
+              if (p.folderId !== item.id || p.archived) continue;
+              if (!Array.isArray(p.tags)) p.tags = [];
+              if (!p.tags.includes(name)) p.tags.push(name);
+            }
+          } else {
+            for (const t of (state.tasks || [])) {
+              if (t.projectId !== item.id) continue;
+              // 已完成的非重复任务跳过 — 别污染历史
+              if (t.done && !_isRecurringTask(t)) continue;
+              if (!Array.isArray(t.tags)) t.tags = [];
+              if (!t.tags.includes(name)) t.tags.push(name);
+            }
+          }
+          pushState();
+          renderSheet();   // 重渲 sheet 显示新 chip
+        });
+        setTimeout(() => { try { inp.focus(); } catch (_) {} }, 50);
+      }
+      body.querySelectorAll('[data-at-remove]').forEach(el => el.onclick = (ev) => {
+        ev.stopPropagation();
+        const tg = el.dataset.atRemove;
+        if (!Array.isArray(item.autoTag)) return;
+        item.autoTag = item.autoTag.filter(x => x !== tg);
+        pushState();
+        renderSheet();
+      });
+    });
+  }
+  renderSheet();
 }
 
 // ----- 弹层菜单 -----
@@ -15375,6 +15467,13 @@ function openCreateTaskSheet(opts) {
       while ((mm = tagRe.exec(note)) !== null) {
         const tg = mm[1].trim();
         if (tg && !tags.includes(tg)) tags.push(tg);
+      }
+      // 任务清单的"自动标签" — 新任务建在 tasklist 下时自动补 (跟桌面 _applyTasklistAutoTagToTask 等价)
+      if (pickedProjectId) {
+        const _picked = state.projects.find(x => x.id === pickedProjectId);
+        if (_picked && _picked.kind === 'tasklist' && Array.isArray(_picked.autoTag)) {
+          for (const tg of _picked.autoTag) if (tg && !tags.includes(tg)) tags.push(tg);
+        }
       }
       // 多段:legacy 字段 (start/end/allDay/dueAt) 镜像第一段 — 老桌面端依赖 (sync 见 _syncLegacyFromSchedules)
       schedules.sort((a, b) => (a.start || 0) - (b.start || 0));

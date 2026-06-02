@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260531-1900';
+const _PSFOCUS_BUILD = '20260601-1100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1386,12 +1386,25 @@ function colorOfCalItem(item) {
 }
 
 // ===== 渲染主入口 =====
+// 跨 renderAll 保留 view scroll 位置 — 否则云端 watcher 一来 / 折叠区一开关,
+// 用户在长 timeline / 长任务列表的滚动位置就被 reset 到 0, 体感"反复上拉视图"
+//   key 设计: tab + 当前选中的清单/项目 id, 切换视图自然清零
+//   只在同 key 下复用; 用户切 tab 或切清单时不会拿别的视图的位置乱填
+const _viewScrollMemo = new Map();
+function _viewScrollKey() {
+  const sel = (ui.tab === 'tasks') ? ((ui.selectedKind || '') + ':' + (ui.selectedId || '')) : '';
+  return ui.tab + '|' + sel;
+}
 function renderAll() {
   if (!state) return;
   const _renderT0 = Date.now();
   // 当前 tab 被隐藏了 → 自动切到第一个可见的
   const visible = getVisibleMobileTabs();
   if (!visible.includes(ui.tab)) ui.tab = visible[0] || 'tasks';
+  // 渲染前保存当前 view.scrollTop (按当前视图 key 记)
+  const _scrollKeyBefore = _viewScrollKey();
+  const _viewEl = $('view');
+  if (_viewEl) _viewScrollMemo.set(_scrollKeyBefore, _viewEl.scrollTop || 0);
   try { applyTheme(); }   catch (e) { psLog('ERR', 'applyTheme throw', e); }
   try { renderTabBar(); } catch (e) { psLog('ERR', 'renderTabBar throw', e); }
   try { renderTopbar(); } catch (e) { psLog('ERR', 'renderTopbar throw', e); }
@@ -1403,6 +1416,22 @@ function renderAll() {
   } catch (e) {
     psLog('ERR', 'renderTab throw tab=' + ui.tab, e);
     throw e;   // 让 _applyRemoteSnapshot / bindCloud 的 catch 接住
+  }
+  // 渲染完恢复 view.scrollTop — 用户刚改的 key 才生效, 不会拿别的视图的位置乱填
+  // 关键: 立刻同步写 + rAF 再写一次. 同步写让画面不出现"先回顶再跳"的闪烁;
+  // rAF 兜底是因为如果新内容里有云图懒加载, 第一次写 scrollTop 可能被 clamp 到当时的短 scrollHeight
+  const _scrollKeyAfter = _viewScrollKey();
+  if (_viewEl && _scrollKeyBefore === _scrollKeyAfter) {
+    const _saved = _viewScrollMemo.get(_scrollKeyAfter);
+    if (_saved != null && _saved > 0) {
+      _viewEl.scrollTop = _saved;
+      requestAnimationFrame(() => {
+        const v2 = $('view');
+        if (v2 && _viewScrollKey() === _scrollKeyAfter && Math.abs((v2.scrollTop || 0) - _saved) > 4) {
+          v2.scrollTop = _saved;
+        }
+      });
+    }
   }
   if ($('drawer-nav').classList.contains('open')) {
     try { renderDrawerNav(); } catch (e) { psLog('ERR', 'renderDrawerNav throw', e); }
@@ -4482,6 +4511,13 @@ function _renderSummaryItem(s) {
   const imagesHtml = (s.images || []).length
     ? `<div class="sum-item-images">${(s.images||[]).map(im => `<img class="sum-item-image" data-cloud-file-id="${esc(im.cloudFileID)}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">`).join('')}</div>`
     : '';
+  // 自动从项目时间轴生成的摘要 (snapshot) 带 _sourceProjectId — 加跳转项目详情入口
+  const sourceProj = s._sourceProjectId ? (state.projects || []).find(x => x.id === s._sourceProjectId) : null;
+  const sourceLinkHtml = sourceProj
+    ? `<button class="sum-item-source-link" data-action="summary-goto-source-project" data-project-id="${esc(sourceProj.id)}" title="跳转到该项目详情">
+         <span class="ico-folder"></span><span>${esc(sourceProj.name || '未命名项目')}</span>
+       </button>`
+    : '';
   const tStr = new Date(s.createdAt).toLocaleString('zh-CN');
   return `<div class="sum-item" data-summary-id="${esc(s.id)}">
     <div class="sum-item-meta">
@@ -4489,7 +4525,7 @@ function _renderSummaryItem(s) {
       <button class="sum-item-more" data-action="summary-item-more" data-id="${esc(s.id)}">⋯</button>
     </div>
     ${(s.note||'').trim() ? `<div class="sum-item-note">${_renderSummaryNoteHtml(s.note)}</div>` : ''}
-    ${tagsHtml ? `<div class="sum-item-tags">${tagsHtml}</div>` : ''}
+    ${tagsHtml || sourceLinkHtml ? `<div class="sum-item-tags">${tagsHtml}${sourceLinkHtml}</div>` : ''}
     ${imagesHtml}
   </div>`;
 }
@@ -5966,6 +6002,19 @@ const _summaryActions = {
     if (titleEl) titleEl.value = '';
     pushState();
     if (typeof closeSheet === 'function') closeSheet();   // 收起浮动输入面板
+    renderAll();
+  },
+  // 摘要快照 → 跳转到来源项目详情 (切 tasks tab + 选中该项目)
+  'summary-goto-source-project': (el, e) => {
+    if (e) e.stopPropagation();
+    const id = el.dataset.projectId;
+    if (!id) return;
+    const p = (state.projects || []).find(x => x.id === id);
+    if (!p) { showToast('该项目已被删除'); return; }
+    ui.tab = 'tasks';
+    ui.selectedKind = 'project';
+    ui.selectedId = id;
+    saveUI();
     renderAll();
   },
   // 笔记右上 ⋯ → 弹一个小 sheet:编辑 / 删除
@@ -7865,7 +7914,9 @@ function worksGalleryCellHtml(p) {
   const inner = coverID
     ? `<img class="works-gallery-img" loading="lazy" data-cloud-file-id="${esc(coverID)}" data-cloud-thumb="480" alt="${esc(p.name || '')}" src="${_ph}">`
     : `<div class="works-gallery-noimg" style="background:${esc(p.color || '#8b8f96')}">${esc((p.name || '?').slice(0, 1))}</div>`;
-  return `<div class="works-gallery-cell" data-works-cell="${esc(p.id)}" title="${esc(p.name || '')}">${inner}</div>`;
+  // 右下角进入项目详情入口 — 点格子本身是看大图, 这个按钮单独走详情 sheet
+  const detailBtn = `<button class="works-gallery-detail-btn" data-works-detail="${esc(p.id)}" title="进入项目详情"><span class="ico-list"></span></button>`;
+  return `<div class="works-gallery-cell" data-works-cell="${esc(p.id)}" title="${esc(p.name || '')}">${inner}${detailBtn}</div>`;
 }
 
 function renderWorksTab(view) {
@@ -7913,9 +7964,15 @@ function renderWorksTab(view) {
     if (ev.target.closest('.works-card-thumb')) openWorksImages(c.dataset.worksCard);
     else openWorksDetailSheet(c.dataset.worksCard);
   }));
-  // 相册格子 → 点开看大图
-  view.querySelectorAll('[data-works-cell]').forEach(c => c.addEventListener('click', () => {
+  // 相册格子 → 点开看大图 (右下角 detail btn 单独捕获, stopPropagation 不冒到这里)
+  view.querySelectorAll('[data-works-cell]').forEach(c => c.addEventListener('click', (ev) => {
+    if (ev.target && ev.target.closest && ev.target.closest('[data-works-detail]')) return;
     openWorksImages(c.dataset.worksCell);
+  }));
+  // 相册格子右下角 → 进入项目详情 sheet (不是大图)
+  view.querySelectorAll('[data-works-detail]').forEach(b => b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    openWorksDetailSheet(b.dataset.worksDetail);
   }));
   view.querySelectorAll('[data-works-tag]').forEach(t => t.addEventListener('click', (ev) => {
     ev.stopPropagation();

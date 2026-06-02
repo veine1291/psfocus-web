@@ -6792,9 +6792,50 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   overflow: hidden;
   background: var(--bg-input);
   cursor: pointer;
+  position: relative;   /* detail btn 绝对定位锚点 */
 }
 .works-gallery-cell:active { opacity: .85; }
 .works-gallery-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 右下角进入项目详情按钮 — 移动端永远显示 (没 hover 状态) */
+.works-gallery-detail-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  z-index: 2;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.22);
+}
+.works-gallery-detail-btn:active { background: rgba(0, 0, 0, 0.78); }
+.works-gallery-detail-btn .ico-list { width: 14px; height: 14px; background-color: #fff; }
+
+/* 摘要快照"来源项目"小入口 — 跟 tag chip 一行排 */
+.sum-item-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px 3px 7px;
+  margin-left: 6px;
+  background: var(--bg-section);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+  vertical-align: middle;
+  -webkit-tap-highlight-color: transparent;
+}
+.sum-item-source-link:active { background: var(--bg-hover); color: var(--text); border-color: var(--accent); }
+.sum-item-source-link .ico-folder { width: 12px; height: 12px; background-color: currentColor; }
 .works-gallery-noimg {
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;

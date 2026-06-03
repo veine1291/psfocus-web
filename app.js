@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-1430';
+const _PSFOCUS_BUILD = '20260601-1600';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -3642,8 +3642,9 @@ function _renderSummaryInputBox() {
         <span class="ico-image"></span>
       </label>
       ${_sumTbPinnedButtonsHtml()}
-      <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
+      <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="格式 / 模板 / 模块"><span class="ico-more"></span></button>
       <div class="sum-input-spacer"></div>
+      <button class="sum-tb-btn sum-publish-more" data-action="summary-publish-more" title="更多操作"><span class="ico-more"></span></button>
       <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
     </div>
   </div>`;
@@ -3661,6 +3662,7 @@ const _SUM_TB_DEFS = [
   { id: 'ol',       label: '有序列表',   preview: '<span class="sum-tb-prev">1.</span>' },
   { id: 'quote',    label: '引用',      preview: '<span class="sum-tb-prev sum-tb-prev-quote">""</span>' },
   { id: 'module',   label: '+ 模块',    preview: '<span class="sum-tb-prev sum-tb-prev-mod">+模块</span>' },
+  { id: 'template', label: '+ 模板',    preview: '<span class="sum-tb-prev sum-tb-prev-mod">+模板</span>' },
 ];
 
 // 读 / 写 pinned list — 跟桌面共用 state.settings.summaryToolbarPinned
@@ -3726,8 +3728,9 @@ function _rerenderSumToolbar() {
       <span class="ico-image"></span>
     </label>
     ${_sumTbPinnedButtonsHtml()}
-    <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="更多"><span class="ico-more"></span></button>
+    <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="格式 / 模板 / 模块"><span class="ico-more"></span></button>
     <div class="sum-input-spacer"></div>
+    <button class="sum-tb-btn sum-publish-more" data-action="summary-publish-more" title="更多操作"><span class="ico-more"></span></button>
     <button class="sum-input-submit" data-action="summary-submit" title="发布">→</button>
   `;
 }
@@ -3739,9 +3742,141 @@ function _sumTbApplyFmt(fmtId) {
     if (_summaryActions['summary-tb-wikilink']) _summaryActions['summary-tb-wikilink']();
   } else if (fmtId === 'module') {
     if (_summaryActions['summary-open-mod-sheet']) _summaryActions['summary-open-mod-sheet']({ dataset: {} });
+  } else if (fmtId === 'template') {
+    openNoteTemplatePickerSheet();
   } else {
     if (_summaryActions['summary-tb-format']) _summaryActions['summary-tb-format']({ dataset: { fmt: fmtId } });
   }
+}
+
+// ===== 笔记模板 helpers (mobile) =====
+// 数据模型: state.templates 共享 (kind='note' 区别于 task/event/project).
+// payload: { note: md串, title?: 概要标题, tags?: [], modules?: 暂不存 }
+function _buildNoteTemplatePayload(noteOrSummary) {
+  const o = noteOrSummary || {};
+  return {
+    note: o.note || '',
+    title: o.title || '',
+    tags: Array.isArray(o.tags) ? o.tags.slice() : [],
+  };
+}
+function _createNoteTemplate(name, payload) {
+  if (!Array.isArray(state.templates)) state.templates = [];
+  state.templates.push({
+    id: 'tmpl-' + genId('x').slice(2, 10),
+    kind: 'note',
+    name: (name || '').trim() || '未命名笔记模板',
+    payload,
+    createdAt: Date.now(),
+  });
+}
+// 把模板插入到当前 draft 编辑器里 — 优先追加 (光标在末尾的常见场景), 顺带 union tags
+function _applyNoteTemplateToDraft(tmpl) {
+  if (!tmpl || !tmpl.payload) return;
+  const p = tmpl.payload;
+  // 1. note: 追加到 draftNote, 中间留空行
+  const cur = summaryState.draftNote || '';
+  const sep = cur && !/\n\s*$/.test(cur) ? '\n\n' : '';
+  summaryState.draftNote = cur + sep + (p.note || '');
+  // 2. title: 只在草稿无 title 时填
+  if (p.title && !(summaryState.draftTitle || '').trim()) summaryState.draftTitle = p.title;
+  // 3. tags: 草稿没有专门 tag 列表 (它从 note 里 #xxx 解析), 模板里的 tags 已经融在 note 中
+  //    若有额外 tags 但 note 里没提及, 这里也不强插; 保持纯 note 注入
+  renderAll();
+  showToast('已套用模板');
+}
+// 笔记模板 picker — 沿用 sheet 风格, 列表选; 空态引导用户「在发布旁 ⋯ 中储存」
+function openNoteTemplatePickerSheet() {
+  const tmpls = ((state.templates || []).filter(t => t && t.kind === 'note'))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  if (!tmpls.length) {
+    showToast('还没有笔记模板 — 在输入框旁 ⋯ 中先存一个');
+    return;
+  }
+  const items = tmpls.map(t => {
+    const preview = ((t.payload && t.payload.note) || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    return `<button class="sheet-item" data-tmpl-id="${esc(t.id)}" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:12px 14px;text-align:left;">
+      <span style="font-size:14px;font-weight:500;">${esc(t.name || '未命名')}</span>
+      ${preview ? `<span style="font-size:12px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">${esc(preview)}${(t.payload?.note?.length || 0) > 60 ? '…' : ''}</span>` : ''}
+    </button>`;
+  }).join('');
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 8px;">笔记模板</div>
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        ${items}
+      </div>
+    </div>
+  `, (body) => {
+    body.querySelectorAll('[data-tmpl-id]').forEach(btn => btn.onclick = () => {
+      const id = btn.dataset.tmplId;
+      const tmpl = (state.templates || []).find(t => t.id === id);
+      closeSheet();
+      if (tmpl) _applyNoteTemplateToDraft(tmpl);
+    });
+  });
+}
+// 把当前草稿保存为笔记模板 — 提示用户起名
+function openSaveDraftAsTemplateSheet() {
+  const draft = (summaryState.draftNote || '').trim();
+  if (!draft) { showToast('输入框是空的'); return; }
+  const defaultName = draft.slice(0, 20).replace(/\s+/g, ' ') || '未命名笔记模板';
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 6px;">储存为笔记模板</div>
+      <div class="form-row"><label>模板名</label><input type="text" id="note-tmpl-name" value="${esc(defaultName)}" maxlength="60"></div>
+      <div class="settings-hint" style="padding:8px 0 0;">下次在 +模板 里调用</div>
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="primary" data-action="save">保存</button>
+    </div>
+  `, (body) => {
+    const inp = body.querySelector('#note-tmpl-name');
+    setTimeout(() => inp.focus(), 50);
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="save"]').onclick = () => {
+      _createNoteTemplate(inp.value, _buildNoteTemplatePayload({
+        note: summaryState.draftNote || '',
+        title: summaryState.draftTitle || '',
+        tags: [],
+      }));
+      pushState();
+      closeSheet();
+      showToast('模板已保存');
+    };
+  });
+}
+// 把已有的 summary 笔记设置为模板 — 走同样的提示流, 内容从那条 summary 取
+function openSaveSummaryAsTemplateSheet(summaryId) {
+  const s = (state.summaries || []).find(x => x.id === summaryId);
+  if (!s) return;
+  const noteContent = s.note || '';
+  if (!noteContent.trim()) { showToast('该笔记是空的'); return; }
+  const defaultName = (s.title || '').trim() || noteContent.slice(0, 20).replace(/\s+/g, ' ') || '未命名笔记模板';
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 6px;">将笔记设为模板</div>
+      <div class="form-row"><label>模板名</label><input type="text" id="note-tmpl-name" value="${esc(defaultName)}" maxlength="60"></div>
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="primary" data-action="save">保存</button>
+    </div>
+  `, (body) => {
+    const inp = body.querySelector('#note-tmpl-name');
+    setTimeout(() => inp.focus(), 50);
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="save"]').onclick = () => {
+      _createNoteTemplate(inp.value, _buildNoteTemplatePayload(s));
+      pushState();
+      closeSheet();
+      showToast('模板已保存');
+    };
+  });
 }
 
 // 取摘要输入框 — contenteditable div (优先 sheet 里的, 避免误打到主视图同名 class)
@@ -5175,6 +5310,32 @@ const _summaryActions = {
     const id = el && el.dataset && el.dataset.fmtId;
     _sumTbApplyFmt(id);
   },
+  // 发布旁的 ⋯ → 弹 sheet 列"储存为模板"等发布相关动作 (跟工具栏的格式 ⋯ 区分)
+  'summary-publish-more': () => {
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 8px;">更多操作</div>
+        <button class="sheet-item" data-action="summary-save-as-template" style="display:flex;align-items:center;gap:10px;padding:14px;text-align:left;width:100%;">
+          <span class="ico-template"></span>
+          <span style="flex:1;">将当前输入储存为笔记模板</span>
+        </button>
+        <button class="sheet-item" data-action="summary-pick-template" style="display:flex;align-items:center;gap:10px;padding:14px;text-align:left;width:100%;">
+          <span class="ico-folder"></span>
+          <span style="flex:1;">套用已有模板</span>
+        </button>
+      </div>
+    `, (body) => {
+      body.querySelector('[data-action="summary-save-as-template"]').onclick = () => {
+        closeSheet();
+        openSaveDraftAsTemplateSheet();
+      };
+      body.querySelector('[data-action="summary-pick-template"]').onclick = () => {
+        closeSheet();
+        openNoteTemplatePickerSheet();
+      };
+    });
+  },
   'summary-tb-wikilink': (el) => {
     const ed = _summaryInputTa();
     if (!ed) return;
@@ -6004,7 +6165,7 @@ const _summaryActions = {
     saveUI();
     renderAll();
   },
-  // 笔记右上 ⋯ → 弹一个小 sheet:编辑 / 删除
+  // 笔记右上 ⋯ → 弹一个小 sheet:编辑 / 设为模板 / 删除
   'summary-item-more': (el) => {
     const id = el.dataset.id;
     const s = (state.summaries || []).find(x => x.id === id);
@@ -6015,11 +6176,19 @@ const _summaryActions = {
         <button class="sheet-item" data-action="summary-item-edit" data-id="${esc(id)}">
           <span class="ico-pencil sheet-item-icon"></span><span>编辑</span>
         </button>
+        <button class="sheet-item" data-action="summary-item-set-template" data-id="${esc(id)}">
+          <span class="ico-template sheet-item-icon"></span><span>设为模板</span>
+        </button>
         <button class="sheet-item sheet-item-danger" data-action="summary-item-delete" data-id="${esc(id)}">
           <span class="ico-trash sheet-item-icon"></span><span>删除</span>
         </button>
       </div>
     `);
+  },
+  'summary-item-set-template': (el) => {
+    const id = el.dataset.id;
+    closeSheet();
+    openSaveSummaryAsTemplateSheet(id);
   },
   'summary-item-delete': (el) => {
     const id = el.dataset.id;
@@ -9227,14 +9396,30 @@ function _calApplyDrop(payload, target) {
     showToast('已排上日历');
     renderAll();
   } else if (payload.kind === 'project') {
+    // 改: 项目拖到日历不再设 dueStart/dueEnd, 而是建一个 event (跟该 project 关联,
+    // 不进任务列表). 桌面看到的 cal-block-event 同一份数据
     const proj = state.projects.find(p => p.id === payload.id);
     if (!proj) return;
-    const dayMs = startOfDay(new Date(target.dayMs)).getTime();
-    proj.dueStart = dayMs;
-    proj.dueEnd = dayMs;
-    proj.updatedAt = Date.now();
+    if (!Array.isArray(state.events)) state.events = [];
+    const newEv = {
+      id: genId('e'),
+      title: proj.name || '事件',
+      projectId: proj.id,
+      schedules: [buildSchedule(startTs, endTs, allDay)],
+      color: proj.color || '',
+      tags: Array.isArray(proj.tags) ? proj.tags.slice() : [],
+      icon: proj.icon || '',
+      note: '',
+      images: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      start: startTs,
+      end: allDay ? null : endTs,
+      allDay: !!allDay,
+    };
+    state.events.push(newEv);
     pushState();
-    showToast('已设项目日期');
+    showToast('已建为事件');
     renderAll();
   }
 }
@@ -13319,6 +13504,16 @@ function _bindCalBlocks(view) {
     renderAll();
   }));
   // task block 主体 → 打开详情(checkbox 因为 stopPropagation 不会触发)
+  // 包了 try/catch — 任务详情 sheet 内任何 throw 都被这里接住, toast 显示错误而不是整页白屏崩溃
+  const _safeOpenTaskDetail = (taskId) => {
+    try { openTaskDetail(taskId); }
+    catch (err) {
+      const msg = (err && (err.stack || err.message || String(err))) || '未知错误';
+      console.error('[openTaskDetail]', err);
+      showToast('打开任务详情失败: ' + (err && err.message || err));
+      try { psLog && psLog('ERR', 'openTaskDetail throw', err); } catch (_) {}
+    }
+  };
   view.querySelectorAll('.cal-block-task[data-task-id]').forEach(el => el.addEventListener('click', (e) => {
     // 编辑模式下吞掉 click(避免触发 openTaskDetail)
     if (_calBlockEditing && _calBlockEditing.el === el) {
@@ -13327,12 +13522,12 @@ function _bindCalBlocks(view) {
       return;
     }
     e.stopPropagation();
-    openTaskDetail(el.dataset.taskId);
+    _safeOpenTaskDetail(el.dataset.taskId);
   }));
   // 全天 pill 也要响应(它们在 banner row 里,带 data-task-id,但没 cal-block-task class)
   view.querySelectorAll('.cal-allday-pill[data-task-id]').forEach(el => el.addEventListener('click', (e) => {
     e.stopPropagation();
-    openTaskDetail(el.dataset.taskId);
+    _safeOpenTaskDetail(el.dataset.taskId);
   }));
   view.querySelectorAll('[data-event-id]').forEach(el => el.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -15023,6 +15218,7 @@ function renderSettingsTemplates(view) {
     { kind: 'task',    label: '任务模板', icon: 'ico-folder' },
     { kind: 'event',   label: '事件模板', icon: 'ico-calendar' },
     { kind: 'project', label: '项目模板', icon: 'ico-template' },
+    { kind: 'note',    label: '笔记模板', icon: 'ico-pencil' },
   ];
   let html = '';
   for (const g of groups) {
@@ -15031,12 +15227,19 @@ function renderSettingsTemplates(view) {
     html += `<div class="settings-sub-title">${esc(g.label)} · ${list.length}</div>`;
     html += '<div class="tmpl-list">';
     for (const tmpl of list) {
-      const sub = tmpl.payload && Array.isArray(tmpl.payload.subtasks) ? tmpl.payload.subtasks.length : 0;
-      const tagCnt = tmpl.payload && Array.isArray(tmpl.payload.tags) ? tmpl.payload.tags.length : 0;
       const meta = [];
-      if (sub) meta.push(`${sub} 个子任务`);
-      if (tagCnt) meta.push(`${tagCnt} 个标签`);
-      if (tmpl.payload && tmpl.payload.duration) meta.push(`${Math.round(tmpl.payload.duration/60000)} 分钟`);
+      if (g.kind === 'note') {
+        // 笔记模板: 显示开头预览 + 字数
+        const note = (tmpl.payload && tmpl.payload.note) || '';
+        const len = note.length;
+        if (len) meta.push(`${len} 字`);
+      } else {
+        const sub = tmpl.payload && Array.isArray(tmpl.payload.subtasks) ? tmpl.payload.subtasks.length : 0;
+        const tagCnt = tmpl.payload && Array.isArray(tmpl.payload.tags) ? tmpl.payload.tags.length : 0;
+        if (sub) meta.push(`${sub} 个子任务`);
+        if (tagCnt) meta.push(`${tagCnt} 个标签`);
+        if (tmpl.payload && tmpl.payload.duration) meta.push(`${Math.round(tmpl.payload.duration/60000)} 分钟`);
+      }
       html += `<button class="tmpl-row" data-action="edit-template" data-tmpl-id="${esc(tmpl.id)}">
         <span class="tmpl-row-icon ${g.icon}"></span>
         <span class="tmpl-row-body">
@@ -15049,7 +15252,7 @@ function renderSettingsTemplates(view) {
     html += '</div>';
   }
   if (!html) {
-    html = `<div class="settings-hint" style="padding:32px 18px; text-align:center;">还没有模板。<br>在任务详情菜单里选「保存为模板」创建第一个。</div>`;
+    html = `<div class="settings-hint" style="padding:32px 18px; text-align:center;">还没有模板。<br>任务模板:任务详情 ⋯「保存为模板」<br>笔记模板:摘要发布旁 ⋯「储存为笔记模板」</div>`;
   }
   view.innerHTML = html;
   view.querySelectorAll('[data-action="edit-template"]').forEach(b => b.onclick = () => openTemplateEditSheet(b.dataset.tmplId));
@@ -15063,7 +15266,7 @@ function openTemplateEditSheet(id) {
     <div class="sheet-content">
       <div class="section-title" style="padding:0 0 6px;">编辑模板</div>
       <div class="form-row"><label>名称</label><input type="text" id="tmpl-edit-name" value="${esc(tmpl.name || '')}" maxlength="60"></div>
-      <div class="settings-hint" style="padding:8px 0 0;">类型:${tmpl.kind === 'task' ? '任务' : tmpl.kind === 'event' ? '事件' : '项目'} · 创建于 ${new Date(tmpl.createdAt || 0).toLocaleDateString('zh-CN')}</div>
+      <div class="settings-hint" style="padding:8px 0 0;">类型:${tmpl.kind === 'task' ? '任务' : tmpl.kind === 'event' ? '事件' : tmpl.kind === 'note' ? '笔记' : '项目'} · 创建于 ${new Date(tmpl.createdAt || 0).toLocaleDateString('zh-CN')}</div>
     </div>
     <div class="sheet-actions">
       <button data-action="delete" class="danger">删除</button>

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-1300';
+const _PSFOCUS_BUILD = '20260601-1430';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7061,13 +7061,66 @@ function _cloudImgFailDiv() {
     innerHTML: '<span class="ico-eye"></span><span>附图加载失败</span>',
   });
 }
-// 一张图要的缩略尺寸:data-cloud-thumb 显式指定;否则默认 900(够手机内联清晰显示,
-// 又远小于原图);data-cloud-thumb="0" = 不缩略(放大查看走 lightbox 单独取原图)。
+// 一张图要的缩略尺寸:data-cloud-thumb 显式指定;否则默认 600(从 900 降下来 — 单张 decode 内存 ~1.5MB,
+// 一屏 8-12 张峰值控制在 20MB 内, 避免 iOS WebKit OOM)。data-cloud-thumb="0" = 不缩略(走 lightbox)
 function _imgThumbSize(img) {
   const v = img.dataset.cloudThumb;
-  if (v == null || v === '') return 900;
+  if (v == null || v === '') return 600;
   const n = parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+// ====== 云图并发闸 ======
+// 防止下滑太快时几十张图同时 src= 触发 decode → 内存峰值爆表 → iOS Safari 杀 tab
+// 设计: 任何时刻最多 _CLOUD_IMG_MAX_CONCURRENT 张图在 loading(等 load/error 才放下一张)
+// 等候队列按入队顺序; 出列时守门 isConnected + 仍在 viewport 才执行
+const _CLOUD_IMG_MAX_CONCURRENT = 3;
+let _cloudImgLoadingCount = 0;
+const _cloudImgQueue = [];   // [{ img, src, fid, thumb, onDone }]
+const _cloudImgVisibleSet = new Set();   // IntersectionObserver 维护: 当前在 viewport 内的 img
+function _cloudImgPump() {
+  while (_cloudImgLoadingCount < _CLOUD_IMG_MAX_CONCURRENT && _cloudImgQueue.length) {
+    const job = _cloudImgQueue.shift();
+    // 出列时再守门: img 已脱离 DOM / 已被卸载 / 已加载完 / 已离开 viewport → 跳过
+    // (快速下滑时一批 job 入队后, 等闸的过程中其中一些 img 已经滚出视口, 不再值得 decode)
+    if (!job.img.isConnected
+        || job.img.dataset.cloudLoaded === '1'
+        || !_cloudImgVisibleSet.has(job.img)) {
+      if (job.onDone) job.onDone(false);
+      continue;
+    }
+    _cloudImgLoadingCount++;
+    const finish = (ok) => {
+      _cloudImgLoadingCount = Math.max(0, _cloudImgLoadingCount - 1);
+      if (job.onDone) job.onDone(ok);
+      _cloudImgPump();
+    };
+    const onLoad = () => { job.img.removeEventListener('error', onError); finish(true); };
+    const onError = () => { job.img.removeEventListener('load', onLoad); finish(false); };
+    job.img.addEventListener('load', onLoad, { once: true });
+    job.img.addEventListener('error', onError, { once: true });
+    job.img.src = job.src;
+    job.img.dataset.cloudLoaded = '1';
+  }
+}
+// Cache Storage 写入并发闸 — 同一时刻最多 2 个 fetch(...) 进 cache, 防几十个并发抓原始 URL
+// 写入失败也 swallow, 仅是优化, 不影响功能
+const _CACHE_WRITE_MAX = 2;
+let _cacheWriteInflight = 0;
+const _cacheWriteQueue = [];
+function _enqueueCacheWrite(cache, key, url) {
+  if (!cache || !url) return;
+  _cacheWriteQueue.push({ cache, key, url });
+  _pumpCacheWrite();
+}
+function _pumpCacheWrite() {
+  while (_cacheWriteInflight < _CACHE_WRITE_MAX && _cacheWriteQueue.length) {
+    const job = _cacheWriteQueue.shift();
+    _cacheWriteInflight++;
+    fetch(job.url)
+      .then(r => { if (r && r.ok) return job.cache.put(job.key, r); })
+      .catch(() => {})
+      .finally(() => { _cacheWriteInflight = Math.max(0, _cacheWriteInflight - 1); _pumpCacheWrite(); });
+  }
 }
 // 批量换 src:① 持久缓存命中 → 本地 blob 立刻出图 ② 未命中 → 解析临时 URL + 服务端缩略
 async function _loadCloudImages(imgs) {
@@ -7087,6 +7140,8 @@ async function _loadCloudImages(imgs) {
   try { cache = window.caches ? await caches.open(_IMG_CACHE_NAME) : null; } catch (_) { cache = null; }
 
   // ① 持久缓存命中 → 本地 blob;objectURL 在 load 后立即 revoke,防句柄堆积
+  // 关键: 上图走 _cloudImgQueue 并发闸 (最多 N 张同时 decode), 防快速下滑时几十张同时 src=
+  // 触发 decode → iOS WebKit OOM kill tab
   const need = [];
   await Promise.all(Array.from(byKey.values()).map(async (entry) => {
     if (cache) {
@@ -7096,9 +7151,24 @@ async function _loadCloudImages(imgs) {
           const blob = await hit.blob();
           if (blob && blob.size > 0) {
             const objUrl = URL.createObjectURL(blob);
-            const t0 = entry.imgs[0];
-            if (t0) t0.addEventListener('load', () => { try { URL.revokeObjectURL(objUrl); } catch (_) {} }, { once: true });
-            for (const im of entry.imgs) { if (im.isConnected) { im.src = objUrl; im.dataset.cloudLoaded = '1'; } }
+            // 第一张走队列, 其余直接复用同一 objUrl (它们是同一张图共用)
+            const first = entry.imgs.find(im => im.isConnected);
+            if (!first) { try { URL.revokeObjectURL(objUrl); } catch (_) {} return; }
+            _cloudImgQueue.push({
+              img: first, src: objUrl, fid: entry.fid, thumb: entry.thumb,
+              onDone: (ok) => {
+                // 第一张完成 (成功/失败) 后, 把同 fid 的其它 img 也填上 (它们已经在 viewport 里, 同图)
+                for (const im of entry.imgs) {
+                  if (im === first) continue;
+                  if (!im.isConnected) continue;
+                  if (im.dataset.cloudLoaded === '1') continue;
+                  im.src = objUrl; im.dataset.cloudLoaded = '1';
+                }
+                // load 后 revoke; 失败时也 revoke (没人会再用)
+                try { URL.revokeObjectURL(objUrl); } catch (_) {}
+              },
+            });
+            _cloudImgPump();
             return;
           }
         }
@@ -7124,37 +7194,57 @@ async function _loadCloudImages(imgs) {
     } catch (e) { console.warn('[cloud images batch]', e && e.message); }
   }
 
-  // ③ 上图 — 缩略 URL 优先;失败自动回退原图;load 后存进持久缓存
+  // ③ 上图 — 走并发闸, 同一时刻最多 N 张图在 decode
   for (const entry of need) {
     const c = _cloudImageCache.get(entry.fid);
     const imgs = entry.imgs.filter(im => im.isConnected);
     if (!imgs.length) continue;
     if (!c || !c.url) { for (const im of imgs) im.replaceWith(_cloudImgFailDiv()); continue; }
     const thumbUrl = _thumbifyUrl(c.url, entry.thumb);
-    const t0 = imgs[0];
-    let triedFallback = false;
-    const onLoad = () => {
-      t0.removeEventListener('error', onError);
-      if (cache) {
-        const u = t0.currentSrc || t0.src;
-        if (u && /^https?:/.test(u)) {
-          fetch(u).then(r => { if (r && r.ok) cache.put(_imgCacheKey(entry.fid, entry.thumb), r); }).catch(() => {});
+    const first = imgs[0];
+    _cloudImgQueue.push({
+      img: first, src: thumbUrl, fid: entry.fid, thumb: entry.thumb,
+      onDone: (ok) => {
+        if (ok) {
+          // 同 fid 的其它 img 也直接复用相同 src (浏览器 HTTP cache 命中, 不会重新下载)
+          for (const im of imgs) {
+            if (im === first) continue;
+            if (!im.isConnected) continue;
+            if (im.dataset.cloudLoaded === '1') continue;
+            im.src = thumbUrl; im.dataset.cloudLoaded = '1';
+          }
+          // 写入持久缓存 — 走单独的 cache 队列, 限并发防写入风暴
+          if (cache) {
+            const u = first.currentSrc || first.src;
+            if (u && /^https?:/.test(u)) _enqueueCacheWrite(cache, _imgCacheKey(entry.fid, entry.thumb), u);
+          }
+        } else {
+          // 缩略 URL 失败 → 退到原图 (走队列重排, 别绕过并发闸)
+          if (thumbUrl !== c.url && first.isConnected) {
+            first.dataset.cloudLoaded = '';   // 让 pump 把它当未加载重入
+            _cloudImgQueue.push({
+              img: first, src: c.url, fid: entry.fid, thumb: entry.thumb,
+              onDone: (ok2) => {
+                if (ok2) {
+                  for (const im of imgs) {
+                    if (im === first) continue;
+                    if (!im.isConnected) continue;
+                    im.src = c.url; im.dataset.cloudLoaded = '1';
+                  }
+                } else {
+                  for (const im of imgs) { if (im.isConnected) im.replaceWith(_cloudImgFailDiv()); }
+                }
+              },
+            });
+            _cloudImgPump();
+          } else {
+            for (const im of imgs) { if (im.isConnected) im.replaceWith(_cloudImgFailDiv()); }
+          }
         }
-      }
-    };
-    const onError = () => {
-      if (!triedFallback && thumbUrl !== c.url) {
-        triedFallback = true;   // 缩略 URL 失败 → 整组退回原图重试一次
-        for (const im of imgs) { if (im.isConnected) im.src = c.url; }
-        return;
-      }
-      t0.removeEventListener('load', onLoad);
-      for (const im of imgs) { if (im.isConnected) im.replaceWith(_cloudImgFailDiv()); }
-    };
-    t0.addEventListener('load', onLoad, { once: true });
-    t0.addEventListener('error', onError);
-    for (const im of imgs) { im.src = thumbUrl; im.dataset.cloudLoaded = '1'; }
+      },
+    });
   }
+  _cloudImgPump();
 }
 // 云图懒加载 — IntersectionObserver 双向管控:
 //  · 进视口 → 加载  · 离视口 → 卸载(src 回填占位图,释放解码内存)
@@ -7165,13 +7255,13 @@ const _cloudImgObserved = new Set();
 function _ensureCloudImgObserver() {
   if (_cloudImgObserver) return _cloudImgObserver;
   if (typeof IntersectionObserver === 'undefined') return null;
-  const visible = new Set();
+  // 共享 _cloudImgVisibleSet (而不是局部 visible) — 让并发闸 pump 出列时也能判断 img 是否还在视口
   let flushTimer = null;
   const flush = () => {
     flushTimer = null;
     const toLoad = [];
-    for (const img of Array.from(visible)) {
-      if (!img.isConnected) { visible.delete(img); continue; }
+    for (const img of Array.from(_cloudImgVisibleSet)) {
+      if (!img.isConnected) { _cloudImgVisibleSet.delete(img); continue; }
       if (img.dataset.cloudLoaded === '1') continue;
       toLoad.push(img);
     }
@@ -7182,10 +7272,10 @@ function _ensureCloudImgObserver() {
     for (const e of entries) {
       const img = e.target;
       if (e.isIntersecting) {
-        visible.add(img);
+        _cloudImgVisibleSet.add(img);
         dirty = true;
       } else {
-        visible.delete(img);
+        _cloudImgVisibleSet.delete(img);
         // 离开视口且已加载 → 卸载,释放解码内存(滚回来时 flush 会自动重载)
         if (img.dataset.cloudLoaded === '1') {
           const prev = img.src;
@@ -7195,8 +7285,10 @@ function _ensureCloudImgObserver() {
         }
       }
     }
-    if (dirty && !flushTimer) flushTimer = setTimeout(flush, 120);
-  }, { rootMargin: '250px 0px' });
+    // 250ms 防抖 (从 120ms 提高) — 快速下滑时尽量多图合一批, 一批进 _loadCloudImages 后走并发闸
+    // 还在视口里没加载完的图自然被并发闸限速, 离视口的图在 pump 出列时被 isConnected/cloudLoaded 守门跳过
+    if (dirty && !flushTimer) flushTimer = setTimeout(flush, 250);
+  }, { rootMargin: '80px 0px' });   // 250 → 80: 缩小预加载缓冲,快速下滑时少触发"路过即刻加载"
   return _cloudImgObserver;
 }
 function bindCloudTimelineImages(root) {

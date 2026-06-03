@@ -7069,11 +7069,14 @@ body.cal-block-editing .sheet-body { touch-action: none; }
    ========================================================= */
 
 /* 非规划模式 — 未完成任务: 浅色虚线"规划框" */
+/* 关键: 背景用「色 mix 进 bg-page」而不是「半透明叠加」, 得到一个 OPAQUE 的浅色 — 才能盖住下层
+ * .cal-plan-block 的虚线; 否则半透明 4% 让模板段的虚线穿过任务块, 看起来像任务块在下方 */
 .cal-block-task.plan-pending {
-  background: color-mix(in srgb, var(--block-color) 4%, transparent);
+  background: color-mix(in srgb, var(--block-color) 5%, var(--bg-page));
   border-style: dashed;
   border-width: 1px;
-  opacity: 0.85;
+  opacity: 1;            /* 从 0.85 提到 1, 防止下层模板段虚线还能穿透 */
+  z-index: 2;            /* 明确高于 .cal-plan-block (0) 和 .cal-block (1) */
 }
 .cal-block-task.plan-pending .cal-task-title { font-weight: 400; }
 .cal-block-task.plan-pending .cal-task-check { border-style: dashed; }
@@ -7102,7 +7105,8 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   color: var(--block-color);
 }
 
-/* 计划模式: 模板段渲染成 full-width 虚线框 — 只虚线 + 标题, 无底色无时间 */
+/* 计划模式: 模板段渲染成 full-width 虚线框 — 只虚线 + 标题, 无底色无时间
+ * 永远在最底层 (z-index: 0), 真正排上日历的任务 / event 块叠在它上面盖住 */
 .cal-plan-block {
   --block-color: var(--accent);
   position: absolute;

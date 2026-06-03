@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-1600';
+const _PSFOCUS_BUILD = '20260601-1730';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -3687,12 +3687,20 @@ function _sumTbTogglePin(fmtId) {
   _sumTbSetPinned(cur);
 }
 function _sumTbPinnedButtonsHtml() {
+  // 排序: 'module' / 'template' 这两个"+ X 类"按钮(虚框样式)放到最后, 其它格式按钮在前
+  // 保证 pin 进来不影响顺序的同时, 视觉上 +模板 +模块 永远紧挨着
   const pinned = _sumTbPinned();
-  return pinned.map(id => {
+  const fmts = pinned.filter(id => id !== 'module' && id !== 'template');
+  const mods = pinned.filter(id => id === 'module' || id === 'template');
+  const renderOne = (id) => {
     const def = _SUM_TB_DEFS.find(d => d.id === id);
     if (!def) return '';
-    return `<button class="sum-tb-btn sum-tb-pinned" data-action="summary-tb-apply" data-fmt-id="${id}" title="${esc(def.label)}">${def.preview}</button>`;
-  }).join('');
+    // module / template 用 .sum-tb-mod 虚框样式 (统一两个 "+ X" 按钮的观感); 其它走默认 30x30
+    const isModStyle = id === 'module' || id === 'template';
+    const cls = isModStyle ? 'sum-tb-btn sum-tb-mod' : 'sum-tb-btn sum-tb-pinned';
+    return `<button class="${cls}" data-action="summary-tb-apply" data-fmt-id="${id}" title="${esc(def.label)}">${isModStyle ? esc(def.label) : def.preview}</button>`;
+  };
+  return fmts.map(renderOne).join('') + mods.map(renderOne).join('');
 }
 
 // 工具栏 inline 重画 — pin/unpin 后调, 不重画整个 sheet

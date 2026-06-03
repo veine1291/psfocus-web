@@ -5184,6 +5184,27 @@ body.sum-editor-open { overflow: hidden; }
   color: var(--text-dim);
 }
 .sum-tb-prev-mod { color: var(--accent); font-size: 11px; width: auto; padding: 0 4px; }
+/* +模板 pinned 按钮 — 视觉跟 +模块 完全统一 (虚框 + accent 色 + 自适应宽度), 不再被 .sum-tb-btn 的 30x30 死宽挤压换行 */
+.sum-tb-pinned[data-fmt-id="template"] {
+  width: auto;
+  padding: 0 10px;
+  height: 30px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sum-tb-pinned[data-fmt-id="template"]:active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.sum-tb-pinned[data-fmt-id="template"] .sum-tb-prev-mod {
+  font-size: 12px;
+  padding: 0;
+  width: auto;
+  height: auto;
+}
 /* 工具栏里 pinned 按钮 — 跟其它工具栏按钮统一 30x30, preview 居中 */
 .sum-tb-pinned { padding: 0; }
 /* 更多 popover 菜单结构 — 默认 column list (desktop fallback), grid 模式给 mobile */

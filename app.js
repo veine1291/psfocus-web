@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-1830';
+const _PSFOCUS_BUILD = '20260601-1930';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -15146,6 +15146,10 @@ function renderSettingsSystem(view) {
       <span class="settings-version-label">移动端构建</span>
       <span class="settings-version-value">${esc(_PSFOCUS_BUILD || '未知')}</span>
     </div>
+    <button class="settings-mini-btn" data-action="force-refresh-app" style="margin-top:10px;width:100%;padding:12px;border-radius:8px;border:1px solid var(--border-soft);background:var(--bg-section);color:var(--text);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+      强制刷新到最新版
+    </button>
+    <div class="settings-hint" style="padding:6px 0 0;">iOS / iPad Safari 老抓不到新版本时点这个 — 清掉 Service Worker + 全部 Cache Storage + 强制网络拉</div>
   `;
   bindTabOrderDrag(view.querySelector('#tab-order-list'), view);
   view.querySelectorAll('[data-action="toggle-tab-visible"]').forEach(b => b.onclick = () => {
@@ -15158,6 +15162,38 @@ function renderSettingsSystem(view) {
     renderSettingsSystem(view);
     renderTabBar();
   });
+  // 强制刷新按钮 — 清 SW + caches + 加 cache-buster query 重载
+  const refreshBtn = view.querySelector('[data-action="force-refresh-app"]');
+  if (refreshBtn) refreshBtn.onclick = async () => {
+    refreshBtn.textContent = '清理中…';
+    refreshBtn.disabled = true;
+    try {
+      // 1) 注销所有 service workers — 否则下次仍然走老 SW 拦截
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister().catch(() => false)));
+      }
+      // 2) 清掉所有 Cache Storage 条目 (包括 SW 的 shell cache + 我们自己的 psfocus-cloud-img-*)
+      if (window.caches && caches.keys) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k).catch(() => false)));
+      }
+      // 3) 清掉 localStorage 里跟版本可能挂钩的 key (保留登录凭证、UI 偏好)
+      //    暂时啥都不删 — 让用户改完登录态能保留, 主要是 SW + cache 出问题
+      showToast('已清理,正在重新加载…');
+    } catch (e) {
+      console.warn('[force-refresh]', e);
+    }
+    // 4) 重载, 加时间戳 query 强制绕过任何 HTTP 层缓存
+    setTimeout(() => {
+      try {
+        const url = location.pathname + '?_=' + Date.now() + (location.hash || '');
+        location.replace(url);
+      } catch (_) {
+        location.reload();
+      }
+    }, 400);
+  };
 }
 
 // 触摸 / 鼠标 拖拽排序

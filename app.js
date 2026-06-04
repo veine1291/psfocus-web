@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260605-0930';
+const _PSFOCUS_BUILD = '20260605-1100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -886,6 +886,18 @@ function _flushPendingRemoteM() {
 document.addEventListener('compositionstart', () => { _imeComposingM = true; });
 document.addEventListener('compositionend', () => { _imeComposingM = false; setTimeout(_flushPendingRemoteM, 0); });
 document.addEventListener('focusout', () => { setTimeout(_flushPendingRemoteM, 0); });
+// 防 iPad 锁屏 / 切 app 时把防抖窗口里的 push 丢掉 —
+// pagehide / visibilitychange-hidden 都尽力调一次 flush, 让 push 尽量在 JS 被挂起前发出
+// fetch 还在飞的话, 浏览器会尽量让它跑完 (Beacon-like 行为, 不保证但比啥都不做强)
+const _flushOnHide = () => {
+  if (typeof flushPendingPush === 'function') {
+    try { flushPendingPush(); } catch (_) {}
+  }
+};
+window.addEventListener('pagehide', _flushOnHide);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') _flushOnHide();
+});
 
 function startWatch() {
   stopWatch();
@@ -5963,6 +5975,8 @@ const _summaryActions = {
     const wikiLinks = _extractWikilinks(nextNote);
     for (const wn of wikiLinks) _ensureConcept(wn);
     pushState();
+    // 同 summary-submit: 立即 flush, 别等 1s 防抖 — iPad 用户保存完锁屏就可能丢
+    try { flushPendingPush(); } catch (_) {}
     closeSummaryEditorPage();
     renderAll();
     if (typeof showToast === 'function') showToast('已保存');
@@ -6371,6 +6385,10 @@ const _summaryActions = {
     if (ed) ed.innerHTML = '<div><br></div>';
     if (titleEl) titleEl.value = '';
     pushState();
+    // 关键: 发布是关键操作, 别等 1s 防抖 — iPad 用户点完锁屏 / 切 app, 1s 内 JS 被挂起,
+    // 防抖 timer 不一定能跑到, push 就丢了, 用户看到笔记发出去过一会儿"消失"
+    // flushPendingPush 立即清掉防抖直接发, 保证笔记真的上云
+    try { flushPendingPush(); } catch (_) {}
     if (typeof closeSheet === 'function') closeSheet();   // 收起浮动输入面板
     renderAll();
   },
@@ -16257,6 +16275,13 @@ function openQuickTimePickerSheet(currentSched, onSave) {
       end = allDay
         ? combineDateAndTime(endEl.value, '')
         : new Date(endEl.value).getTime();
+    }
+    // 兜底读 sa-repeat-n: 用户在输入框里改了数字但 change 事件还没触发 (iOS Safari 偶发)
+    // 就点了"保存", 会导致 repeatN 取旧值. _readInputs 在 save / rerender 都跑, 这里同步读最新
+    const nEl = body.querySelector('#sa-repeat-n');
+    if (nEl && nEl.value !== '') {
+      let n = parseInt(nEl.value, 10);
+      if (Number.isFinite(n) && n >= 1 && n <= 365) repeatN = n;
     }
   }
 

@@ -6074,7 +6074,8 @@ body.canvas-open { overflow: hidden; }
 }
 .sum-md-h { font-size: 14px; font-weight: 600; margin: 6px 0 2px; color: var(--text-strong); }
 .sum-md-ul, .sum-md-ol { margin: 4px 0; padding-left: 20px; }
-.sum-md-ul li, .sum-md-ol li { margin: 2px 0; }
+.sum-md-ul li { margin: 2px 0; list-style-type: disc; }
+.sum-md-ol li { margin: 2px 0; list-style-type: decimal; }
 /* 引用块 — 左侧竖线 + 缩进, 不改字色和底色 */
 .sum-md-quote {
   margin: 6px 0;

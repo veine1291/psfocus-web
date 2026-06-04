@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260605-0900';
+const _PSFOCUS_BUILD = '20260605-0930';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2140,6 +2140,9 @@ function _renderSummaryEditorPage() {
         <span class="ico-chevron-left"></span>
       </button>
       <div class="sep-topbar-title">${isEdit ? '编辑笔记' : '新建摘要'}</div>
+      <button class="sep-topbar-btn sep-topbar-more" data-action="summary-publish-more" title="更多操作 — 储存模板 / 套用模板 / 加模块" aria-label="更多">
+        <span class="ico-more"></span>
+      </button>
       <button class="sep-topbar-publish" data-action="${isEdit ? 'summary-editor-page-save' : 'summary-editor-page-publish'}">
         ${isEdit ? '保存' : '发布'}
       </button>
@@ -2167,8 +2170,6 @@ function _renderSummaryEditorPage() {
       ${isEdit ? '' : `<button class="sum-tb-btn" data-action="summary-canvas-open" title="手写画布"><span class="ico-edit-pen"></span></button>`}
       ${_sumTbPinnedButtonsHtml()}
       <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="格式 / 注释 / 引用 / 工具"><span class="ico-more"></span></button>
-      <div class="sum-input-spacer"></div>
-      <button class="sum-tb-btn sum-publish-more" data-action="summary-publish-more" title="更多操作 — 储存模板 / 套用模板 / 加模块"><span class="ico-more"></span></button>
     </div>
   `;
   page.classList.remove('hidden');
@@ -3735,8 +3736,6 @@ function _rerenderSumToolbar() {
       ${isEdit ? '' : `<button class="sum-tb-btn" data-action="summary-canvas-open" title="手写画布"><span class="ico-edit-pen"></span></button>`}
       ${_sumTbPinnedButtonsHtml()}
       <button class="sum-tb-btn sum-tb-more" data-action="summary-tb-more" title="格式 / 注释 / 引用 / 工具"><span class="ico-more"></span></button>
-      <div class="sum-input-spacer"></div>
-      <button class="sum-tb-btn sum-publish-more" data-action="summary-publish-more" title="更多操作 — 储存模板 / 套用模板 / 加模块"><span class="ico-more"></span></button>
     `;
     sepTb.querySelectorAll('.sum-tb-btn').forEach(b => {
       b.addEventListener('mousedown', e => e.preventDefault());

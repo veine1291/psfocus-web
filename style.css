@@ -621,6 +621,8 @@ body.sum-editor-open { overflow: hidden; }
 }
 .sep-topbar-btn:active { background: var(--bg-section); }
 .sep-topbar-btn .ico-chevron-left { width: 20px; height: 20px; background: currentColor; }
+.sep-topbar-btn .ico-more { width: 18px; height: 18px; background-color: currentColor; }
+.sep-topbar-more { color: var(--text-dim); }
 .sep-topbar-title {
   flex: 1 1 auto;
   font-size: 15px;

@@ -6028,7 +6028,8 @@ body.canvas-open { overflow: hidden; }
 }
 .tag-suggest-name { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .sum-md-line { white-space: pre-wrap; }
-.sum-md-blank { height: 0.5em; }
+/* 空段落 — 之前 0.5em 太短, 用户特地按 Enter 留的空段发完看不出, 提到 1.1em 跟正常行高一致 */
+.sum-md-blank { height: 1.1em; }
 .sum-md-h { font-size: 14px; font-weight: 600; margin: 6px 0 2px; color: var(--text-strong); }
 .sum-md-ul, .sum-md-ol { margin: 4px 0; padding-left: 20px; }
 .sum-md-ul li, .sum-md-ol li { margin: 2px 0; }

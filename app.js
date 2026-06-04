@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-1930';
+const _PSFOCUS_BUILD = '20260601-2100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -3653,6 +3653,8 @@ function _renderSummaryInputBox() {
 // ===== 摘要工具栏可固定项 (Kayu 2026-05-28) =====
 // 用户可以从 ⋯ 菜单里把某些格式按钮 pin 到主工具栏, 长期常驻
 // 每个 def 有 styled preview, 在菜单和工具栏都直接显示带样式的小预览, 不只是文字
+// 2026-06-01: +模块 / +模板 / 套用模板 都搬到"发布旁 ⋯"那个菜单, 不再在富文本工具栏里
+//             这里只留纯格式工具 (Kayu 反馈: 两套 ⋯ 容易分不清, 现在职责清晰)
 const _SUM_TB_DEFS = [
   { id: 'wikilink', label: '概念链接',  preview: '<span class="sum-tb-prev sum-tb-prev-wiki">[[…]]</span>' },
   { id: 'head',     label: '标题',      preview: '<span class="sum-tb-prev sum-tb-prev-head">H</span>' },
@@ -3661,8 +3663,6 @@ const _SUM_TB_DEFS = [
   { id: 'ul',       label: '无序列表',   preview: '<span class="sum-tb-prev"><span class="ico-list"></span></span>' },
   { id: 'ol',       label: '有序列表',   preview: '<span class="sum-tb-prev">1.</span>' },
   { id: 'quote',    label: '引用',      preview: '<span class="sum-tb-prev sum-tb-prev-quote">""</span>' },
-  { id: 'module',   label: '+ 模块',    preview: '<span class="sum-tb-prev sum-tb-prev-mod">+模块</span>' },
-  { id: 'template', label: '+ 模板',    preview: '<span class="sum-tb-prev sum-tb-prev-mod">+模板</span>' },
 ];
 
 // 读 / 写 pinned list — 跟桌面共用 state.settings.summaryToolbarPinned
@@ -3687,20 +3687,13 @@ function _sumTbTogglePin(fmtId) {
   _sumTbSetPinned(cur);
 }
 function _sumTbPinnedButtonsHtml() {
-  // 排序: 'module' / 'template' 这两个"+ X 类"按钮(虚框样式)放到最后, 其它格式按钮在前
-  // 保证 pin 进来不影响顺序的同时, 视觉上 +模板 +模块 永远紧挨着
+  // 简化版: 只有纯格式工具 (module/template 已经从 _SUM_TB_DEFS 移除, 走发布旁 ⋯)
   const pinned = _sumTbPinned();
-  const fmts = pinned.filter(id => id !== 'module' && id !== 'template');
-  const mods = pinned.filter(id => id === 'module' || id === 'template');
-  const renderOne = (id) => {
+  return pinned.map(id => {
     const def = _SUM_TB_DEFS.find(d => d.id === id);
     if (!def) return '';
-    // module / template 用 .sum-tb-mod 虚框样式 (统一两个 "+ X" 按钮的观感); 其它走默认 30x30
-    const isModStyle = id === 'module' || id === 'template';
-    const cls = isModStyle ? 'sum-tb-btn sum-tb-mod' : 'sum-tb-btn sum-tb-pinned';
-    return `<button class="${cls}" data-action="summary-tb-apply" data-fmt-id="${id}" title="${esc(def.label)}">${isModStyle ? esc(def.label) : def.preview}</button>`;
-  };
-  return fmts.map(renderOne).join('') + mods.map(renderOne).join('');
+    return `<button class="sum-tb-btn sum-tb-pinned" data-action="summary-tb-apply" data-fmt-id="${id}" title="${esc(def.label)}">${def.preview}</button>`;
+  }).join('');
 }
 
 // 工具栏 inline 重画 — pin/unpin 后调, 不重画整个 sheet
@@ -3748,10 +3741,6 @@ function _sumTbApplyFmt(fmtId) {
   if (!fmtId) return;
   if (fmtId === 'wikilink') {
     if (_summaryActions['summary-tb-wikilink']) _summaryActions['summary-tb-wikilink']();
-  } else if (fmtId === 'module') {
-    if (_summaryActions['summary-open-mod-sheet']) _summaryActions['summary-open-mod-sheet']({ dataset: {} });
-  } else if (fmtId === 'template') {
-    openNoteTemplatePickerSheet();
   } else {
     if (_summaryActions['summary-tb-format']) _summaryActions['summary-tb-format']({ dataset: { fmt: fmtId } });
   }
@@ -5267,50 +5256,43 @@ const _summaryActions = {
       else renderAll();
     }
   },
-  // 工具栏的 ⋯ → 自定义 popover, 双排 grid 只显示 styled preview + 图钉, 不显示文字
-  // 手机屏幕窄, 加文字放不下; preview 已经能直观看出格式效果
-  'summary-tb-more': (el) => {
-    const pop = $('popover'), body = $('popover-body');
-    body.classList.remove('popover-left');
-    body.classList.add('popover-anchored', 'popover-tb-more');
+  // 工具栏的 ⋯ → 走 sheet (不是 popover) — 滑下关 / 点外面关 / 标题栏带 × 都行
+  // 之前是自定义 popover, 在 iPad 上 mask 可能没盖到, 用户报"点开了收不上"
+  'summary-tb-more': () => {
     const pinned = _sumTbPinned();
     const rows = _SUM_TB_DEFS.map(def => {
       const isPin = pinned.includes(def.id);
       return `<div class="sum-tb-menu-item" data-fmt-id="${def.id}" title="${esc(def.label)}">
         <span class="sum-tb-menu-item-preview">${def.preview}</span>
+        <span class="sum-tb-menu-item-label">${esc(def.label)}</span>
         <button type="button" class="sum-tb-pin ${isPin ? 'pinned' : ''}" data-pin-id="${def.id}" title="${isPin ? '取消固定' : '固定到工具栏'}"><span class="ico-pin"></span></button>
       </div>`;
     }).join('');
-    body.innerHTML = `<div class="sum-tb-menu sum-tb-menu-grid">${rows}</div>`;
-    pop.classList.remove('hidden');
-    body.querySelectorAll('.sum-tb-menu-item').forEach(row => {
-      row.addEventListener('click', (e) => {
-        if (e.target.closest('[data-pin-id]')) return;
-        const fmtId = row.dataset.fmtId;
-        _sumTbApplyFmt(fmtId);
-        closePopover();
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 8px;">格式</div>
+        <div class="sum-tb-menu sum-tb-menu-list">${rows}</div>
+      </div>
+    `, (body) => {
+      body.querySelectorAll('.sum-tb-menu-item').forEach(row => {
+        row.addEventListener('click', (e) => {
+          if (e.target.closest('[data-pin-id]')) return;
+          const fmtId = row.dataset.fmtId;
+          closeSheet();
+          _sumTbApplyFmt(fmtId);
+        });
       });
-    });
-    body.querySelectorAll('[data-pin-id]').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.pinId;
-        _sumTbTogglePin(id);
-        btn.classList.toggle('pinned', _sumTbPinned().includes(id));
-        _rerenderSumToolbar();
+      body.querySelectorAll('[data-pin-id]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = btn.dataset.pinId;
+          _sumTbTogglePin(id);
+          btn.classList.toggle('pinned', _sumTbPinned().includes(id));
+          // sheet 关掉后会重渲, 这里不调 _rerenderSumToolbar 也行 — 但调了能让 sheet 里改 pin 后立即看到
+          _rerenderSumToolbar();
+        });
       });
-    });
-    pop.querySelector('.popover-mask').onclick = closePopover;
-    // 定位: anchor 上方 — 必须把 top/right 显式 auto, 不然默认 css 的 top 跟我设的 bottom 同时生效
-    // 元素会从顶拉到底铺满, 出现 "显示错误" (Kayu 2026-05-28 报)
-    requestAnimationFrame(() => {
-      const ar = el.getBoundingClientRect();
-      const br = body.getBoundingClientRect();
-      body.style.position = 'fixed';
-      body.style.top = 'auto';
-      body.style.right = 'auto';
-      body.style.bottom = Math.max(8, window.innerHeight - ar.top + 8) + 'px';
-      body.style.left = Math.max(8, Math.min(window.innerWidth - br.width - 8, ar.left)) + 'px';
     });
   },
   // 工具栏 inline pinned 按钮的点 → 应用 fmt
@@ -5318,29 +5300,41 @@ const _summaryActions = {
     const id = el && el.dataset && el.dataset.fmtId;
     _sumTbApplyFmt(id);
   },
-  // 发布旁的 ⋯ → 弹 sheet 列"储存为模板"等发布相关动作 (跟工具栏的格式 ⋯ 区分)
+  // 发布旁的 ⋯ → 三件大事都在这: 储存模板 / 套用模板 / 加模块
+  // 富文本工具栏 ⋯ 只管文本格式 (粗体/标题等), 职责清晰
   'summary-publish-more': () => {
+    const itemStyle = 'display:flex;align-items:center;gap:12px;padding:14px;text-align:left;width:100%;border:0;background:transparent;';
     showSheet(`
       <div class="sheet-handle"></div>
       <div class="sheet-content">
         <div class="section-title" style="padding:0 0 8px;">更多操作</div>
-        <button class="sheet-item" data-action="summary-save-as-template" style="display:flex;align-items:center;gap:10px;padding:14px;text-align:left;width:100%;">
-          <span class="ico-template"></span>
-          <span style="flex:1;">将当前输入储存为笔记模板</span>
+        <button class="sheet-item" data-pub-act="save-template" style="${itemStyle}">
+          <span class="ico-template" style="width:18px;height:18px;background-color:var(--text-dim);"></span>
+          <span style="flex:1;font-size:14px;">将当前输入储存为笔记模板</span>
         </button>
-        <button class="sheet-item" data-action="summary-pick-template" style="display:flex;align-items:center;gap:10px;padding:14px;text-align:left;width:100%;">
-          <span class="ico-folder"></span>
-          <span style="flex:1;">套用已有模板</span>
+        <button class="sheet-item" data-pub-act="pick-template" style="${itemStyle}">
+          <span class="ico-folder" style="width:18px;height:18px;background-color:var(--text-dim);"></span>
+          <span style="flex:1;font-size:14px;">套用已有模板</span>
+        </button>
+        <button class="sheet-item" data-pub-act="add-module" style="${itemStyle}">
+          <span class="ico-plus" style="width:18px;height:18px;background-color:var(--text-dim);"></span>
+          <span style="flex:1;font-size:14px;">加模块 (打分 / 时长 / 打卡)</span>
         </button>
       </div>
     `, (body) => {
-      body.querySelector('[data-action="summary-save-as-template"]').onclick = () => {
+      body.querySelector('[data-pub-act="save-template"]').onclick = () => {
         closeSheet();
         openSaveDraftAsTemplateSheet();
       };
-      body.querySelector('[data-action="summary-pick-template"]').onclick = () => {
+      body.querySelector('[data-pub-act="pick-template"]').onclick = () => {
         closeSheet();
         openNoteTemplatePickerSheet();
+      };
+      body.querySelector('[data-pub-act="add-module"]').onclick = () => {
+        closeSheet();
+        if (_summaryActions['summary-open-mod-sheet']) {
+          _summaryActions['summary-open-mod-sheet']({ dataset: {} });
+        }
       };
     });
   },

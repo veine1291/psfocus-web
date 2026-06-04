@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-2100';
+const _PSFOCUS_BUILD = '20260601-2200';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -842,7 +842,10 @@ let _pendingRemoteRaw = null;
 function _isTypingNowM() {
   if (_imeComposingM) return true;
   const el = document.activeElement;
-  return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+  // SELECT 也算"正在交互" — 原生下拉菜单展开时 activeElement 是 SELECT,
+  // 这时若 render() 重建 DOM, dropdown 会被销毁 (用户感觉"点开一秒就收回")
+  // 时间编辑里的"重复规则"是 SELECT, 之前桌面端修过这个 bug, mobile 也得加
+  return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable));
 }
 function _applyRemoteSnapshot(rawState) {
   if (!rawState || typeof rawState !== 'object') return;

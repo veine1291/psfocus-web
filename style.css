@@ -6030,6 +6030,48 @@ body.canvas-open { overflow: hidden; }
 .sum-md-line { white-space: pre-wrap; }
 /* 空段落 — 之前 0.5em 太短, 用户特地按 Enter 留的空段发完看不出, 提到 1.1em 跟正常行高一致 */
 .sum-md-blank { height: 1.1em; }
+
+/* ===== 注释 chip ===== */
+.sum-md-annot {
+  display: inline;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-bottom: 1px dotted var(--accent);
+  border-radius: 3px;
+  padding: 0 2px;
+  cursor: pointer;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.sum-md-annot:active { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.sum-md-annot-mark {
+  display: inline-block;
+  margin-left: 2px;
+  font-size: 0.8em;
+  color: var(--accent);
+  vertical-align: super;
+  line-height: 1;
+}
+
+/* 跨笔记引用源链接 — blockquote 内, "引自《XXX》" */
+.sum-md-quote-link, .sum-md-quote-link-edit {
+  display: inline-block;
+  font-size: 0.92em;
+  color: var(--text-dim);
+  background: var(--bg-section);
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  cursor: pointer;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.sum-md-quote-link:active { background: var(--bg-hover); }
+
+/* "跳转到源笔记" 的视觉高亮 — sum-md-quote-link click 后短暂闪烁目标 */
+.sum-item.sum-item-flash {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  transition: background .6s ease;
+}
 .sum-md-h { font-size: 14px; font-weight: 600; margin: 6px 0 2px; color: var(--text-strong); }
 .sum-md-ul, .sum-md-ol { margin: 4px 0; padding-left: 20px; }
 .sum-md-ul li, .sum-md-ol li { margin: 2px 0; }

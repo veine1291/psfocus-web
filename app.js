@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260601-2200';
+const _PSFOCUS_BUILD = '20260601-2330';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1697,6 +1697,7 @@ let summaryState = {
   draftNote: '',               // 输入框未发布的笔记草稿 — 防 renderAll 时清空
   draftTitle: '',              // 概要(title)草稿 — 同 draftNote 持久化
   draftCreatedAt: null,        // 草稿预定发布日期 (null = today), 改了录入模块也跟着切到该日的
+  pendingQuoteSource: null,    // 路径 A 跨笔记引用: { id, text } — 从一条笔记 ⋯ "复制为引用源" 后存在这, 编辑器里"粘贴引用源"按钮显示并插入
   modulePopoverForDay: null,   // sheet 形式打开时的 dayKey
   modulePickerOpenInPopover: false,
   expandedModuleCards: new Set(),
@@ -1893,10 +1894,28 @@ function _renderSummaryNoteHtml(text) {
   html = html.split(_PA).join('<b>').split(_PB).join('</b>');
   // 吞孤立未配对 ** — 配对的已被 bold regex 吃成 <b></b>; 剩下来的必然 unpaired
   html = html.replace(/\*\*/g, '');
+  // {{x|y}} 注释 — 在 [[xxx]] 之前处理 (避免里面 [[xxx]] 被错误剥离)
+  // 内联 chip: 点击弹出注释内容; 注释正文也支持 #tag / [[concept]] (内联另一遍解析)
+  html = html.replace(/\{\{([^|}\n]+)\|([^}\n]+)\}\}/g, (m, t, ann) => {
+    return '<span class="sum-md-annot" data-action="summary-show-annotation"'
+         + ' data-annot="' + esc(ann.trim()) + '">'
+         + esc(t.trim()) + '<span class="sum-md-annot-mark">ⓘ</span></span>';
+  });
   // [[xxx]] 概念链接 — 在 #tag 替换之前做, 防止 [[xxx]] 内含 # 被误抓
-  html = html.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) =>
-    '<span class="concept-link" data-action="concept-open" data-name="' + esc(name.trim()) + '">'
-    + esc(name.trim()) + '</span>');
+  // 若 xxx 以 'sum-' 开头, 视为跨笔记引用源链接 ("引自 XXX"), 不是概念
+  html = html.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) => {
+    const n = name.trim();
+    if (/^sum-[a-zA-Z0-9]/.test(n)) {
+      // 跨笔记引用 — 查源摘要的标题或前 20 字
+      const src = (state.summaries || []).find(s => s.id === n);
+      const label = src
+        ? (src.title || '').trim() || (src.note || '').replace(/\s+/g, ' ').slice(0, 20) || '笔记'
+        : '已删除的笔记';
+      return '<a class="sum-md-quote-link" data-action="summary-goto-source"'
+           + ' data-id="' + esc(n) + '">引自《' + esc(label) + '》</a>';
+    }
+    return '<span class="concept-link" data-action="concept-open" data-name="' + esc(n) + '">' + esc(n) + '</span>';
+  });
   // inline #xxx 转 clickable tag span(行级标题 "# " 形式跳过)
   html = html.replace(/(^|[^&\w])#([^\s#,。、,<&]+)/g, (m, before, tag) => {
     return before + '<span class="sum-md-tag" data-action="summary-filter" data-filter="tag:' + esc(tag) + '">#' + esc(tag) + '</span>';
@@ -3749,6 +3768,132 @@ function _sumTbApplyFmt(fmtId) {
   }
 }
 
+// ===== 注释 / 引用 helpers =====
+// 当前选中区的纯文本; 没选区返回空串
+function _summaryCurrentSelectionText() {
+  try {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return '';
+    const ed = _summaryInputTa();
+    if (!ed) return '';
+    // 只取在编辑器内的选区 — 别误读到 sheet 里其它 input 的选区
+    const range = sel.getRangeAt(0);
+    if (!ed.contains(range.commonAncestorContainer)) return '';
+    return String(sel.toString() || '');
+  } catch (_) { return ''; }
+}
+// 在编辑器光标处替换选区为指定 markdown 文本; 然后 sync 回 draftNote 并重渲
+function _summaryReplaceSelectionWithMd(mdText) {
+  const ed = _summaryInputTa();
+  if (!ed) return;
+  ed.focus();
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount && !sel.isCollapsed) {
+    const range = sel.getRangeAt(0);
+    if (ed.contains(range.commonAncestorContainer)) {
+      range.deleteContents();
+      const node = document.createTextNode(mdText);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      _syncEditorToState(ed);
+      renderAll();
+      return;
+    }
+  }
+  // 没选区 → 插到末尾
+  _insertTextAtCaret(mdText);
+  _syncEditorToState(ed);
+  renderAll();
+}
+// 打开注释 sheet — 选中文字 (如有) 预填到"文字"输入框
+function openAnnotationSheet() {
+  const ed = _summaryInputTa();
+  // 提前抓住选中文字 — sheet 弹出后焦点会移走, 选区可能丢
+  const selText = _summaryCurrentSelectionText();
+  // 备份选区 range 让保存时还能精确替换 (没有就追加到末尾)
+  let savedRange = null;
+  try {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && ed && ed.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      savedRange = sel.getRangeAt(0).cloneRange();
+    }
+  } catch (_) {}
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 6px;">注释</div>
+      <div class="settings-hint" style="padding:0 0 12px;">注释正文里的 #tag / [[概念]] 会被识别 — 跟主笔记一样进概念反链</div>
+      <div class="form-row" style="flex-direction:column;align-items:stretch;gap:6px;">
+        <label style="font-size:12px;color:var(--text-dim);">被注释的文字</label>
+        <input type="text" id="annot-text" value="${esc(selText)}" placeholder="选中的话自动填" autocomplete="off"
+               style="padding:8px 10px;border:1px solid var(--border-soft);background:var(--bg-input);border-radius:6px;font-size:13px;color:var(--text);outline:none;">
+      </div>
+      <div class="form-row" style="flex-direction:column;align-items:stretch;gap:6px;margin-top:10px;">
+        <label style="font-size:12px;color:var(--text-dim);">注释正文</label>
+        <textarea id="annot-content" rows="4" placeholder="想说的话 / 引用 / #tag / [[概念]]"
+                  style="padding:8px 10px;border:1px solid var(--border-soft);background:var(--bg-input);border-radius:6px;font-size:13px;color:var(--text);outline:none;resize:vertical;"></textarea>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="primary" data-action="save">保存</button>
+    </div>
+  `, (body) => {
+    const tEl = body.querySelector('#annot-text');
+    const aEl = body.querySelector('#annot-content');
+    setTimeout(() => (selText ? aEl : tEl).focus(), 60);
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="save"]').onclick = () => {
+      const t = (tEl.value || '').trim();
+      const a = (aEl.value || '').trim();
+      if (!t || !a) { showToast('被注释的文字 和 注释正文 都得填'); return; }
+      if (/[|}]/.test(t) || /\}/.test(a)) { showToast('文字 / 注释里不能含 | 或 }'); return; }
+      const insert = '{{' + t + '|' + a + '}}';
+      closeSheet();
+      // 恢复选区 (sheet 关后焦点回到 editor; 用 savedRange 替换 selection)
+      const editor = _summaryInputTa();
+      if (editor && savedRange) {
+        try {
+          editor.focus();
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(savedRange);
+        } catch (_) {}
+      }
+      _summaryReplaceSelectionWithMd(insert);
+    };
+  });
+}
+// "引用本段" — 把选中的行 (按 \n 拆) 每行加 "> " 前缀; 没选区时追加 "> " 到末尾让用户接着写
+function _summaryQuoteSection() {
+  const selText = _summaryCurrentSelectionText();
+  if (selText) {
+    const lines = selText.split('\n');
+    const quoted = lines.map(l => '> ' + l).join('\n');
+    _summaryReplaceSelectionWithMd(quoted);
+  } else {
+    _insertTextAtCaret('\n> ');
+    const ed = _summaryInputTa();
+    if (ed) { _syncEditorToState(ed); renderAll(); }
+  }
+}
+// "粘贴引用源" — 把 pendingQuoteSource 插入成 blockquote + [[sum-xxx]] 锚链
+function _summaryPasteQuote() {
+  const q = summaryState.pendingQuoteSource;
+  if (!q || !q.id) { showToast('剪贴板里没有引用源'); return; }
+  // 多行: 每行加 "> " 前缀; 末尾再补一行 "> — [[sum-id]]" 当源链接
+  const lines = String(q.text || '').replace(/\n+$/, '').split('\n');
+  const quoted = lines.map(l => '> ' + l).join('\n');
+  const block = '\n' + quoted + '\n> — [[' + q.id + ']]\n';
+  _insertTextAtCaret(block);
+  const ed = _summaryInputTa();
+  if (ed) { _syncEditorToState(ed); renderAll(); }
+  showToast('已粘贴, 引用源还留着可以再粘');
+}
+
 // ===== 笔记模板 helpers (mobile) =====
 // 数据模型: state.templates 共享 (kind='note' 区别于 task/event/project).
 // payload: { note: md串, title?: 概要标题, tags?: [], modules?: 暂不存 }
@@ -3901,9 +4046,30 @@ function _mdToEditHtml(md) {
     h = h.split(_PA).join('<b>').split(_PB).join('</b>');
     // 吞孤立未配对 ** 防 unpaired 字面跑到编辑器
     h = h.replace(/\*\*/g, '');
-    // [[xxx]] 概念链接 chip — span 内文本就是 [[xxx]], _editHtmlToMd 读 textContent 就 round-trip
+    // {{x|y}} 注释 chip — contenteditable=false 整块. 点 chip 弹注释 popup
+    //   data-annot-text / data-annot-content 给 _editNodeToMd 用来还原 md
+    //   data-annot 给点击时显示用 (与显示路径同 action)
+    h = h.replace(/\{\{([^|}\n]+)\|([^}\n]+)\}\}/g, (m, t, ann) => {
+      const tEsc = String(t).replace(/"/g, '&quot;');
+      const aEsc = String(ann).replace(/"/g, '&quot;');
+      return '<span class="sum-md-annot annot-chip-edit" contenteditable="false"'
+           + ' data-action="summary-show-annotation" data-annot="' + aEsc + '"'
+           + ' data-annot-text="' + tEsc + '" data-annot-content="' + aEsc + '"'
+           + ' title="点这看注释; 整块选中再 Delete 删除">' + _e(t) + '<span class="sum-md-annot-mark">ⓘ</span></span>';
+    });
+    // [[xxx]] — 区分概念 vs 跨笔记引用源 (sum- 前缀)
     h = h.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) => {
       const n = name.trim();
+      if (/^sum-[a-zA-Z0-9]/.test(n)) {
+        // 跨笔记引用源 — 显示成"引自 …" 的 chip
+        const src = (state.summaries || []).find(s => s.id === n);
+        const label = src
+          ? (src.title || '').trim() || (src.note || '').replace(/\s+/g, ' ').slice(0, 20) || '笔记'
+          : '已删除的笔记';
+        return '<span class="sum-md-quote-link sum-md-quote-link-edit" contenteditable="false"'
+             + ' data-id="' + n + '" title="引自《' + label.replace(/"/g, '&quot;') + '》">'
+             + '引自《' + _e(label) + '》</span>';
+      }
       return '<span class="concept-link concept-link-edit" data-action="concept-open" data-name="'
         + n.replace(/"/g, '&quot;') + '">[[' + n + ']]</span>';
     });
@@ -3967,6 +4133,18 @@ function _editNodeToMd(node) {
   if (node.nodeType === 3) return node.textContent || '';
   if (node.nodeType !== 1) return '';
   const tag = node.tagName.toLowerCase();
+  // 注释 chip → 还原成 {{x|y}}; 跨笔记引用 chip → 还原成 [[sum-xxx]]
+  if (node.classList) {
+    if (node.classList.contains('annot-chip-edit')) {
+      const t = node.dataset.annotText || '';
+      const a = node.dataset.annotContent || '';
+      return '{{' + t + '|' + a + '}}';
+    }
+    if (node.classList.contains('sum-md-quote-link-edit')) {
+      const id = node.dataset.id || '';
+      return id ? '[[' + id + ']]' : '';
+    }
+  }
   if (tag === 'br') return '\n';
   if (tag === 'b' || tag === 'strong') {
     const inner = _editHtmlToMd(node);
@@ -4082,7 +4260,9 @@ function _extractWikilinks(text) {
   let m;
   while ((m = re.exec(String(text || ''))) !== null) {
     const n = m[1].trim();
-    if (n) out.push(n);
+    // [[sum-xxx]] 是跨笔记引用源, 不是概念 — 跳过, 不污染概念库
+    if (!n || /^sum-[a-zA-Z0-9]/.test(n)) continue;
+    out.push(n);
   }
   return out;
 }
@@ -5271,10 +5451,35 @@ const _summaryActions = {
         <button type="button" class="sum-tb-pin ${isPin ? 'pinned' : ''}" data-pin-id="${def.id}" title="${isPin ? '取消固定' : '固定到工具栏'}"><span class="ico-pin"></span></button>
       </div>`;
     }).join('');
+    // 工具区: 注释 / 引用本段 / 粘贴引用源
+    const hasPendingQuote = !!(summaryState.pendingQuoteSource && summaryState.pendingQuoteSource.id);
+    const toolItemStyle = 'display:flex;align-items:center;gap:10px;padding:10px 12px;width:100%;border:0;background:transparent;text-align:left;cursor:pointer;border-radius:6px;';
+    const toolsHtml = `
+      <button class="sum-tb-tool" data-tool="annotate" style="${toolItemStyle}">
+        <span style="font-size:14px;width:22px;text-align:center;">ⓘ</span>
+        <span style="flex:1;font-size:13px;color:var(--text);">注释选中文字</span>
+      </button>
+      <button class="sum-tb-tool" data-tool="quote-section" style="${toolItemStyle}">
+        <span style="font-size:14px;width:22px;text-align:center;color:var(--accent);">"</span>
+        <span style="flex:1;font-size:13px;color:var(--text);">引用本段(把选中行加上 &gt; 前缀)</span>
+      </button>
+      ${hasPendingQuote ? `
+        <button class="sum-tb-tool" data-tool="paste-quote" style="${toolItemStyle}">
+          <span style="font-size:14px;width:22px;text-align:center;color:var(--accent);">📥</span>
+          <span style="flex:1;font-size:13px;color:var(--text);">粘贴引用源(剪贴板里有一条)</span>
+        </button>
+        <button class="sum-tb-tool" data-tool="clear-quote" style="${toolItemStyle}">
+          <span style="font-size:14px;width:22px;text-align:center;color:var(--text-faint);">×</span>
+          <span style="flex:1;font-size:13px;color:var(--text-faint);">清掉引用源剪贴板</span>
+        </button>
+      ` : ''}
+    `;
     showSheet(`
       <div class="sheet-handle"></div>
       <div class="sheet-content">
-        <div class="section-title" style="padding:0 0 8px;">格式</div>
+        <div class="section-title" style="padding:0 0 8px;">工具</div>
+        <div style="display:flex;flex-direction:column;gap:2px;">${toolsHtml}</div>
+        <div class="section-title" style="padding:14px 0 8px;">格式</div>
         <div class="sum-tb-menu sum-tb-menu-list">${rows}</div>
       </div>
     `, (body) => {
@@ -5292,8 +5497,17 @@ const _summaryActions = {
           const id = btn.dataset.pinId;
           _sumTbTogglePin(id);
           btn.classList.toggle('pinned', _sumTbPinned().includes(id));
-          // sheet 关掉后会重渲, 这里不调 _rerenderSumToolbar 也行 — 但调了能让 sheet 里改 pin 后立即看到
           _rerenderSumToolbar();
+        });
+      });
+      body.querySelectorAll('[data-tool]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const t = btn.dataset.tool;
+          closeSheet();
+          if (t === 'annotate')       openAnnotationSheet();
+          else if (t === 'quote-section') _summaryQuoteSection();
+          else if (t === 'paste-quote')    _summaryPasteQuote();
+          else if (t === 'clear-quote')    { summaryState.pendingQuoteSource = null; showToast('已清掉'); }
         });
       });
     });
@@ -6170,7 +6384,7 @@ const _summaryActions = {
     saveUI();
     renderAll();
   },
-  // 笔记右上 ⋯ → 弹一个小 sheet:编辑 / 设为模板 / 删除
+  // 笔记右上 ⋯ → 弹一个小 sheet:编辑 / 设为模板 / 复制为引用源 / 删除
   'summary-item-more': (el) => {
     const id = el.dataset.id;
     const s = (state.summaries || []).find(x => x.id === id);
@@ -6184,6 +6398,9 @@ const _summaryActions = {
         <button class="sheet-item" data-action="summary-item-set-template" data-id="${esc(id)}">
           <span class="ico-template sheet-item-icon"></span><span>设为模板</span>
         </button>
+        <button class="sheet-item" data-action="summary-item-copy-as-quote" data-id="${esc(id)}">
+          <span style="display:inline-block;width:18px;text-align:center;color:var(--accent);font-weight:600;">"</span><span>复制为引用源</span>
+        </button>
         <button class="sheet-item sheet-item-danger" data-action="summary-item-delete" data-id="${esc(id)}">
           <span class="ico-trash sheet-item-icon"></span><span>删除</span>
         </button>
@@ -6194,6 +6411,46 @@ const _summaryActions = {
     const id = el.dataset.id;
     closeSheet();
     openSaveSummaryAsTemplateSheet(id);
+  },
+  // 把这条笔记内容暂存到 pendingQuoteSource — 之后到任何笔记编辑器, 工具栏 ⋯ 里就有"粘贴引用源"
+  'summary-item-copy-as-quote': (el) => {
+    const id = el.dataset.id;
+    const s = (state.summaries || []).find(x => x.id === id);
+    closeSheet();
+    if (!s) return;
+    summaryState.pendingQuoteSource = { id: s.id, text: (s.note || '').trim() };
+    showToast('已复制 — 去任意笔记的工具栏 ⋯ 里"粘贴引用源"');
+  },
+  // 点注释 chip → 显示 / 编辑注释正文
+  'summary-show-annotation': (el) => {
+    const ann = (el && el.dataset && el.dataset.annot) || '';
+    if (!ann) return;
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 8px;">注释</div>
+        <div class="sum-md-annot-popup-text" style="padding:10px 12px;background:var(--bg-section);border-radius:8px;font-size:14px;line-height:1.55;white-space:pre-wrap;">${_renderSummaryNoteHtml(ann)}</div>
+        <div class="settings-hint" style="padding:8px 0 0;">在编辑器里改这条笔记可以改注释 — 注释 chip 整块删 / 重写</div>
+      </div>
+    `);
+  },
+  // 点跨笔记引用源链接 → 切换到那条笔记 (用 lightbox 之类的, 简化: 跳到那条所在的 day 段, scrollIntoView)
+  'summary-goto-source': (el) => {
+    const id = el && el.dataset && el.dataset.id;
+    if (!id) return;
+    closeSheet();
+    closePopover && closePopover();
+    // 滚到目标摘要 item — 它们用 data-summary-id 标记
+    requestAnimationFrame(() => {
+      const target = document.querySelector('[data-summary-id="' + id + '"]');
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('sum-item-flash');
+        setTimeout(() => target.classList.remove('sum-item-flash'), 1500);
+      } else {
+        showToast('源笔记不在当前列表 — 可能被筛选掉了');
+      }
+    });
   },
   'summary-item-delete': (el) => {
     const id = el.dataset.id;

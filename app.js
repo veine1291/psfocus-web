@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260605-1100';
+const _PSFOCUS_BUILD = '20260605-1500';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -699,6 +699,121 @@ function setSync(kind, msg) {
 let _initialPullOk = false;
 let _lastKnownGoodTaskCount = -1;  // 最近一次拉到 / push 时的任务数(用作骤降检测)
 
+// 跨设备防丢:把云端较新快照中本地没有的"新增"合并进 local,而不是用 stale local 覆盖云端
+// 触发场景:iPad/手机刚 visibilitychange/pageshow 醒来,pull/watcher 在飞,用户已经点了东西
+// 把 pushTimer 触发了。如果直接 flushPendingPush 就会用 stale local(无近期 summary)覆盖云端,
+// 这是用户报告"笔记跨设备消失"的根因。改成 merge:按 id 合并集合类字段,settings 留 local。
+function _mergeRemoteAdditive(remote) {
+  if (!state || !remote || typeof remote !== 'object') return false;
+  const _byId = (arr) => {
+    const m = new Map();
+    if (!Array.isArray(arr)) return m;
+    for (const x of arr) if (x && x.id) m.set(x.id, x);
+    return m;
+  };
+  // updatedAt-aware:本地有同 id 但远端 updatedAt 更新 → 用远端(对方做了 edit)
+  // 本地没有该 id → 直接补上(对方新增的内容,不能丢)
+  // 本地有但远端没有 → **保留本地**(本地新增的内容,云端还没收到,也不能丢)
+  const _mergeArr = (localArr, remoteArr) => {
+    const out = [];
+    const lm = _byId(localArr);
+    const rm = _byId(remoteArr);
+    const seen = new Set();
+    for (const [id, l] of lm) {
+      const r = rm.get(id);
+      if (r) {
+        const lt = (l && l.updatedAt) || 0;
+        const rt = (r && r.updatedAt) || 0;
+        out.push(rt > lt ? r : l);
+      } else {
+        out.push(l);
+      }
+      seen.add(id);
+    }
+    for (const [id, r] of rm) {
+      if (!seen.has(id)) out.push(r);
+    }
+    return out;
+  };
+  let changed = false;
+  const keys = ['summaries', 'tasks', 'events', 'projects', 'folders', 'taskLists',
+                'smartLists', 'templates', 'concepts', 'meditationSessions', 'sessions'];
+  for (const k of keys) {
+    const ra = Array.isArray(remote[k]) ? remote[k] : null;
+    if (!ra) continue;
+    const la = Array.isArray(state[k]) ? state[k] : [];
+    const merged = _mergeArr(la, ra);
+    if (merged.length !== la.length) changed = true;
+    state[k] = merged;
+  }
+  // 标签 / 概念别名 等简单字符串数组:并集
+  if (Array.isArray(remote.tags)) {
+    const s = new Set([...(state.tags || []), ...remote.tags]);
+    if (s.size !== (state.tags || []).length) changed = true;
+    state.tags = Array.from(s);
+  }
+  if (Array.isArray(remote.summaryTags)) {
+    const s = new Set([...(state.summaryTags || []), ...remote.summaryTags]);
+    if (s.size !== (state.summaryTags || []).length) changed = true;
+    state.summaryTags = Array.from(s);
+  }
+  // 按天的模块字典:按 date key 合并;同一天的话 entries 数组按 id 合并
+  if (remote.summaryDayModules && typeof remote.summaryDayModules === 'object') {
+    state.summaryDayModules = state.summaryDayModules || {};
+    for (const dk of Object.keys(remote.summaryDayModules)) {
+      const rl = remote.summaryDayModules[dk] || [];
+      const ll = state.summaryDayModules[dk] || [];
+      const merged = _mergeArr(ll, rl);
+      if (merged.length !== ll.length) changed = true;
+      state.summaryDayModules[dk] = merged;
+    }
+  }
+  // settings 不动:用户最近的 UI 偏好优先;远端的旧 settings 不该覆盖
+  return changed;
+}
+
+// 抢救本地草稿:每次 sanitize/push 时把最近 30 天的 summaries 写到 localStorage,
+// 万一云端被 stale 覆盖了,下次冷启时能从本地兜底捞回来 push 上去
+const _LS_SUM_BACKUP_KEY = 'psf-sum-backup-v1';
+const _LS_SUM_BACKUP_DAYS = 30;
+function _saveSummariesBackupLS() {
+  try {
+    if (!state || !Array.isArray(state.summaries)) return;
+    const cutoff = Date.now() - _LS_SUM_BACKUP_DAYS * 86400000;
+    const recent = state.summaries.filter(s => s && ((s.updatedAt || s.createdAt || 0) >= cutoff));
+    localStorage.setItem(_LS_SUM_BACKUP_KEY, JSON.stringify({ ts: Date.now(), summaries: recent }));
+  } catch (_) {}
+}
+function _restoreSummariesFromBackupLS() {
+  // 在 bindCloud pull 成功后调用:对比 LS 备份,本地有但云端没有的近期 summary 自动补回
+  try {
+    if (!state || !Array.isArray(state.summaries)) return;
+    const raw = localStorage.getItem(_LS_SUM_BACKUP_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.summaries)) return;
+    const cloudIds = new Set(state.summaries.map(s => s && s.id).filter(Boolean));
+    const cutoff = Date.now() - _LS_SUM_BACKUP_DAYS * 86400000;
+    const recovered = [];
+    for (const s of data.summaries) {
+      if (!s || !s.id) continue;
+      if (cloudIds.has(s.id)) continue;
+      const ts = s.updatedAt || s.createdAt || 0;
+      if (ts < cutoff) continue;
+      recovered.push(s);
+    }
+    if (recovered.length) {
+      console.warn('[backup-restore] 从本地备份补回', recovered.length, '条云端缺失的笔记');
+      psLog('LOG', 'backup-restore: 从本地备份补回 ' + recovered.length + ' 条云端缺失的笔记');
+      state.summaries = state.summaries.concat(recovered);
+      // 触发一次 push 把恢复的笔记送回云端
+      setTimeout(() => { try { pushState(); } catch (_) {} }, 2000);
+    }
+  } catch (e) {
+    psLog('WARN', 'backup-restore fail', e && e.message || e);
+  }
+}
+
 async function bindCloud() {
   psLog('LOG', 'bindCloud:start uid=' + (uid || '?'));
   setSync('syncing', '加载中…');
@@ -718,6 +833,9 @@ async function bindCloud() {
       state = sanitizeState(remote);
       _initialPullOk = true;
       _lastKnownGoodTaskCount = (state.tasks || []).length;
+      // 兜底:对比 localStorage 备份,本地有但云端没有的近期 summaries 自动补回
+      // 防"跨设备 stale push 覆盖云端"导致用户笔记凭空消失
+      try { _restoreSummariesFromBackupLS(); } catch (_) {}
       setSync('synced', '已同步');
     } else {
       psLog('LOG', 'bindCloud:remote empty — new account?');
@@ -912,9 +1030,13 @@ function startWatch() {
         const data = docs[0];
         if (!data || !data.state) return;
         // 本地有还没推上去的改动(还在防抖窗口里)→ 绝不能用远端覆盖,
-        // 否则刚勾的「完成」会被并发的桌面端快照冲掉。立即把本地 flush 上去(占最新 ts)。
+        // 否则刚勾的「完成」会被并发的桌面端快照冲掉。
+        // 但也不能直接 flush 本地 stale state, 那会把对端刚 push 上来的新内容(如刚发布的笔记)冲掉。
+        // 改成:把远端 additive merge 进本地(按 id 并集,本地新增保留,远端新增补回),
+        // 然后 flushPendingPush 把合并后的完整 state 推上去。
         if (pushTimer) {
-          console.warn('[watch] 本地有未推送改动 — 跳过远端快照,立即 flush 本地');
+          console.warn('[watch] 本地有未推送改动 — additive merge 远端,再 flush');
+          try { _mergeRemoteAdditive(data.state); } catch (e) { console.warn('[watch] merge fail', e); }
           flushPendingPush();
           return;
         }
@@ -1012,6 +1134,7 @@ async function _performPush(attempt) {
     if (!r || r.ok !== true) throw new Error((r && r.error) || '云函数返回失败');
     _lastKnownGoodTaskCount = (state.tasks || []).length;  // push 成功后更新基准
     setSync('synced', '已同步');
+    _saveSummariesBackupLS();   // push 成功 → 把最近 summaries 落地一份, 万一云端被覆盖能恢复
   } catch (e) {
     const errMsg = (e && (e.message || e.code || String(e))) || '未知';
     console.error('[push error attempt ' + attempt + ']', e);
@@ -1040,15 +1163,27 @@ async function pullStateOnce() {
   if (pushTimer) { flushPendingPush(); return; }
   if (_pullInflight) return;   // 同一时刻只允许一个 pull 在飞,防止并发拉两份大 payload 双倍解析内存
   _pullInflight = true;
+  // 关键: 记录 await 开始前的 localTs。await 期间用户可能点东西触发 pushState,
+  // 把 state._cloudUpdatedAt bump 到 now。如果用 await 后的 localTs 判定"远端更新与否",
+  // 会误以为本地更新, 然后用 stale local push 覆盖云端真实数据 — 这是"跨设备笔记消失"bug 的根因
+  const localBefore = state && state._cloudUpdatedAt || 0;
   try {
     const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'pull', docId: uid } });
     const r = res && res.result;
     const remote = (r && r.ok) ? r.state : null;
     if (!remote) return;
-    if (pushTimer) { flushPendingPush(); return; }   // await 期间又产生了本地改动
-    const local = state && state._cloudUpdatedAt || 0;
     const remoteTs = remote._cloudUpdatedAt || 0;
-    if (remoteTs > local) {
+    // await 期间产生了本地改动:不能 flush stale local 盖掉远端新内容,
+    // 而是把远端 additive merge 进 local,再让 flushPendingPush 推合并后的完整 state
+    if (pushTimer) {
+      if (remoteTs > localBefore) {
+        console.warn('[pull] await 期间本地有改动 + 远端更新 — additive merge, 再 flush');
+        try { _mergeRemoteAdditive(remote); } catch (e) { console.warn('[pull] merge fail', e); }
+      }
+      flushPendingPush();
+      return;
+    }
+    if (remoteTs > localBefore) {
       _applyRemoteSnapshot(remote);
     } else if (remote) {
       // 哪怕没更新也算云端可达
@@ -5977,6 +6112,7 @@ const _summaryActions = {
     pushState();
     // 同 summary-submit: 立即 flush, 别等 1s 防抖 — iPad 用户保存完锁屏就可能丢
     try { flushPendingPush(); } catch (_) {}
+    try { _saveSummariesBackupLS(); } catch (_) {}   // 写一份 LS 备份, 防云端被覆盖
     closeSummaryEditorPage();
     renderAll();
     if (typeof showToast === 'function') showToast('已保存');
@@ -6389,6 +6525,9 @@ const _summaryActions = {
     // 防抖 timer 不一定能跑到, push 就丢了, 用户看到笔记发出去过一会儿"消失"
     // flushPendingPush 立即清掉防抖直接发, 保证笔记真的上云
     try { flushPendingPush(); } catch (_) {}
+    // 立即落一份 LS 备份: 即便云端 push 因竞态被另一台设备 stale state 覆盖,
+    // 下次冷启 bindCloud 会从 LS 备份恢复并重推
+    try { _saveSummariesBackupLS(); } catch (_) {}
     if (typeof closeSheet === 'function') closeSheet();   // 收起浮动输入面板
     renderAll();
   },

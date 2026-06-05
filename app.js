@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260606-0300';
+const _PSFOCUS_BUILD = '20260606-0500';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -4141,13 +4141,43 @@ function _pasteQuoteIntoEditor(ed, q) {
   }
   showToast('已粘贴, 引用源还留着可以再粘');
 }
-// 引用源剪贴板的统一写入口 — 同步落 localStorage + 重渲 chip
+// chip 1 分钟自动关 — 计时器引用 + 起算时间戳 (用于进度条算 %)
+let _quoteChipExpireTimer = null;
+let _quoteChipExpireAt = 0;
+const _QUOTE_CHIP_TTL_MS = 60000;
+// 启动时如果 localStorage 已有引用源 (上次未到期), 也启 60s 倒计时
+// 直接 setTimeout 调一次 _setPendingQuoteSource 重置, 别在文件初始化时阻塞
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    try {
+      if (summaryState && summaryState.pendingQuoteSource && summaryState.pendingQuoteSource.id && !_quoteChipExpireTimer) {
+        _setPendingQuoteSource(summaryState.pendingQuoteSource);
+      }
+    } catch (_) {}
+  }, 0);
+}
+// 引用源剪贴板的统一写入口 — 同步落 localStorage + 重渲 chip + 重置 60s 倒计时
 function _setPendingQuoteSource(v) {
   summaryState.pendingQuoteSource = v || null;
   try {
     if (v && v.id) localStorage.setItem('psfocus_pendingQuoteSource', JSON.stringify(v));
     else localStorage.removeItem('psfocus_pendingQuoteSource');
   } catch (_) {}
+  // 计时器重置
+  if (_quoteChipExpireTimer) { clearTimeout(_quoteChipExpireTimer); _quoteChipExpireTimer = null; }
+  if (v && v.id) {
+    _quoteChipExpireAt = Date.now() + _QUOTE_CHIP_TTL_MS;
+    _quoteChipExpireTimer = setTimeout(() => {
+      _quoteChipExpireTimer = null;
+      _quoteChipExpireAt = 0;
+      // 1 分钟后自动清; 走 setter 防忘了清 localStorage
+      summaryState.pendingQuoteSource = null;
+      try { localStorage.removeItem('psfocus_pendingQuoteSource'); } catch (_) {}
+      try { _renderQuoteClipboardChip(); } catch (_) {}
+    }, _QUOTE_CHIP_TTL_MS);
+  } else {
+    _quoteChipExpireAt = 0;
+  }
   try { _renderQuoteClipboardChip(); } catch (_) {}
 }
 // 顶部浮动剪贴板 chip — 引用源就绪时一直可见, 让用户清楚知道在哪粘 + 一键粘贴
@@ -4168,11 +4198,28 @@ function _renderQuoteClipboardChip() {
   const preview = String(q.text || '').replace(/\s+/g, ' ').slice(0, 40)
     + (q.text && q.text.length > 40 ? '…' : '');
   host.innerHTML = `
-    <span class="qcc-icon">"</span>
-    <span class="qcc-text" title="${esc(q.text || '')}">${esc(preview || '(空)')}</span>
-    <button class="qcc-paste" data-action="summary-quote-chip-paste" aria-label="粘贴到当前编辑器">粘贴</button>
-    <button class="qcc-clear" data-action="summary-quote-chip-clear" aria-label="清掉引用源">×</button>
+    <div class="qcc-row">
+      <span class="qcc-icon">"</span>
+      <span class="qcc-text" title="${esc(q.text || '')}">${esc(preview || '(空)')}</span>
+      <button class="qcc-paste" data-action="summary-quote-chip-paste" aria-label="粘贴到当前编辑器">粘贴</button>
+      <button class="qcc-clear" data-action="summary-quote-chip-clear" aria-label="清掉引用源">×</button>
+    </div>
+    <div class="qcc-progress"><div class="qcc-progress-bar"></div></div>
   `;
+  // 进度条 CSS 动画 — JS 算实际剩余时间, 防 chip 是从 localStorage 恢复
+  // (例如刷新页面, expireAt 是新计算的, 跟 ttl 一致)
+  const bar = host.querySelector('.qcc-progress-bar');
+  if (bar && _quoteChipExpireAt > 0) {
+    const remain = Math.max(0, _quoteChipExpireAt - Date.now());
+    const pct = (remain / _QUOTE_CHIP_TTL_MS) * 100;
+    // CSS transition 让宽度从当前 → 0 平滑过渡 remain ms
+    bar.style.transition = 'none';
+    bar.style.width = pct + '%';
+    // 强制 reflow 让上面的 width 先生效, 然后再加 transition + 设为 0
+    bar.offsetHeight;
+    bar.style.transition = 'width ' + remain + 'ms linear';
+    bar.style.width = '0%';
+  }
 }
 
 // ===== 笔记模板 helpers (mobile) =====

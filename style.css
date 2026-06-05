@@ -6108,7 +6108,8 @@ body.canvas-open { overflow: hidden; }
 /* ===== 引用源剪贴板浮动 chip (Kayu 2026-06-05) =====
    "复制为引用源" 后顶部一直显示, 让用户清楚知道"剪贴板里有什么 + 在哪粘"
    点 "粘贴" 按钮自动打开当前编辑器并把引用粘到光标处
-   localStorage 持久化, 刷新 / 切回 app 不丢 */
+   localStorage 持久化, 刷新 / 切回 app 不丢
+   1 分钟自动关 + 底部进度条 (Kayu 2026-06-06) */
 .quote-clip-chip {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 8px);
@@ -6116,10 +6117,8 @@ body.canvas-open { overflow: hidden; }
   transform: translateX(-50%);
   z-index: 9000;             /* 高于 sheet (sheet z-index 8000) — 引用源全程可见 */
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
   max-width: calc(100vw - 24px);
-  padding: 8px 8px 8px 14px;
   background: var(--bg-elevated);
   border: 1px solid var(--accent);
   border-radius: 24px;
@@ -6128,6 +6127,25 @@ body.canvas-open { overflow: hidden; }
   color: var(--text);
   -webkit-tap-highlight-color: transparent;
   animation: qcc-pop-in .25s cubic-bezier(.22, 1, .36, 1) both;
+  overflow: hidden;          /* 让进度条不会突出圆角外 */
+}
+.quote-clip-chip .qcc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+}
+.quote-clip-chip .qcc-progress {
+  width: 100%;
+  height: 3px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.quote-clip-chip .qcc-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 0;
+  /* 宽度和 transition 由 JS 设置, 这里只兜底 */
+  width: 100%;
 }
 @keyframes qcc-pop-in {
   from { transform: translateX(-50%) translateY(-12px); opacity: 0; }

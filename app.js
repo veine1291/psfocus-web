@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260605-1900';
+const _PSFOCUS_BUILD = '20260606-0100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -4092,7 +4092,7 @@ function _summaryQuoteSection() {
     if (ed) { _syncEditorToState(ed); renderAll(); }
   }
 }
-// "粘贴引用源" — 把 pendingQuoteSource 插入成 blockquote + [[sum-xxx]] 锚链
+// "粘贴引用源" — 旧函数: 依赖 selection range, 给工具栏 ⋯ 用 (此时已在编辑器里, 有 caret)
 function _summaryPasteQuote() {
   const q = summaryState.pendingQuoteSource;
   if (!q || !q.id) { showToast('剪贴板里没有引用源'); return; }
@@ -4103,6 +4103,45 @@ function _summaryPasteQuote() {
   _insertTextAtCaret(block);
   const ed = _summaryInputTa();
   if (ed) { _syncEditorToState(ed); renderAll(); }
+  showToast('已粘贴, 引用源还留着可以再粘');
+}
+// 新版: 直接操作 md (state) 层, 给 chip "粘贴" 按钮用 — 不依赖 DOM selection
+// chip 点击时焦点在 chip 上, getSelection 在 body, _insertTextAtCaret 插不进编辑器
+// 改成: 算好 newMd → 写到 state → 重渲编辑器 innerHTML → 光标移到末尾
+function _pasteQuoteIntoEditor(ed, q) {
+  if (!ed || !q || !q.id) return;
+  const lines = String(q.text || '').replace(/\n+$/, '').split('\n');
+  const quoted = lines.map(l => '> ' + l).join('\n');
+  const block = '\n' + quoted + '\n> — [[' + q.id + ']]\n';
+  // 1. 读当前 md (按 mode 分流)
+  const inSepEdit = ed.classList && ed.classList.contains('sep-editor')
+                 && _summaryEditorPage && _summaryEditorPage.open;
+  let curMd;
+  if (inSepEdit && _summaryEditorPage.mode === 'edit') curMd = _summaryEditorPage.editingMd || '';
+  else if (inSepEdit) curMd = summaryState.draftNote || '';
+  else curMd = summaryState.draftNote || '';
+  // 2. 追加到末尾 (永远 append, 不删原内容; 保证不丢)
+  const newMd = curMd && !/\n\s*$/.test(curMd) ? curMd + '\n' + block : curMd + block;
+  // 3. 写回 state
+  if (inSepEdit && _summaryEditorPage.mode === 'edit') _summaryEditorPage.editingMd = newMd;
+  else summaryState.draftNote = newMd;
+  // 4. 重渲编辑器 innerHTML + 光标移末尾
+  ed.innerHTML = _mdToEditHtml(newMd);
+  setTimeout(() => {
+    try {
+      ed.focus();
+      _caretToEnd(ed);
+      ed.scrollTop = ed.scrollHeight;
+    } catch (_) {}
+  }, 0);
+  // 5. 解析 tags + 概念 (跟手动输入同款), 防引用块里 #tag 没建索引
+  if (typeof _summaryParseTagsFromText === 'function') {
+    const tags = _summaryParseTagsFromText(newMd);
+    for (const tg of tags) _summaryEnsureTag && _summaryEnsureTag(tg);
+  }
+  if (typeof _extractWikilinks === 'function') {
+    for (const wn of _extractWikilinks(newMd)) _ensureConcept && _ensureConcept(wn);
+  }
   showToast('已粘贴, 引用源还留着可以再粘');
 }
 // 引用源剪贴板的统一写入口 — 同步落 localStorage + 重渲 chip
@@ -5056,6 +5095,38 @@ function _renderSummaryList() {
   return html;
 }
 
+// 双向反链索引 — 扫一遍所有 summaries, 算每条笔记被哪些笔记引用 (note 含 [[sum-id]])
+// 缓存到模块变量, sanitize / push 时让 watcher 重建. renderAll 多次调用同 cache 不重算
+let _summaryBacklinksCache = null;
+let _summaryBacklinksKey = '';
+function _summaryBacklinksMap() {
+  // 用 summaries 长度 + 最后 updatedAt 组合做缓存 key, 廉价但够用
+  const arr = state.summaries || [];
+  const key = arr.length + ':' + arr.reduce((a, s) => Math.max(a, s.updatedAt || s.createdAt || 0), 0);
+  if (_summaryBacklinksCache && _summaryBacklinksKey === key) return _summaryBacklinksCache;
+  const map = new Map();   // sumId → [{id, snippet}]
+  const re = /\[\[(sum-[^\]\n]+?)\]\]/g;
+  for (const src of arr) {
+    const txt = src.note || '';
+    if (!txt.includes('[[sum-')) continue;
+    let m;
+    re.lastIndex = 0;
+    const seen = new Set();
+    while ((m = re.exec(txt)) !== null) {
+      const targetId = m[1];
+      if (seen.has(targetId)) continue;   // 同一条笔记多次引同源, 算一次反链
+      seen.add(targetId);
+      if (!map.has(targetId)) map.set(targetId, []);
+      map.get(targetId).push({
+        id: src.id,
+        snippet: (src.title || '').trim() || (src.note || '').replace(/\s+/g, ' ').slice(0, 24) || '笔记',
+      });
+    }
+  }
+  _summaryBacklinksCache = map;
+  _summaryBacklinksKey = key;
+  return map;
+}
 function _renderSummaryItem(s) {
   // tag chip 行不再单独渲染 — note 里的 #xxx 已被转 clickable;只为 orphan tag(没出现在 note 里)显示
   const noteTagsInText = new Set();
@@ -5075,14 +5146,21 @@ function _renderSummaryItem(s) {
          <span class="ico-folder"></span><span>${esc(sourceProj.name || '未命名项目')}</span>
        </button>`
     : '';
+  // 反链: 这条笔记被几条引用 (Kayu 2026-06-06 — 双向索引诉求)
+  const backlinks = _summaryBacklinksMap().get(s.id) || [];
+  const backlinkBadge = backlinks.length
+    ? `<button class="sum-item-backlink-badge" data-action="summary-show-backlinks" data-id="${esc(s.id)}" title="${backlinks.length} 条笔记引用了这条">
+         <span class="ico-link"></span> 被 ${backlinks.length} 条引用
+       </button>`
+    : '';
   const tStr = new Date(s.createdAt).toLocaleString('zh-CN');
-  return `<div class="sum-item" data-summary-id="${esc(s.id)}">
+  return `<div class="sum-item ${backlinks.length ? 'has-backlinks' : ''}" data-summary-id="${esc(s.id)}">
     <div class="sum-item-meta">
       <span class="sum-item-time">${esc(tStr)}</span>
       <button class="sum-item-more" data-action="summary-item-more" data-id="${esc(s.id)}">⋯</button>
     </div>
     ${(s.note||'').trim() ? `<div class="sum-item-note">${_renderSummaryNoteHtml(s.note)}</div>` : ''}
-    ${tagsHtml || sourceLinkHtml ? `<div class="sum-item-tags">${tagsHtml}${sourceLinkHtml}</div>` : ''}
+    ${tagsHtml || sourceLinkHtml || backlinkBadge ? `<div class="sum-item-tags">${tagsHtml}${sourceLinkHtml}${backlinkBadge}</div>` : ''}
     ${imagesHtml}
   </div>`;
 }
@@ -6676,34 +6754,71 @@ const _summaryActions = {
     _setPendingQuoteSource({ id: s.id, text: (s.note || '').trim() });
     showToast('已复制 — 顶部出现引用 chip, 进任意笔记编辑器点"粘贴"即可');
   },
-  // 浮动 chip 上的"粘贴"按钮
+  // 浮动 chip 上的"粘贴"按钮 — 直接操作 md (state) 层, 不依赖 DOM selection
+  // 关键修复: 之前用 _insertTextAtCaret 依赖 window.getSelection, 但点 chip 时焦点不在编辑器
+  // selection 落在 body 上, 文本插不进去 → "空白提示框" 现象 (Kayu 2026-06-06 报)
   'quote-chip-paste': () => {
     const q = summaryState && summaryState.pendingQuoteSource;
     if (!q || !q.id) { showToast('剪贴板里没有引用源'); return; }
-    // 当前在编辑器 (sheet 输入 or 全屏编辑页) → 直接插入光标处
     const ed = _summaryInputTa();
     if (ed) {
-      ed.focus();
-      _summaryPasteQuote();
+      _pasteQuoteIntoEditor(ed, q);
       return;
     }
-    // 没编辑器: 打开主输入 sheet, 等渲染完追加到末尾
-    if (typeof openSummaryInputSheet === 'function') {
-      openSummaryInputSheet();
-    } else {
-      // 兜底:openSummaryInputSheet 不存在的极端老版本 — 把内容追加进 draftNote 后 render
-      summaryState.draftNote = (summaryState.draftNote || '') + '\n\n> ' + (q.text || '').split('\n').join('\n> ') + '\n> — [[' + q.id + ']]\n';
-      renderAll();
-    }
+    // 没编辑器: 先打开主输入 sheet, 等 DOM 渲染好再粘
+    if (typeof openSummaryInputSheet === 'function') openSummaryInputSheet();
     setTimeout(() => {
       const e2 = _summaryInputTa();
-      if (e2) { e2.focus(); _caretToEnd(e2); _summaryPasteQuote(); }
-    }, 80);
+      if (e2) _pasteQuoteIntoEditor(e2, q);
+      else showToast('打不开编辑器, 请先点 + 新建');
+    }, 120);
   },
   // 浮动 chip 上的 × 清掉
   'quote-chip-clear': () => {
     _setPendingQuoteSource(null);
     showToast('已清掉引用源');
+  },
+  // 反链 badge — 弹 sheet 列出引用了这条的所有笔记, 点跳转
+  'summary-show-backlinks': (el) => {
+    const id = el.dataset.id;
+    const backlinks = _summaryBacklinksMap().get(id) || [];
+    if (!backlinks.length) { showToast('没有引用'); return; }
+    const itemStyle = 'display:flex;align-items:flex-start;gap:10px;padding:12px 14px;text-align:left;width:100%;border:0;background:transparent;border-radius:6px;';
+    const rows = backlinks.map(b => {
+      const src = (state.summaries || []).find(x => x.id === b.id);
+      const tStr = src ? new Date(src.createdAt).toLocaleString('zh-CN') : '';
+      return `<button class="sheet-item" data-bl-id="${esc(b.id)}" style="${itemStyle}">
+        <span style="font-size:14px;width:16px;text-align:center;color:var(--accent);font-weight:600;flex-shrink:0;line-height:1.4;">↩</span>
+        <span style="flex:1;min-width:0;">
+          <span style="display:block;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(b.snippet)}</span>
+          <span style="display:block;font-size:11px;color:var(--text-dim);margin-top:2px;">${esc(tStr)}</span>
+        </span>
+      </button>`;
+    }).join('');
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 8px;">被这 ${backlinks.length} 条笔记引用</div>
+        <div style="display:flex;flex-direction:column;gap:2px;">${rows}</div>
+      </div>
+    `, (body) => {
+      body.querySelectorAll('[data-bl-id]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const targetId = btn.dataset.blId;
+          closeSheet();
+          requestAnimationFrame(() => {
+            const target = document.querySelector('[data-summary-id="' + targetId + '"]');
+            if (target) {
+              target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              target.classList.add('sum-item-flash');
+              setTimeout(() => target.classList.remove('sum-item-flash'), 1500);
+            } else {
+              showToast('源笔记不在当前列表 — 可能被筛选掉了');
+            }
+          });
+        });
+      });
+    });
   },
   // 点注释 chip → 显示 / 编辑注释正文
   'summary-show-annotation': (el) => {

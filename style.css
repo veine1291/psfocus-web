@@ -6075,6 +6075,41 @@ body.canvas-open { overflow: hidden; }
   transition: background .6s ease;
 }
 
+/* 反链 badge — 「被 N 条引用」, 出现在 sum-item-tags 行最后, Kayu 2026-06-06 */
+.sum-item-backlink-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.sum-item-backlink-badge:active { transform: scale(0.97); }
+.sum-item-backlink-badge .ico-link {
+  width: 11px; height: 11px;
+  background: currentColor;
+  -webkit-mask: var(--ico-link, none) center / contain no-repeat;
+          mask: var(--ico-link, none) center / contain no-repeat;
+}
+/* 被引用的笔记左边加一道浅主色装饰条, 一眼看出"有反链" */
+.sum-item.has-backlinks {
+  position: relative;
+}
+.sum-item.has-backlinks::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  opacity: 0.6;
+}
+
 /* ===== 引用源剪贴板浮动 chip (Kayu 2026-06-05) =====
    "复制为引用源" 后顶部一直显示, 让用户清楚知道"剪贴板里有什么 + 在哪粘"
    点 "粘贴" 按钮自动打开当前编辑器并把引用粘到光标处

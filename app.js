@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260605-1500';
+const _PSFOCUS_BUILD = '20260605-1700';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -753,9 +753,30 @@ function _mergeRemoteAdditive(remote) {
     state.tags = Array.from(s);
   }
   if (Array.isArray(remote.summaryTags)) {
-    const s = new Set([...(state.summaryTags || []), ...remote.summaryTags]);
-    if (s.size !== (state.summaryTags || []).length) changed = true;
-    state.summaryTags = Array.from(s);
+    // summaryTags 是 [{name,...}] 对象, 直接 Set 合并按引用去重无意义
+    // 按 name 合并: 本地优先, 远端缺的补; 类型容错 (string 也认, 不合法的丢)
+    const _normTag = (t) => {
+      if (typeof t === 'string') {
+        const nm = t.trim();
+        return nm ? { name: nm, pinned: false, color: '', order: 0 } : null;
+      }
+      if (t && typeof t === 'object' && typeof t.name === 'string' && t.name.trim()) {
+        return { name: t.name.trim(), pinned: !!t.pinned, color: t.color || '', order: t.order || 0 };
+      }
+      return null;
+    };
+    const byName = new Map();
+    for (const t of (state.summaryTags || [])) {
+      const n = _normTag(t); if (n) byName.set(n.name, n);
+    }
+    const before = byName.size;
+    for (const t of remote.summaryTags) {
+      const n = _normTag(t);
+      if (!n) continue;
+      if (!byName.has(n.name)) byName.set(n.name, n);
+    }
+    if (byName.size !== before) changed = true;
+    state.summaryTags = Array.from(byName.values());
   }
   // 按天的模块字典:按 date key 合并;同一天的话 entries 数组按 id 合并
   if (remote.summaryDayModules && typeof remote.summaryDayModules === 'object') {
@@ -1352,7 +1373,34 @@ function sanitizeState(s) {
     if (!sum.updatedAt) sum.updatedAt = sum.createdAt;
     if (sum.modules) delete sum.modules;
   }
-  const summaryTags = arr(s.summaryTags);
+  // summaryTags 形状: [{name,pinned,color,order}]。手机/tray 老代码可能推过纯 string,
+  // 一旦混入 dashboard 侧栏 t.name.startsWith() 整个 section 进不去 → 这里统一规范化
+  const _rawSumTags = arr(s.summaryTags);
+  const summaryTags = (() => {
+    const seen = new Set();
+    const out = [];
+    let maxOrder = 0;
+    for (const t of _rawSumTags) {
+      if (typeof t === 'string') {
+        const nm = t.trim();
+        if (!nm || seen.has(nm)) continue;
+        seen.add(nm); maxOrder += 100;
+        out.push({ name: nm, pinned: false, color: '', order: maxOrder });
+      } else if (t && typeof t === 'object' && typeof t.name === 'string' && t.name.trim()) {
+        const nm = t.name.trim();
+        if (seen.has(nm)) continue;
+        seen.add(nm);
+        if (typeof t.order === 'number' && t.order > maxOrder) maxOrder = t.order;
+        out.push({
+          name: nm,
+          pinned: !!t.pinned,
+          color: typeof t.color === 'string' ? t.color : '',
+          order: typeof t.order === 'number' ? t.order : (maxOrder += 100, maxOrder),
+        });
+      }
+    }
+    return out;
+  })();
   // 概念库 — Obsidian 风格 [[xxx]] 双向链接 (2026-05-27)
   const concepts = arr(s.concepts);
   for (const c of concepts) {

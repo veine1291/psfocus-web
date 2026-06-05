@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260606-0100';
+const _PSFOCUS_BUILD = '20260606-0300';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2111,17 +2111,14 @@ function _renderSummaryNoteHtml(text) {
          + esc(t.trim()) + '<span class="sum-md-annot-mark">ⓘ</span></span>';
   });
   // [[xxx]] 概念链接 — 在 #tag 替换之前做, 防止 [[xxx]] 内含 # 被误抓
-  // 若 xxx 以 'sum-' 开头, 视为跨笔记引用源链接 ("引自 XXX"), 不是概念
+  // 'sum-' 前缀 = 跨笔记引用源, 显示成纯 "引自" chip (不带内容预览), 点击弹源笔记选择框
+  // 不带预览的原因: 内容可能含 #tag / [[concept]] 等 chip 元素, 内嵌进 title attr 会破坏 HTML
+  // 而且用户反馈"标签太长占视野", 改成简洁 chip + 点开弹层
   html = html.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) => {
     const n = name.trim();
     if (/^sum-[a-zA-Z0-9]/.test(n)) {
-      // 跨笔记引用 — 查源摘要的标题或前 20 字
-      const src = (state.summaries || []).find(s => s.id === n);
-      const label = src
-        ? (src.title || '').trim() || (src.note || '').replace(/\s+/g, ' ').slice(0, 20) || '笔记'
-        : '已删除的笔记';
-      return '<a class="sum-md-quote-link" data-action="summary-goto-source"'
-           + ' data-id="' + esc(n) + '">引自《' + esc(label) + '》</a>';
+      return '<a class="sum-md-quote-link" data-action="summary-show-quote-source"'
+           + ' data-id="' + esc(n) + '" title="点开查看引用源">↩ 引自</a>';
     }
     return '<span class="concept-link" data-action="concept-open" data-name="' + esc(n) + '">' + esc(n) + '</span>';
   });
@@ -4173,8 +4170,8 @@ function _renderQuoteClipboardChip() {
   host.innerHTML = `
     <span class="qcc-icon">"</span>
     <span class="qcc-text" title="${esc(q.text || '')}">${esc(preview || '(空)')}</span>
-    <button class="qcc-paste" data-action="quote-chip-paste" aria-label="粘贴到当前编辑器">粘贴</button>
-    <button class="qcc-clear" data-action="quote-chip-clear" aria-label="清掉引用源">×</button>
+    <button class="qcc-paste" data-action="summary-quote-chip-paste" aria-label="粘贴到当前编辑器">粘贴</button>
+    <button class="qcc-clear" data-action="summary-quote-chip-clear" aria-label="清掉引用源">×</button>
   `;
 }
 
@@ -4342,17 +4339,13 @@ function _mdToEditHtml(md) {
            + ' title="点这看注释; 整块选中再 Delete 删除">' + _e(t) + '<span class="sum-md-annot-mark">ⓘ</span></span>';
     });
     // [[xxx]] — 区分概念 vs 跨笔记引用源 (sum- 前缀)
+    // 编辑器里显示成简洁 "↩ 引自" chip, 跟显示视图一致, 避免 chip 内嵌 #tag/[[concept]] 破坏 HTML
     h = h.replace(/\[\[([^\]\n]+?)\]\]/g, (m, name) => {
       const n = name.trim();
       if (/^sum-[a-zA-Z0-9]/.test(n)) {
-        // 跨笔记引用源 — 显示成"引自 …" 的 chip
-        const src = (state.summaries || []).find(s => s.id === n);
-        const label = src
-          ? (src.title || '').trim() || (src.note || '').replace(/\s+/g, ' ').slice(0, 20) || '笔记'
-          : '已删除的笔记';
         return '<span class="sum-md-quote-link sum-md-quote-link-edit" contenteditable="false"'
-             + ' data-id="' + n + '" title="引自《' + label.replace(/"/g, '&quot;') + '》">'
-             + '引自《' + _e(label) + '》</span>';
+             + ' data-action="summary-show-quote-source"'
+             + ' data-id="' + n.replace(/"/g, '&quot;') + '" title="点开查看引用源">↩ 引自</span>';
       }
       return '<span class="concept-link concept-link-edit" data-action="concept-open" data-name="'
         + n.replace(/"/g, '&quot;') + '">[[' + n + ']]</span>';
@@ -5147,10 +5140,12 @@ function _renderSummaryItem(s) {
        </button>`
     : '';
   // 反链: 这条笔记被几条引用 (Kayu 2026-06-06 — 双向索引诉求)
+  // 用 inline SVG 链条 icon, 跟其他 ico-* 自定义 mask 走的 css 变量解耦, 防"纯色方块"
   const backlinks = _summaryBacklinksMap().get(s.id) || [];
   const backlinkBadge = backlinks.length
     ? `<button class="sum-item-backlink-badge" data-action="summary-show-backlinks" data-id="${esc(s.id)}" title="${backlinks.length} 条笔记引用了这条">
-         <span class="ico-link"></span> 被 ${backlinks.length} 条引用
+         <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M6.5 9.5l3-3"/><path d="M9 5l1.5-1.5a2.5 2.5 0 0 1 3.5 3.5L12.5 8.5"/><path d="M7 11l-1.5 1.5a2.5 2.5 0 0 1-3.5-3.5L3.5 7.5"/></svg>
+         被 ${backlinks.length} 条引用
        </button>`
     : '';
   const tStr = new Date(s.createdAt).toLocaleString('zh-CN');
@@ -6757,7 +6752,8 @@ const _summaryActions = {
   // 浮动 chip 上的"粘贴"按钮 — 直接操作 md (state) 层, 不依赖 DOM selection
   // 关键修复: 之前用 _insertTextAtCaret 依赖 window.getSelection, 但点 chip 时焦点不在编辑器
   // selection 落在 body 上, 文本插不进去 → "空白提示框" 现象 (Kayu 2026-06-06 报)
-  'quote-chip-paste': () => {
+  // 名字必须 summary- 开头 — 全局 dispatcher 只放行 summary-/concept-/canvas-, 不然 click 派发不到!
+  'summary-quote-chip-paste': () => {
     const q = summaryState && summaryState.pendingQuoteSource;
     if (!q || !q.id) { showToast('剪贴板里没有引用源'); return; }
     const ed = _summaryInputTa();
@@ -6774,9 +6770,54 @@ const _summaryActions = {
     }, 120);
   },
   // 浮动 chip 上的 × 清掉
-  'quote-chip-clear': () => {
+  'summary-quote-chip-clear': () => {
     _setPendingQuoteSource(null);
     showToast('已清掉引用源');
+  },
+  // 点 [[sum-xxx]] 引用 chip → 弹 sheet 显示源笔记 (跟反链同款列表), 点行跳转
+  // 之前 chip 内嵌源标题导致 HTML attr 被污染 (#tag 内嵌后正则误抓),
+  // 改成纯 "↩ 引自" chip + 点开弹层, 列出源的预览, 一致体验
+  'summary-show-quote-source': (el) => {
+    const id = el && el.dataset && el.dataset.id;
+    if (!id) return;
+    const src = (state.summaries || []).find(s => s.id === id);
+    if (!src) { showToast('源笔记已删除'); return; }
+    const snippet = (src.title || '').trim()
+                 || (src.note || '').replace(/\s+/g, ' ').slice(0, 60) || '笔记';
+    const tStr = new Date(src.createdAt).toLocaleString('zh-CN');
+    const itemStyle = 'display:flex;align-items:flex-start;gap:10px;padding:12px 14px;text-align:left;width:100%;border:0;background:transparent;border-radius:6px;';
+    showSheet(`
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="section-title" style="padding:0 0 8px;">引用源</div>
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <button class="sheet-item" data-quote-src-id="${esc(id)}" style="${itemStyle}">
+            <span style="font-size:14px;width:16px;text-align:center;color:var(--accent);font-weight:600;flex-shrink:0;line-height:1.4;">↩</span>
+            <span style="flex:1;min-width:0;">
+              <span style="display:block;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(snippet)}</span>
+              <span style="display:block;font-size:11px;color:var(--text-dim);margin-top:2px;">${esc(tStr)}</span>
+            </span>
+          </button>
+        </div>
+      </div>
+    `, (body) => {
+      body.querySelectorAll('[data-quote-src-id]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const targetId = btn.dataset.quoteSrcId;
+          closeSheet();
+          requestAnimationFrame(() => {
+            const target = document.querySelector('[data-summary-id="' + targetId + '"]');
+            if (target) {
+              target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              target.classList.add('sum-item-flash');
+              setTimeout(() => target.classList.remove('sum-item-flash'), 1500);
+            } else {
+              showToast('源笔记不在当前筛选范围 — 可能被过滤了');
+            }
+          });
+        });
+      });
+    });
   },
   // 反链 badge — 弹 sheet 列出引用了这条的所有笔记, 点跳转
   'summary-show-backlinks': (el) => {

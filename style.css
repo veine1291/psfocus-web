@@ -6090,12 +6090,7 @@ body.canvas-open { overflow: hidden; }
   -webkit-tap-highlight-color: transparent;
 }
 .sum-item-backlink-badge:active { transform: scale(0.97); }
-.sum-item-backlink-badge .ico-link {
-  width: 11px; height: 11px;
-  background: currentColor;
-  -webkit-mask: var(--ico-link, none) center / contain no-repeat;
-          mask: var(--ico-link, none) center / contain no-repeat;
-}
+.sum-item-backlink-badge svg { color: currentColor; }
 /* 被引用的笔记左边加一道浅主色装饰条, 一眼看出"有反链" */
 .sum-item.has-backlinks {
   position: relative;

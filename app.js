@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260605-1700';
+const _PSFOCUS_BUILD = '20260605-1900';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1641,6 +1641,8 @@ function renderAll() {
   $('fab').classList.toggle('hidden', !(ui.tab === 'tasks' || ui.tab === 'calendar'
     || ui.tab === 'ledger'
     || (ui.tab === 'summary' && summaryState.tab !== 'data')));
+  // 引用源剪贴板浮动 chip — 任一界面只要 pendingQuoteSource 存在就显示
+  try { _renderQuoteClipboardChip(); } catch (e) { psLog('ERR', 'renderQuoteChip throw', e); }
   const _renderEl = Date.now() - _renderT0;
   if (_renderEl > 300) psLog('WARN', 'renderAll slow', _renderEl + 'ms tab=' + ui.tab);
 }
@@ -1892,7 +1894,19 @@ let summaryState = {
   draftNote: '',               // 输入框未发布的笔记草稿 — 防 renderAll 时清空
   draftTitle: '',              // 概要(title)草稿 — 同 draftNote 持久化
   draftCreatedAt: null,        // 草稿预定发布日期 (null = today), 改了录入模块也跟着切到该日的
-  pendingQuoteSource: null,    // 路径 A 跨笔记引用: { id, text } — 从一条笔记 ⋯ "复制为引用源" 后存在这, 编辑器里"粘贴引用源"按钮显示并插入
+  // 路径 A 跨笔记引用: { id, text } — 从一条笔记 ⋯ "复制为引用源" 后存在这。
+  // 初始值从 localStorage 恢复 (刷新 / 切回 app 不丢) — Kayu 2026-06-05 反馈"复制 ok 但找不到地方粘贴"
+  // 关键修复: 旧版只在 summaryState (内存), 切页 / 刷新就丢, 又只在工具栏 ⋯ 深埋, 用户找不到
+  // 新方案: localStorage 持久化 + 顶部浮动剪贴板 chip (清晰可见 + 一键粘贴)
+  pendingQuoteSource: (() => {
+    try {
+      const raw = localStorage.getItem('psfocus_pendingQuoteSource');
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      if (o && o.id && typeof o.text === 'string') return o;
+    } catch (_) {}
+    return null;
+  })(),
   modulePopoverForDay: null,   // sheet 形式打开时的 dayKey
   modulePickerOpenInPopover: false,
   expandedModuleCards: new Set(),
@@ -4091,6 +4105,39 @@ function _summaryPasteQuote() {
   if (ed) { _syncEditorToState(ed); renderAll(); }
   showToast('已粘贴, 引用源还留着可以再粘');
 }
+// 引用源剪贴板的统一写入口 — 同步落 localStorage + 重渲 chip
+function _setPendingQuoteSource(v) {
+  summaryState.pendingQuoteSource = v || null;
+  try {
+    if (v && v.id) localStorage.setItem('psfocus_pendingQuoteSource', JSON.stringify(v));
+    else localStorage.removeItem('psfocus_pendingQuoteSource');
+  } catch (_) {}
+  try { _renderQuoteClipboardChip(); } catch (_) {}
+}
+// 顶部浮动剪贴板 chip — 引用源就绪时一直可见, 让用户清楚知道在哪粘 + 一键粘贴
+// 之前藏在工具栏 ⋯ 工具组里, 用户找不到 (Kayu 2026-06-05 反馈"复制 OK 但提示框空白")
+function _renderQuoteClipboardChip() {
+  let host = document.getElementById('quote-clipboard-chip');
+  const q = summaryState && summaryState.pendingQuoteSource;
+  if (!q || !q.id) {
+    if (host) host.remove();
+    return;
+  }
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'quote-clipboard-chip';
+    host.className = 'quote-clip-chip';
+    document.body.appendChild(host);
+  }
+  const preview = String(q.text || '').replace(/\s+/g, ' ').slice(0, 40)
+    + (q.text && q.text.length > 40 ? '…' : '');
+  host.innerHTML = `
+    <span class="qcc-icon">"</span>
+    <span class="qcc-text" title="${esc(q.text || '')}">${esc(preview || '(空)')}</span>
+    <button class="qcc-paste" data-action="quote-chip-paste" aria-label="粘贴到当前编辑器">粘贴</button>
+    <button class="qcc-clear" data-action="quote-chip-clear" aria-label="清掉引用源">×</button>
+  `;
+}
 
 // ===== 笔记模板 helpers (mobile) =====
 // 数据模型: state.templates 共享 (kind='note' 区别于 task/event/project).
@@ -5705,7 +5752,7 @@ const _summaryActions = {
           if (t === 'annotate')       openAnnotationSheet();
           else if (t === 'quote-section') _summaryQuoteSection();
           else if (t === 'paste-quote')    _summaryPasteQuote();
-          else if (t === 'clear-quote')    { summaryState.pendingQuoteSource = null; showToast('已清掉'); }
+          else if (t === 'clear-quote')    { _setPendingQuoteSource(null); showToast('已清掉'); }
         });
       });
     });
@@ -6620,14 +6667,43 @@ const _summaryActions = {
     closeSheet();
     openSaveSummaryAsTemplateSheet(id);
   },
-  // 把这条笔记内容暂存到 pendingQuoteSource — 之后到任何笔记编辑器, 工具栏 ⋯ 里就有"粘贴引用源"
+  // 把这条笔记内容暂存到 pendingQuoteSource — 顶部浮动 chip 立刻出现, 点 chip 一键粘贴
   'summary-item-copy-as-quote': (el) => {
     const id = el.dataset.id;
     const s = (state.summaries || []).find(x => x.id === id);
     closeSheet();
     if (!s) return;
-    summaryState.pendingQuoteSource = { id: s.id, text: (s.note || '').trim() };
-    showToast('已复制 — 去任意笔记的工具栏 ⋯ 里"粘贴引用源"');
+    _setPendingQuoteSource({ id: s.id, text: (s.note || '').trim() });
+    showToast('已复制 — 顶部出现引用 chip, 进任意笔记编辑器点"粘贴"即可');
+  },
+  // 浮动 chip 上的"粘贴"按钮
+  'quote-chip-paste': () => {
+    const q = summaryState && summaryState.pendingQuoteSource;
+    if (!q || !q.id) { showToast('剪贴板里没有引用源'); return; }
+    // 当前在编辑器 (sheet 输入 or 全屏编辑页) → 直接插入光标处
+    const ed = _summaryInputTa();
+    if (ed) {
+      ed.focus();
+      _summaryPasteQuote();
+      return;
+    }
+    // 没编辑器: 打开主输入 sheet, 等渲染完追加到末尾
+    if (typeof openSummaryInputSheet === 'function') {
+      openSummaryInputSheet();
+    } else {
+      // 兜底:openSummaryInputSheet 不存在的极端老版本 — 把内容追加进 draftNote 后 render
+      summaryState.draftNote = (summaryState.draftNote || '') + '\n\n> ' + (q.text || '').split('\n').join('\n> ') + '\n> — [[' + q.id + ']]\n';
+      renderAll();
+    }
+    setTimeout(() => {
+      const e2 = _summaryInputTa();
+      if (e2) { e2.focus(); _caretToEnd(e2); _summaryPasteQuote(); }
+    }, 80);
+  },
+  // 浮动 chip 上的 × 清掉
+  'quote-chip-clear': () => {
+    _setPendingQuoteSource(null);
+    showToast('已清掉引用源');
   },
   // 点注释 chip → 显示 / 编辑注释正文
   'summary-show-annotation': (el) => {

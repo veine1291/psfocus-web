@@ -6074,6 +6074,79 @@ body.canvas-open { overflow: hidden; }
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   transition: background .6s ease;
 }
+
+/* ===== 引用源剪贴板浮动 chip (Kayu 2026-06-05) =====
+   "复制为引用源" 后顶部一直显示, 让用户清楚知道"剪贴板里有什么 + 在哪粘"
+   点 "粘贴" 按钮自动打开当前编辑器并把引用粘到光标处
+   localStorage 持久化, 刷新 / 切回 app 不丢 */
+.quote-clip-chip {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9000;             /* 高于 sheet (sheet z-index 8000) — 引用源全程可见 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  padding: 8px 8px 8px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-radius: 24px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+  font-size: 13px;
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+  animation: qcc-pop-in .25s cubic-bezier(.22, 1, .36, 1) both;
+}
+@keyframes qcc-pop-in {
+  from { transform: translateX(-50%) translateY(-12px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0);     opacity: 1; }
+}
+.quote-clip-chip .qcc-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+}
+.quote-clip-chip .qcc-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+.quote-clip-chip .qcc-paste {
+  flex-shrink: 0;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.quote-clip-chip .qcc-paste:active { transform: scale(0.96); }
+.quote-clip-chip .qcc-clear {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.quote-clip-chip .qcc-clear:hover,
+.quote-clip-chip .qcc-clear:active { background: var(--bg-hover); color: var(--text); }
 .sum-md-h { font-size: 14px; font-weight: 600; margin: 6px 0 2px; color: var(--text-strong); }
 .sum-md-ul, .sum-md-ol { margin: 4px 0; padding-left: 20px; }
 .sum-md-ul li { margin: 2px 0; list-style-type: disc; }

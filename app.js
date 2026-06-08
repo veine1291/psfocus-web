@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260608-1032';
+const _PSFOCUS_BUILD = '20260608-1042';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11196,6 +11196,7 @@ function bindTaskDetailEvents(body, id) {
   const addSubInput = body.querySelector('.dp-sub-add-input');
   // 提交一条子待办 — Enter 键 / + 按钮 共用
   function _submitNewSub() {
+    if (!addSubInput) return;
     const v = (addSubInput.value || '').trim();
     if (!v) return;
     const maxOrder = state.tasks
@@ -11249,7 +11250,7 @@ function bindTaskDetailEvents(body, id) {
     addSubInput.focus();
     renderAll();
   }
-  addSubInput.addEventListener('keydown', (e) => {
+  if (addSubInput) addSubInput.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     // IME 组词中的 Enter (拼音确认) 不算 — keyCode 229 是 IME composition 标志
     if (e.isComposing || e.keyCode === 229) return;

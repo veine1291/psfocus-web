@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260606-0500';
+const _PSFOCUS_BUILD = '20260608-1032';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -10616,6 +10616,26 @@ let _taskDetailMode = 'p1';
 let _taskDetailRestoreFocus = null;
 
 function openTaskDetail(id, opts) {
+  try {
+    return _openTaskDetailInner(id, opts);
+  } catch (err) {
+    // 详情打开崩了 — 把错误显出来, 别让用户看着空白界面卡死
+    console.error('[task-detail crash]', err && err.stack || err);
+    try {
+      const body = document.getElementById('sheet-body');
+      const sheet = document.getElementById('sheet');
+      if (body && sheet) {
+        body.innerHTML = `<div class="dp-detail" style="padding:18px;">
+          <h3 style="margin:0 0 8px;color:#c84545;">打开任务详情失败</h3>
+          <pre style="white-space:pre-wrap;font-size:11.5px;color:#444;background:#f4f4f6;padding:10px;border-radius:6px;overflow:auto;max-height:300px;">${String((err && err.stack) || err)}</pre>
+          <button onclick="closeSheet()" style="margin-top:10px;padding:8px 18px;border:1px solid #ddd;border-radius:6px;background:#fff;">关闭</button>
+        </div>`;
+        sheet.classList.remove('hidden');
+      }
+    } catch (_) {}
+  }
+}
+function _openTaskDetailInner(id, opts) {
   const t = state.tasks.find(x => x.id === id);
   if (!t) return;
   if (opts && opts.mode) _taskDetailMode = opts.mode;
@@ -10935,11 +10955,13 @@ function bindTaskDetailEvents(body, id) {
 
   // 标题
   const titleEl = body.querySelector('.dp-title-input');
-  titleEl.addEventListener('blur', () => {
-    const v = titleEl.value.trim();
-    if (v && v !== t.title) { t.title = v; pushState(); renderAll(); }
-  });
-  titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') titleEl.blur(); });
+  if (titleEl) {
+    titleEl.addEventListener('blur', () => {
+      const v = titleEl.value.trim();
+      if (v && v !== t.title) { t.title = v; pushState(); renderAll(); }
+    });
+    titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') titleEl.blur(); });
+  }
 
   // 大勾选 — 重复任务切 nextPending occurrence,非重复切全局
   // 同时绑 click 和 touchend,防 iOS Safari 上 sheet swipe 的 passive:false touchmove 偶尔吞掉后续 click
@@ -10984,7 +11006,8 @@ function bindTaskDetailEvents(body, id) {
   };
 
   // 加时间按钮 → 走支持重复的 picker
-  body.querySelector('[data-action="dp-add-schedule"]').onclick = () => {
+  const addSchedBtn = body.querySelector('[data-action="dp-add-schedule"]');
+  if (addSchedBtn) addSchedBtn.onclick = () => {
     openQuickTimePickerSheet(null, (newSched) => {
       if (!newSched) return;
       if (!Array.isArray(t.schedules)) t.schedules = [];
@@ -11250,7 +11273,8 @@ function bindTaskDetailEvents(body, id) {
   };
 
   // 项目 pill — 切换所属清单/项目
-  body.querySelector('[data-action="dp-pick-project"]').onclick = (ev) => {
+  const projPillBtn = body.querySelector('[data-action="dp-pick-project"]');
+  if (projPillBtn) projPillBtn.onclick = (ev) => {
     ev.stopPropagation();
     openProjectPicker(t.projectId, ev.currentTarget, (newPid) => {
       t.projectId = newPid;

@@ -1826,10 +1826,15 @@ function renderTopbar() {
 function renderTab(tab) {
   const view = elView();
   // 切 tab 时清掉 view 上可能残留的 transform / scrollTop(防下拉刷新等手势之后切 tab,影响内部布局)
+  // 关键修复:只在「真切 tab」时清,同 tab re-render(展开 / 折叠 / 打卡 / 任何 action 后 render)保留 scrollTop,
+  // 不再依赖 _viewScrollMemo 兜底(reflow 时机不稳,经常被 clamp 到 0 导致回顶)
   if (view) {
-    view.style.transform = '';
-    view.style.transition = '';
-    view.scrollTop = 0;
+    if (view.dataset.lastTab !== tab) {
+      view.style.transform = '';
+      view.style.transition = '';
+      view.scrollTop = 0;
+      view.dataset.lastTab = tab;
+    }
   }
   // 重置 pull-refresh indicator(防上次切走时还有 transform 残留)
   const _pri = document.getElementById('pull-refresh-indicator');

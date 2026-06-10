@@ -2029,7 +2029,7 @@ function _newSummaryModule(kind) {
   const id = 'mod-' + Math.random().toString(36).slice(2, 10);
   if (kind === 'rating')   return { id, kind, title: '心情', max: 5, entries: [] };
   if (kind === 'duration') return { id, kind, title: '睡眠时长', source: 'manual', entries: [] };
-  if (kind === 'checkin')  return { id, kind, title: '打卡', taskId: null };
+  if (kind === 'checkin')  return { id, kind, title: '打卡', mode: 'once', entries: [] };
   return null;
 }
 function _summaryFocusMsForDay(dayKey) {
@@ -2091,6 +2091,27 @@ function _isCheckinDoneToday(taskId) {
   const today0 = startOfDay(new Date()).getTime();
   const today1 = today0 + 86400000;
   return (t.completedOccurrences || []).some(occ => occ >= today0 && occ < today1);
+}
+// 打卡模式 — 'task'(关联重复任务)/ 'once'(单次:今日 ✓ / ○)/ 'count'(累计 N 次)
+function _checkinMode(m) {
+  if (!m) return 'once';
+  if (m.taskId) return 'task';
+  return m.mode || 'once';
+}
+// 当天某 checkin module 累计次数(once 模式 0 或 1,count 模式 0~N)
+function _checkinCountForDay(m, dayKey) {
+  if (!m) return 0;
+  if (m.taskId) return _isCheckinDoneToday(m.taskId) ? 1 : 0;
+  if (!Array.isArray(m.entries)) return 0;
+  const parts = String(dayKey).split('-').map(Number);
+  if (!parts[0]) return 0;
+  const day0 = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0).getTime();
+  const day1 = day0 + 86400000;
+  let count = 0;
+  for (const e of m.entries) {
+    if (e && e.at >= day0 && e.at < day1) count++;
+  }
+  return count;
 }
 
 // markdown 渲染(同桌面)
@@ -2319,7 +2340,7 @@ function _renderSummaryEditorPage() {
   // 新建模式: 模块按 draftCreatedAt 拉 (默认 today, 用户可点"今日"改其它日期 → 模块跟着切)
   // 编辑模式: 不显示录入模块面板 (编辑现有笔记不录新模块)
   const draftKey = !isEdit ? _draftDateKey() : null;
-  const todayMods = !isEdit ? _summaryModulesForDay(draftKey).filter(m => m.kind === 'rating' || m.kind === 'duration') : [];
+  const todayMods = !isEdit ? _summaryModulesForDay(draftKey).filter(m => m.kind === 'rating' || m.kind === 'duration' || m.kind === 'checkin') : [];
   const inputModsCollapsed = !!summaryState.inputModsCollapsed;
   const draftDateLabel = !isEdit ? _draftDateLabel() : '';
   const draftDateInputVal = !isEdit ? _msToDateInputVal(summaryState.draftCreatedAt || Date.now()) : '';
@@ -3844,7 +3865,7 @@ function _renderSummaryInputBox() {
   // 输入框下方录入区(只 rating/duration,checkin 不录入)
   // 折叠面板 — 折叠状态记 localStorage,跨刷新保留
   const todayKey = _todayKey();
-  const todayMods = _summaryModulesForDay(todayKey).filter(m => m.kind === 'rating' || m.kind === 'duration');
+  const todayMods = _summaryModulesForDay(todayKey).filter(m => m.kind === 'rating' || m.kind === 'duration' || m.kind === 'checkin');
   const inputModsCollapsed = !!summaryState.inputModsCollapsed;
   const todayModsHtml = todayMods.length ? `<div class="sum-input-day-mods ${inputModsCollapsed ? 'collapsed' : ''}">
     <button class="sum-input-day-mods-head" data-action="summary-toggle-input-mods" type="button">
@@ -4845,6 +4866,39 @@ function _renderSummaryModuleEditor(m, dayKey) {
       ${delBtn}
     </div>`;
   }
+  if (m.kind === 'checkin') {
+    const mode = _checkinMode(m);
+    if (mode === 'task') {
+      const t = m.taskId ? (state.tasks || []).find(x => x.id === m.taskId) : null;
+      const taskName = t ? (t.title || '未命名') : '未关联';
+      const doneToday = _isCheckinDoneToday(m.taskId);
+      return `<div class="sum-mod-editor">
+        ${titleHtml}
+        <span class="sum-mod-checkin-task-label">${esc(taskName)}</span>
+        <span class="sum-mod-checkin-state ${doneToday?'on':''}">${doneToday ? '✓' : '○'}</span>
+        ${delBtn}
+      </div>`;
+    }
+    const cnt = _checkinCountForDay(m, dayKey);
+    if (mode === 'once') {
+      const on = cnt > 0;
+      return `<div class="sum-mod-editor">
+        ${titleHtml}
+        <button class="sum-mod-checkin-once ${on?'on':''}" ${dataAttrs}
+          data-action="summary-mod-checkin-toggle">${on?'✓ 已打卡':'○ 打卡'}</button>
+        ${delBtn}
+      </div>`;
+    }
+    // count 模式 — 单一数字按钮,点 +1,长按 / 右键 -1
+    return `<div class="sum-mod-editor">
+      ${titleHtml}
+      <button class="sum-mod-checkin-count" ${dataAttrs}
+        data-action="summary-mod-checkin-add"
+        data-action-contextmenu="summary-mod-checkin-dec"
+        title="点 +1 / 长按 -1">${cnt}</button>
+      ${delBtn}
+    </div>`;
+  }
   return '';
 }
 
@@ -5247,8 +5301,17 @@ function _renderSummaryDayHeaderModules(dayKey) {
         txt = `${m.title || '时长'} —`;
       }
     } else if (m.kind === 'checkin') {
-      const done = _isCheckinDoneToday(m.taskId);
-      txt = `${m.title || '打卡'} ${done?'✓':'○'}`;
+      const mode = _checkinMode(m);
+      if (mode === 'task') {
+        const done = _isCheckinDoneToday(m.taskId);
+        txt = `${m.title || '打卡'} ${done?'✓':'○'}`;
+      } else if (mode === 'count') {
+        const cnt = _checkinCountForDay(m, dayKey);
+        txt = `${m.title || '打卡'} ${cnt > 0 ? cnt + ' 次' : '—'}`;
+      } else {   // once
+        const cnt = _checkinCountForDay(m, dayKey);
+        txt = `${m.title || '打卡'} ${cnt > 0 ? '✓' : '○'}`;
+      }
     }
     // 改成 button:点击弹详情 sheet,列出当天该模块的所有 entries
     if (txt) parts.push(`<button class="sum-day-mod sum-day-mod-clickable" data-action="summary-mod-detail" ${dataAttrs} title="查看 / 编辑详情">${txt}</button>`);
@@ -5630,21 +5693,66 @@ const _summaryActions = {
     const entries = mod.entries || [];
     const kindLabel = mod.kind === 'rating' ? '打分' : mod.kind === 'duration' ? '时长' : '打卡';
     const max = mod.max || 5;
+    // checkin 模块特殊处理 — 详情列表展示每条打卡时间,底部按钮改成「打卡」直接触发动作
+    const isCheckin = mod.kind === 'checkin';
+    const checkinMode = isCheckin ? _checkinMode(mod) : null;
+    const dataAttrs = `data-day-key="${esc(dayKey)}" data-mod-id="${esc(modId)}"`;
+    let entriesHtml;
+    let bottomBtn;
+    if (isCheckin) {
+      const cnt = _checkinCountForDay(mod, dayKey);
+      if (checkinMode === 'task') {
+        const t = mod.taskId ? (state.tasks || []).find(x => x.id === mod.taskId) : null;
+        const taskName = t ? (t.title || '未命名') : '未关联';
+        const done = _isCheckinDoneToday(mod.taskId);
+        entriesHtml = `<div style="color:var(--text-dim);font-size:13px;padding:14px 0;text-align:center;">
+          ${esc(taskName)} · ${done ? '✓ 已打卡' : '○ 未打卡'}
+        </div>`;
+        bottomBtn = '';   // task 模式不在这里改状态
+      } else {
+        // once / count — 列出所有打卡时间
+        entriesHtml = entries.length ? `<div class="sum-mod-detail-list">
+          ${entries.map(e => `
+            <div class="sum-mod-detail-entry">
+              <span class="sum-mod-detail-val">${esc(_summaryFmtTime(e.at))} 打卡</span>
+              <button class="sum-mod-detail-del" data-action="summary-mod-entry-del" data-day-key="${esc(dayKey)}" data-mod-id="${esc(modId)}" data-entry-id="${esc(e.id)}" title="删除此条">×</button>
+            </div>
+          `).join('')}
+        </div>` : '<div style="color:var(--text-dim);font-size:13px;padding:14px 0;text-align:center;">今天还没打卡</div>';
+        if (checkinMode === 'once') {
+          const on = cnt > 0;
+          bottomBtn = `<button class="modal-btn ${on ? '' : 'modal-btn-primary'}"
+            ${dataAttrs} data-action="summary-mod-checkin-toggle"
+            style="margin-top:14px;width:100%;">${on ? '取消今日打卡' : '✓ 打卡'}</button>`;
+        } else {
+          bottomBtn = `<div style="display:flex;gap:8px;margin-top:14px;">
+            <button class="modal-btn" ${dataAttrs} data-action="summary-mod-checkin-dec"
+              style="flex:1;" ${cnt > 0 ? '' : 'disabled'}>− 撤销 1 次</button>
+            <button class="modal-btn modal-btn-primary" ${dataAttrs} data-action="summary-mod-checkin-add"
+              style="flex:2;">+ 累计打卡</button>
+          </div>`;
+        }
+      }
+    } else {
+      // rating / duration
+      entriesHtml = entries.length ? `<div class="sum-mod-detail-list">
+        ${entries.map(e => `
+          <div class="sum-mod-detail-entry">
+            <span class="sum-mod-detail-val">${mod.kind === 'rating' ? `${e.value}/${max}` : _summaryFmtDurationMs(e.valueMs)}</span>
+            <span class="sum-mod-detail-time">${_summaryFmtTime(e.at)}</span>
+            <button class="sum-mod-detail-del" data-action="summary-mod-entry-del" data-day-key="${esc(dayKey)}" data-mod-id="${esc(modId)}" data-entry-id="${esc(e.id)}" title="删除此条">×</button>
+          </div>
+        `).join('')}
+      </div>` : '<div style="color:var(--text-dim);font-size:13px;padding:14px 0;text-align:center;">还没有记录</div>';
+      bottomBtn = `<button class="modal-btn" data-action="summary-day-edit-from-detail" data-day-key="${esc(dayKey)}" style="margin-top:14px;width:100%;">编辑此天模块</button>`;
+    }
     showSheet(`
       <div class="sheet-handle"></div>
       <div class="sheet-content">
         <div class="section-title" style="padding:0 0 4px;">${esc(mod.title || kindLabel)}</div>
         <div style="color:var(--text-dim);font-size:11px;margin-bottom:10px;">${kindLabel} · ${esc(_summaryDayLabel(_dayKeyToTs(dayKey)))}</div>
-        ${entries.length ? `<div class="sum-mod-detail-list">
-          ${entries.map(e => `
-            <div class="sum-mod-detail-entry">
-              <span class="sum-mod-detail-val">${mod.kind === 'rating' ? `${e.value}/${max}` : _summaryFmtDurationMs(e.valueMs)}</span>
-              <span class="sum-mod-detail-time">${_summaryFmtTime(e.at)}</span>
-              <button class="sum-mod-detail-del" data-action="summary-mod-entry-del" data-day-key="${esc(dayKey)}" data-mod-id="${esc(modId)}" data-entry-id="${esc(e.id)}" title="删除此条">×</button>
-            </div>
-          `).join('')}
-        </div>` : '<div style="color:var(--text-dim);font-size:13px;padding:14px 0;text-align:center;">还没有记录</div>'}
-        <button class="modal-btn" data-action="summary-day-edit-from-detail" data-day-key="${esc(dayKey)}" style="margin-top:14px;width:100%;">编辑此天模块</button>
+        ${entriesHtml}
+        ${bottomBtn}
       </div>
     `);
   },
@@ -7085,6 +7193,67 @@ const _summaryActions = {
     renderAll();
   },
   // 一键切 duration source(manual ↔ focus)
+  // 打卡(once)— 切换今日 ✓/○
+  'summary-mod-checkin-toggle': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const m = arr.find(x => x.id === modId);
+    if (!m || m.kind !== 'checkin' || m.taskId) return;
+    if (!Array.isArray(m.entries)) m.entries = [];
+    const parts = String(dayKey).split('-').map(Number);
+    const day0 = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0).getTime();
+    const day1 = day0 + 86400000;
+    const hadToday = m.entries.some(e => e && e.at >= day0 && e.at < day1);
+    if (hadToday) {
+      m.entries = m.entries.filter(e => !(e && e.at >= day0 && e.at < day1));
+    } else {
+      const todayKey = _todayKey();
+      const at = (dayKey === todayKey) ? Date.now() : (day0 + 12 * 3600 * 1000);
+      m.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value: 1, at });
+    }
+    saveState();
+    closeSheet();
+    renderAll();
+  },
+  // 打卡(count)— 累计 +1
+  'summary-mod-checkin-add': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const m = arr.find(x => x.id === modId);
+    if (!m || m.kind !== 'checkin' || m.taskId) return;
+    if (!Array.isArray(m.entries)) m.entries = [];
+    const todayKey = _todayKey();
+    const parts = String(dayKey).split('-').map(Number);
+    const day0 = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0).getTime();
+    const at = (dayKey === todayKey) ? Date.now() : (day0 + 12 * 3600 * 1000);
+    m.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value: 1, at });
+    saveState();
+    closeSheet();
+    renderAll();
+  },
+  // 打卡(count)— 撤销最后 1 次
+  'summary-mod-checkin-dec': (el) => {
+    const dayKey = el.dataset.dayKey;
+    const modId = el.dataset.modId;
+    const arr = (state.summaryDayModules && state.summaryDayModules[dayKey]) || [];
+    const m = arr.find(x => x.id === modId);
+    if (!m || m.kind !== 'checkin' || m.taskId) return;
+    if (!Array.isArray(m.entries) || !m.entries.length) return;
+    const parts = String(dayKey).split('-').map(Number);
+    const day0 = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0).getTime();
+    const day1 = day0 + 86400000;
+    for (let i = m.entries.length - 1; i >= 0; i--) {
+      if (m.entries[i].at >= day0 && m.entries[i].at < day1) {
+        m.entries.splice(i, 1);
+        break;
+      }
+    }
+    saveState();
+    closeSheet();
+    renderAll();
+  },
   'summary-mod-toggle-src': (el) => {
     const dayKey = el.dataset.dayKey;
     const modId = el.dataset.modId;
@@ -14753,7 +14922,8 @@ function renderWeekView(view) {
 function renderNowLineHtml() {
   const now = new Date();
   const minNow = now.getHours() * 60 + now.getMinutes();
-  return `<div class="cal-now-line" style="--now-min:${minNow};"></div>`;
+  const label = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  return `<div class="cal-now-line" style="--now-min:${minNow};"><span class="cal-now-label">${label}</span></div>`;
 }
 
 function bindCalendarGestures(el) {

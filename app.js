@@ -7212,7 +7212,7 @@ const _summaryActions = {
       const at = (dayKey === todayKey) ? Date.now() : (day0 + 12 * 3600 * 1000);
       m.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value: 1, at });
     }
-    saveState();
+    pushState();
     closeSheet();
     renderAll();
   },
@@ -7229,7 +7229,7 @@ const _summaryActions = {
     const day0 = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0).getTime();
     const at = (dayKey === todayKey) ? Date.now() : (day0 + 12 * 3600 * 1000);
     m.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value: 1, at });
-    saveState();
+    pushState();
     closeSheet();
     renderAll();
   },
@@ -7250,7 +7250,7 @@ const _summaryActions = {
         break;
       }
     }
-    saveState();
+    pushState();
     closeSheet();
     renderAll();
   },

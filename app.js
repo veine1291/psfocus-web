@@ -2019,6 +2019,7 @@ function _summaryEnsureDayHasTemplates(dayKey) {
     if (m.max != null) out.max = m.max;
     if (m.source) out.source = m.source;
     if (m.taskId) out.taskId = m.taskId;
+    if (m.mode) out.mode = m.mode;     // 打卡 once/count 模式必须保留,不然新一天默认回 once
     return out;
   });
 }
@@ -5739,7 +5740,7 @@ const _summaryActions = {
         }
       }
     } else {
-      // rating / duration
+      // rating / duration — 详情列表 + 快速录入控件
       entriesHtml = entries.length ? `<div class="sum-mod-detail-list">
         ${entries.map(e => `
           <div class="sum-mod-detail-entry">
@@ -5749,8 +5750,35 @@ const _summaryActions = {
           </div>
         `).join('')}
       </div>` : '<div style="color:var(--text-dim);font-size:13px;padding:14px 0;text-align:center;">还没有记录</div>';
-      bottomBtn = `<button class="modal-btn" data-action="summary-day-edit-from-detail" data-day-key="${esc(dayKey)}" style="margin-top:14px;width:100%;">编辑此天模块</button>`;
+      // 快速录入区
+      let quickInputHtml = '';
+      if (mod.kind === 'rating') {
+        // N 个 dot 直接点选,push entry 后保留 sheet 打开
+        let dots = '';
+        for (let i = 1; i <= max; i++) {
+          dots += `<button class="sum-mod-quick-dot" ${dataAttrs} data-action="summary-mod-add-entry-rating" data-value="${i}" title="${i}/${max}">${i}</button>`;
+        }
+        quickInputHtml = `<div class="sum-mod-quick-row">
+          <span class="sum-mod-quick-label">打分:</span>
+          <div class="sum-mod-quick-dots">${dots}</div>
+        </div>`;
+      } else if (mod.kind === 'duration' && mod.source !== 'focus') {
+        quickInputHtml = `<div class="sum-mod-quick-row sum-mod-add-row">
+          <span class="sum-mod-quick-label">加一条:</span>
+          <input class="sum-mod-add-h" type="number" min="0" max="24" inputmode="numeric" placeholder="时">
+          <span class="sum-mod-quick-unit">h</span>
+          <input class="sum-mod-add-m" type="number" min="0" max="59" inputmode="numeric" placeholder="分">
+          <span class="sum-mod-quick-unit">m</span>
+          <button class="sum-mod-quick-add" ${dataAttrs} data-action="summary-mod-add-entry-duration">+</button>
+        </div>`;
+      } else if (mod.kind === 'duration' && mod.source === 'focus') {
+        quickInputHtml = `<div style="color:var(--text-dim);font-size:12px;padding:10px 0;text-align:center;">自动读专注时长 — 不需要手填</div>`;
+      }
+      bottomBtn = `${quickInputHtml}
+        <button class="modal-btn" data-action="summary-day-edit-from-detail" data-day-key="${esc(dayKey)}" style="margin-top:10px;width:100%;">编辑此天模块</button>`;
     }
+    // 记下当前打开的详情 sheet,add-entry actions 完成后据此重开 sheet(保留 UI 上下文)
+    summaryState._modDetailOpen = { dayKey, modId };
     showSheet(`
       <div class="sheet-handle"></div>
       <div class="sheet-content">
@@ -7218,7 +7246,11 @@ const _summaryActions = {
       m.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value: 1, at });
     }
     pushState();
-    closeSheet();
+    // 详情 sheet 开着就重开刷新,否则关掉
+    const md1 = summaryState._modDetailOpen;
+    if (md1 && md1.dayKey === dayKey && md1.modId === modId) {
+      setTimeout(() => _summaryActions['summary-mod-detail']({ dataset: { dayKey, modId } }), 0);
+    } else closeSheet();
     renderAll();
   },
   // 打卡(count)— 累计 +1
@@ -7235,7 +7267,10 @@ const _summaryActions = {
     const at = (dayKey === todayKey) ? Date.now() : (day0 + 12 * 3600 * 1000);
     m.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value: 1, at });
     pushState();
-    closeSheet();
+    const md2 = summaryState._modDetailOpen;
+    if (md2 && md2.dayKey === dayKey && md2.modId === modId) {
+      setTimeout(() => _summaryActions['summary-mod-detail']({ dataset: { dayKey, modId } }), 0);
+    } else closeSheet();
     renderAll();
   },
   // 打卡(count)— 撤销最后 1 次
@@ -7256,7 +7291,10 @@ const _summaryActions = {
       }
     }
     pushState();
-    closeSheet();
+    const md3 = summaryState._modDetailOpen;
+    if (md3 && md3.dayKey === dayKey && md3.modId === modId) {
+      setTimeout(() => _summaryActions['summary-mod-detail']({ dataset: { dayKey, modId } }), 0);
+    } else closeSheet();
     renderAll();
   },
   'summary-mod-toggle-src': (el) => {
@@ -7354,6 +7392,11 @@ const _summaryActions = {
     mod.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), value, at });
     pushState();
     if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
+    // chip 详情 sheet 内点 dot 打分 → 保持 sheet 开着,重新渲染显示最新 entries
+    const md = summaryState._modDetailOpen;
+    if (md && md.dayKey === dayKey && md.modId === modId) {
+      setTimeout(() => _summaryActions['summary-mod-detail']({ dataset: { dayKey, modId } }), 0);
+    }
     renderAll();
   },
   // 补加一条 duration entry — 读同卡内 h / m 输入框
@@ -7377,6 +7420,11 @@ const _summaryActions = {
     mod.entries.push({ id: 'e-' + Math.random().toString(36).slice(2, 8), valueMs, at });
     pushState();
     if (summaryState._dayEditOpen === dayKey) _openSummaryDayEditSheet(dayKey);
+    // chip 详情 sheet 内点 + 添加 → 保持 sheet 开着,清空 h/m 输入
+    const md = summaryState._modDetailOpen;
+    if (md && md.dayKey === dayKey && md.modId === modId) {
+      setTimeout(() => _summaryActions['summary-mod-detail']({ dataset: { dayKey, modId } }), 0);
+    }
     renderAll();
   },
   'summary-mod-pick-task': (el) => {
@@ -11631,8 +11679,11 @@ function closeSheet() {
   body.style.transition = '';
   $('sheet').classList.add('hidden');
   body.innerHTML = '';
-  // 清掉 day-edit 上下文标记
-  if (typeof summaryState !== 'undefined') summaryState._dayEditOpen = null;
+  // 清掉 sheet 上下文标记(day-edit / 模块详情)
+  if (typeof summaryState !== 'undefined') {
+    summaryState._dayEditOpen = null;
+    summaryState._modDetailOpen = null;
+  }
 }
 // 下拉关闭手势 — 接受 sheet 顶部 60px 区域内任何位置触摸,识别区扩大
 // 触摸点落在输入控件 / 按钮上时跳过(避免影响打字 / 点击)

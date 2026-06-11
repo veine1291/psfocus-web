@@ -5885,6 +5885,78 @@ body.canvas-open { overflow: hidden; }
 }
 .sum-day-edit-btn .ico-pencil { width: 13px; height: 13px; }
 .sum-day-edit-btn:active { background: color-mix(in srgb, currentColor 15%, transparent); color: var(--accent); }
+/* mod detail sheet 内的快速录入区(rating 多档 dot / duration h+m+ 按钮) */
+.sum-mod-quick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  margin-top: 6px;
+  border-top: 1px dashed var(--border-soft);
+  flex-wrap: wrap;
+}
+.sum-mod-quick-label {
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.sum-mod-quick-dots {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.sum-mod-quick-dot {
+  min-width: 40px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  border-radius: 8px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.sum-mod-quick-dot:active {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-section));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.sum-mod-add-row .sum-mod-add-h,
+.sum-mod-add-row .sum-mod-add-m {
+  width: 48px;
+  height: 36px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-section);
+  color: var(--text);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  border-radius: 6px;
+  padding: 0 6px;
+  text-align: center;
+  outline: 0;
+}
+.sum-mod-quick-unit { font-size: 12px; color: var(--text-dim); }
+.sum-mod-quick-add {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  margin-left: auto;
+}
+.sum-mod-quick-add:active { opacity: 0.85; }
+
 /* mod detail sheet 内的 entry 列表 */
 .sum-mod-detail-list {
   display: flex;

@@ -14528,6 +14528,18 @@ function _bindCalBlocks(view) {
     e.stopPropagation();
     _safeOpenTaskDetail(el.dataset.taskId);
   }));
+  // 项目 pill → 跳到该项目的任务视图(跟侧栏点项目一致)
+  view.querySelectorAll('.cal-allday-pill[data-project-id]').forEach(el => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = el.dataset.projectId;
+    const p = (state.projects || []).find(x => x.id === id);
+    if (!p) { showToast('该项目已被删除'); return; }
+    ui.tab = 'tasks';
+    ui.selectedKind = 'project';
+    ui.selectedId = id;
+    saveUI();
+    renderAll();
+  }));
   view.querySelectorAll('[data-event-id]').forEach(el => el.addEventListener('click', (e) => {
     e.stopPropagation();
     showToast('事件编辑暂未实现,在桌面端查看');
@@ -14832,6 +14844,13 @@ function bindCalBlockEdit(view) {
   });
 }
 
+// 顶部全天 banner 的单个 pill HTML(task / event / project 三种,各带对应 data-* 供点击分发)
+function _calAllDayPillHtml(it) {
+  const attr = it.kind === 'task' ? `data-task-id="${esc(it.id)}"`
+    : it.kind === 'project' ? `data-project-id="${esc(it.id)}"`
+    : `data-event-id="${esc(it.id)}"`;
+  return `<div class="cal-allday-pill cal-allday-pill-${it.kind || 'event'} ${it.done ? 'done' : ''}" ${attr} style="--block-color:${esc(it.color)}">${esc(it.title)}</div>`;
+}
 function renderDayView(view) {
   const cursor = new Date(ui.calCursor);
   const dayStart = startOfDay(cursor).getTime();
@@ -14839,8 +14858,20 @@ function renderDayView(view) {
   const isToday = dayStart === today0;
   const showDone = !state.settings || state.settings.calShowDone !== false;
 
-  // 全天:tasks + events
+  // 顶部 banner — 跟桌面端时间轴视图一致:项目 due 条 + 全天/多天事件 + 全天/多天任务
   const allDayItems = [];
+  const dayEndMs = dayStart + 86400000;
+  // 1) 项目:dueStart/dueEnd 覆盖当天 → 顶部条(桌面端 _allDayBarsInRange 有,手机端原来漏了)
+  for (const p of (state.projects || [])) {
+    if (p.archived) continue;
+    if ((p.kind || 'project') !== 'project') continue;
+    if (!p.dueStart && !p.dueEnd) continue;
+    const ps = startOfDay(new Date(p.dueStart || p.dueEnd)).getTime();
+    const pe = startOfDay(new Date(p.dueEnd   || p.dueStart)).getTime();
+    if (dayStart < ps || dayStart > pe) continue;   // 区间覆盖当天
+    allDayItems.push({ kind: 'project', id: p.id, title: p.name || '(无名项目)', color: p.color || 'var(--accent)', done: false });
+  }
+  // 2) 任务:全天 / dueAt / 多天 range 覆盖当天
   for (const t of (state.tasks || [])) {
     if (t.archived) continue;
     if (t.start && !t.allDay) continue;
@@ -14849,11 +14880,13 @@ function renderDayView(view) {
     if (!showDone && r.done) continue;
     allDayItems.push({ kind: 'task', id: t.id, title: t.title || '(无标题)', color: colorOfCalItem(t) || 'var(--accent)', done: r.done });
   }
+  // 3) 事件:全天 OR 多天(跨日 range,即使没标全天也进 banner — 跟桌面 scheduleAsBar 一致)
   for (const ev of (state.events || [])) {
     if (!ev.start) continue;
-    if (!ev.allDay) continue;
     const evEnd = ev.end || (ev.start + 86400000 - 1);
-    if (evEnd < dayStart || ev.start > dayStart + 86400000) continue;
+    if (evEnd < dayStart || ev.start >= dayEndMs) continue;   // 覆盖当天
+    const isMultiDay = startOfDay(new Date(ev.start)).getTime() !== startOfDay(new Date(evEnd)).getTime();
+    if (!ev.allDay && !isMultiDay) continue;   // 单日带时间事件走时间轴,不进 banner
     allDayItems.push({ kind: 'event', id: ev.id, title: ev.title || '(无标题)', color: colorOfCalItem(ev) || 'var(--accent)' });
   }
   // 时间块
@@ -14865,7 +14898,7 @@ function renderDayView(view) {
       ${allDayItems.length ? `<div class="cal-week-allday-row">
         <div class="cal-week-allday-spacer"></div>
         <div class="cal-week-allday-bars">
-          ${allDayItems.map(it => `<div class="cal-allday-pill ${it.done?'done':''}" ${it.kind==='task'?`data-task-id="${esc(it.id)}"`:`data-event-id="${esc(it.id)}"`} style="--block-color:${esc(it.color)}">${esc(it.title)}</div>`).join('')}
+          ${allDayItems.map(_calAllDayPillHtml).join('')}
         </div>
       </div>` : ''}
       <div class="cal-week-body">
@@ -14921,18 +14954,33 @@ function renderWeekView(view) {
     }
   }
   for (const ev of (state.events || [])) {
-    if (!ev.start || !ev.allDay) continue;
+    if (!ev.start) continue;
+    const evEnd = ev.end || (ev.start + 86400000 - 1);
+    const isMultiDay = startOfDay(new Date(ev.start)).getTime() !== startOfDay(new Date(evEnd)).getTime();
+    if (!ev.allDay && !isMultiDay) continue;   // 单日带时间事件走时间轴
     for (let i = 0; i < 7; i++) {
       const dStart = startOfDay(days[i]).getTime();
-      const evEnd = ev.end || (ev.start + 86400000 - 1);
-      if (evEnd < dStart || ev.start > dStart + 86400000) continue;
+      if (evEnd < dStart || ev.start >= dStart + 86400000) continue;
       allDayPerDay[i].push({ kind: 'event', id: ev.id, title: ev.title || '(无标题)', color: colorOfCalItem(ev) || 'var(--accent)' });
+    }
+  }
+  // 项目 dueStart/dueEnd 覆盖某天 → 顶部条(跟桌面一致,手机原来漏了)
+  for (const p of (state.projects || [])) {
+    if (p.archived) continue;
+    if ((p.kind || 'project') !== 'project') continue;
+    if (!p.dueStart && !p.dueEnd) continue;
+    const ps = startOfDay(new Date(p.dueStart || p.dueEnd)).getTime();
+    const pe = startOfDay(new Date(p.dueEnd   || p.dueStart)).getTime();
+    for (let i = 0; i < 7; i++) {
+      const dStart = startOfDay(days[i]).getTime();
+      if (dStart < ps || dStart > pe) continue;
+      allDayPerDay[i].push({ kind: 'project', id: p.id, title: p.name || '(无名项目)', color: p.color || 'var(--accent)', done: false });
     }
   }
   const allDayHtml = allDayPerDay.some(a => a.length) ? `<div class="cal-week-allday-row">
     <div class="cal-week-allday-spacer"></div>
     ${allDayPerDay.map(items => `<div class="cal-week-allday-cell">
-      ${items.slice(0, 3).map(it => `<div class="cal-allday-pill ${it.done?'done':''}" ${it.kind==='task'?`data-task-id="${esc(it.id)}"`:`data-event-id="${esc(it.id)}"`} style="--block-color:${esc(it.color)}">${esc(it.title)}</div>`).join('')}
+      ${items.slice(0, 3).map(_calAllDayPillHtml).join('')}
       ${items.length > 3 ? `<div class="cal-allday-more">+${items.length - 3}</div>` : ''}
     </div>`).join('')}
   </div>` : '';

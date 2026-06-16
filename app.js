@@ -14180,10 +14180,8 @@ function calBlockHtml(d, dayStartMs) {
     const sidAttr = d.scheduleId ? `data-schedule-id="${esc(d.scheduleId)}"` : '';
     const occAttr = d.occurrenceStart != null ? `data-occurrence-start="${d.occurrenceStart}"` : '';
     const animCls = _animateDoneIds.has(d.taskId) ? ' just-done-anim' : '';
-    // 未完成任务样式: 规划模式开 = 实色底浅字 (plan-scheduled); 关 = 虚线 (plan-pending)
-    const planCls = !d.done
-      ? (_isPlanMode() ? ' plan-scheduled' : ' plan-pending')
-      : '';
+    // 未完成任务样式:统一实色底浅字 (plan-scheduled) — 虚线太浅看不清,计划模式开关都用实色
+    const planCls = !d.done ? ' plan-scheduled' : '';
     return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}${planCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} style="${styleVars}">
       <div class="cal-task-row">
         <span class="cal-task-check ${d.done?'checked':''}" data-action="cal-task-toggle" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr}></span>
@@ -16819,6 +16817,11 @@ function openCreateTaskSheet(opts) {
     body.querySelector('[data-action="qe-more"]').onclick = (ev) => {
       ev.stopPropagation();
       const menuItems = [];
+      // 加子待办 — 先存任务,再打开详情聚焦子任务输入框(创建 sheet 本身保持简洁不内嵌子任务区)
+      menuItems.push({ label: '加子待办', icon: 'ico-list', action: () => {
+        closePopover();
+        save({ thenOpenSub: true });
+      }});
       const hasUsable = (state.templates || []).some(t => t.kind === 'task' || t.kind === 'event');
       if (hasUsable) {
         menuItems.push({ label: '从模板创建', icon: 'ico-template', action: () => {
@@ -16836,9 +16839,13 @@ function openCreateTaskSheet(opts) {
       showPopover(menuItems, { anchor: ev.currentTarget });
     };
 
-    const save = () => {
+    const save = (saveOpts) => {
+      saveOpts = saveOpts || {};
       const title = titleEl.value.trim();
-      if (!title) { closeSheet(); return; }
+      if (!title) {
+        if (saveOpts.thenOpenSub) { showToast('先填任务标题'); titleEl.focus(); return; }
+        closeSheet(); return;
+      }
       const note = noteEl ? noteEl.value : '';
       const tags = [];
       const tagRe = /#([^\s#,。、,]+)/g;
@@ -16885,10 +16892,18 @@ function openCreateTaskSheet(opts) {
       };
       state.tasks.push(newTask);
       pushState();
+      // 加子待办:存完直接打开该任务详情(P2)并聚焦子任务输入框
+      if (saveOpts.thenOpenSub) {
+        closeSheet();
+        _taskDetailMode = 'p2';
+        _taskDetailRestoreFocus = 'sub';
+        openTaskDetail(newTask.id);
+        return;
+      }
       closeSheet();
       renderAll();
     };
-    body.querySelector('[data-action="save"]').onclick = save;
+    body.querySelector('[data-action="save"]').onclick = () => save();
     // Ctrl/Cmd+Enter 提交 (手机外接键盘场景)。回车单独按则允许换行 — title 是 input 没换行问题
     titleEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }

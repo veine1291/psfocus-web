@@ -6692,13 +6692,17 @@ const _summaryActions = {
     // 例外: compositionend 类型本身就是 IME 完成, 不能跳过
     const isCompEnd = e && e.type === 'compositionend';
     if (e && e.isComposing && !isCompEnd) return;
-    // 用 RAF 推一帧,避免高频输入阻塞主线程;前一帧没跑完的 cancel
-    if (el._syncRAF) cancelAnimationFrame(el._syncRAF);
-    el._syncRAF = requestAnimationFrame(() => {
-      el._syncRAF = null;
-      _syncEditorToState(el);
-      _tagSuggestUpdate(el);
-    });
+    // 标签联想要跟手(轻量,读 DOM 选区)→ rAF 每帧
+    if (el._tagRAF) cancelAnimationFrame(el._tagRAF);
+    el._tagRAF = requestAnimationFrame(() => { el._tagRAF = null; _tagSuggestUpdate(el); });
+    // HTML→md 同步对长文是 O(n) 全量序列化,每帧跑会越打越卡 → 防抖 250ms。
+    // 安全:submit 直接读实时 editor(_editHtmlToMd),不依赖 draftNote 即时;blur / compositionend 另有即时 flush。
+    if (el._syncTimer) { clearTimeout(el._syncTimer); el._syncTimer = null; }
+    if (isCompEnd) {
+      _syncEditorToState(el);                 // 组词完成 → 立即同步,别等防抖
+    } else {
+      el._syncTimer = setTimeout(() => { el._syncTimer = null; _syncEditorToState(el); }, 250);
+    }
   },
   'summary-tb-tag': () => {
     const ed = _summaryInputTa();
@@ -6754,7 +6758,16 @@ const _summaryActions = {
         }
       } catch (err) { console.warn('[sum-upload]', err); }
     }
-    el.value = '';
+    // 移动端(尤其 iOS Safari)已知坑:hidden file input 用过一次后,只清 .value 再点常唤不起选图
+    // → 第二张/第三张加不了。换成一个全新的 input 节点(保留 multiple/accept/data-action/hidden 属性),
+    //   保证后续每次点都能正常弹出选择器。
+    try {
+      if (el.parentNode) {
+        const fresh = el.cloneNode(false);
+        fresh.value = '';
+        el.parentNode.replaceChild(fresh, el);
+      } else { el.value = ''; }
+    } catch (_) { try { el.value = ''; } catch (__) {} }
     if (okCount) showToast(`已加 ${okCount} 张`);
     _refreshSumPendingImagesInSheet();   // 关键: sheet 里的预览要刷, renderAll 只动主视图
     renderAll();
@@ -7496,6 +7509,15 @@ function _bindSummaryGlobalDispatchers() {
     if (!el) return;
     const a = el.dataset.actionBlur;
     if (_isMyAction(a) && _summaryActions[a]) _summaryActions[a](el, e);
+  }, true);
+  // 摘要编辑器失焦 → 立即把 HTML→md flush 进 draftNote(因为 input 里同步是 250ms 防抖的)
+  document.addEventListener('blur', (e) => {
+    const ed = e.target;
+    if (!ed || !ed.classList) return;
+    if (ed.classList.contains('sum-input') || ed.classList.contains('sep-editor')) {
+      if (ed._syncTimer) { clearTimeout(ed._syncTimer); ed._syncTimer = null; }
+      try { _syncEditorToState(ed); } catch (_) {}
+    }
   }, true);
 }
 _bindSummaryGlobalDispatchers();

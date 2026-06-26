@@ -13768,6 +13768,18 @@ function allDayTaskOnDay(t, dStart) {
   }
   return null;
 }
+// 事件作为顶部 banner 条是否落在某天 — 支持重复展开 + 多天 range(对齐 task 的 allDayTaskOnDay)。
+// 修复:周/日视图原来直接用 ev.start/ev.end,重复事件只在首次那天显示,后续重复天不出现。
+function bannerEventOnDay(ev, dStart) {
+  if (!ev || !ev.start) return null;
+  const dEnd = dStart + 86400000;
+  const occs = expandItemOccurrencesInDay(ev, dStart, dEnd);
+  for (const o of occs) {
+    const isMultiDay = startOfDay(new Date(o.start)).getTime() !== startOfDay(new Date(o.end - 1)).getTime();
+    if (o.allDay || isMultiDay) return { occ: o };   // 全天 或 跨日 → 进 banner;单日带时间走时间轴
+  }
+  return null;
+}
 function _isRecurringTask(t) {
   return Array.isArray(t.schedules) && t.schedules.some(s => s && s.repeat && s.repeat !== 'none');
 }
@@ -14900,13 +14912,9 @@ function renderDayView(view) {
     if (!showDone && r.done) continue;
     allDayItems.push({ kind: 'task', id: t.id, title: t.title || '(无标题)', color: colorOfCalItem(t) || 'var(--accent)', done: r.done });
   }
-  // 3) 事件:全天 OR 多天(跨日 range,即使没标全天也进 banner — 跟桌面 scheduleAsBar 一致)
+  // 3) 事件:全天 OR 多天(支持重复展开 — 重复事件每个 occurrence 都要进 banner,不能只看原始 ev.start)
   for (const ev of (state.events || [])) {
-    if (!ev.start) continue;
-    const evEnd = ev.end || (ev.start + 86400000 - 1);
-    if (evEnd < dayStart || ev.start >= dayEndMs) continue;   // 覆盖当天
-    const isMultiDay = startOfDay(new Date(ev.start)).getTime() !== startOfDay(new Date(evEnd)).getTime();
-    if (!ev.allDay && !isMultiDay) continue;   // 单日带时间事件走时间轴,不进 banner
+    if (!bannerEventOnDay(ev, dayStart)) continue;
     allDayItems.push({ kind: 'event', id: ev.id, title: ev.title || '(无标题)', color: colorOfCalItem(ev) || 'var(--accent)' });
   }
   // 时间块
@@ -14975,12 +14983,9 @@ function renderWeekView(view) {
   }
   for (const ev of (state.events || [])) {
     if (!ev.start) continue;
-    const evEnd = ev.end || (ev.start + 86400000 - 1);
-    const isMultiDay = startOfDay(new Date(ev.start)).getTime() !== startOfDay(new Date(evEnd)).getTime();
-    if (!ev.allDay && !isMultiDay) continue;   // 单日带时间事件走时间轴
     for (let i = 0; i < 7; i++) {
       const dStart = startOfDay(days[i]).getTime();
-      if (evEnd < dStart || ev.start >= dStart + 86400000) continue;
+      if (!bannerEventOnDay(ev, dStart)) continue;   // 支持重复展开,逐天判定
       allDayPerDay[i].push({ kind: 'event', id: ev.id, title: ev.title || '(无标题)', color: colorOfCalItem(ev) || 'var(--accent)' });
     }
   }

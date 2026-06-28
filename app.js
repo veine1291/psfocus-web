@@ -10859,6 +10859,81 @@ let _taskDetailMode = 'p1';
 // _restoreFocus = 重渲后要把光标聚回哪个 input (p1→p2 切换用)
 let _taskDetailRestoreFocus = null;
 
+// 手机端事件详情 sheet — 看详情 / 改时间(含重复)/ 删除。颜色、项目归属等高级编辑仍在桌面端。
+// 复用任务那套时间编辑器 openQuickTimePickerSheet + legacy 镜像同步。
+function openEventDetail(id) {
+  const ev = (state.events || []).find(x => x.id === id);
+  if (!ev) { showToast('该事件已被删除'); return; }
+  const body = $('sheet-body'); const sheet = $('sheet');
+  if (!body || !sheet) return;
+  const _syncLegacy = () => {
+    if (!ev.schedules || !ev.schedules.length) { ev.start = null; ev.end = null; ev.allDay = false; }
+    else { const s0 = ev.schedules[0]; ev.start = s0.start || null; ev.end = s0.end || null; ev.allDay = !!s0.allDay; }
+  };
+  const schedules = (ev.schedules && ev.schedules.length)
+    ? ev.schedules
+    : (ev.start ? [{ id: 'legacy', start: ev.start, end: ev.end, allDay: ev.allDay, repeat: 'none', kind: ev.end ? 'range' : 'date' }] : []);
+  const color = colorOfCalItem(ev) || 'var(--accent)';
+  const schedHtml = schedules.map(s => `<span class="dp-sched-pill">
+      <span class="ico-clock"></span>
+      <span class="dp-sched-text">${esc(fmtSchedule(s))}</span>
+      <button class="dp-sched-x" data-ev-sched-x="${esc(s.id || 'legacy')}" title="删除此时间">×</button>
+    </span>`).join('');
+  body.innerHTML = `<div class="dp-detail" style="padding:16px;">
+    <div style="display:inline-block;font-size:11px;color:#fff;background:${esc(color)};border-radius:5px;padding:1px 8px;margin-bottom:10px;">事件</div>
+    <input class="dp-title-input" id="ev-detail-title" value="${esc(ev.title || '')}" placeholder="事件标题" style="width:100%;font-size:17px;font-weight:600;border:0;outline:0;background:transparent;margin-bottom:12px;" />
+    <div class="dp-sched-row" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      ${schedHtml}
+      <button class="dp-add-sched-btn" id="ev-add-sched"><span class="ico-clock"></span> ${schedules.length ? '改时间' : '加时间'}</button>
+    </div>
+    <button id="ev-delete" style="margin-top:22px;width:100%;padding:11px;border:1px solid var(--danger,#d54141);border-radius:10px;background:transparent;color:var(--danger,#d54141);font-size:14px;">删除事件</button>
+    <div style="margin-top:12px;color:var(--text-dim);font-size:11.5px;text-align:center;">颜色 / 项目归属等更多设置请在桌面端编辑</div>
+  </div>`;
+  sheet.classList.remove('hidden');
+
+  const titleEl = body.querySelector('#ev-detail-title');
+  if (titleEl) {
+    const saveTitle = () => { const v = (titleEl.value || '').trim(); if (v !== (ev.title || '')) { ev.title = v; pushState(); renderAll(); } };
+    titleEl.addEventListener('blur', saveTitle);
+    titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); } });
+  }
+  const addBtn = body.querySelector('#ev-add-sched');
+  if (addBtn) addBtn.onclick = () => {
+    const existing = (ev.schedules && ev.schedules[0])
+      || (ev.start ? { start: ev.start, end: ev.end, allDay: ev.allDay, repeat: 'none', kind: ev.end ? 'range' : 'date' } : null);
+    openQuickTimePickerSheet(existing, (newSched) => {
+      if (!newSched) return;
+      if (!Array.isArray(ev.schedules)) ev.schedules = [];
+      if (ev.schedules.length) ev.schedules[0] = newSched; else ev.schedules.push(newSched);
+      _syncLegacy();
+      pushState(); openEventDetail(id); renderAll();
+    });
+  };
+  body.querySelectorAll('[data-ev-sched-x]').forEach(b => b.onclick = () => {
+    const sid = b.dataset.evSchedX;
+    if (!Array.isArray(ev.schedules)) ev.schedules = [];
+    if (sid === 'legacy') ev.schedules = [];
+    else ev.schedules = ev.schedules.filter(s => s.id !== sid);
+    _syncLegacy();
+    pushState(); openEventDetail(id); renderAll();
+  });
+  const delBtn = body.querySelector('#ev-delete');
+  if (delBtn) delBtn.onclick = () => {
+    const doDelete = () => {
+      state.events = (state.events || []).filter(x => x.id !== id);
+      pushState(); closeSheet(); renderAll();
+    };
+    if (typeof showConfirm === 'function') {
+      showConfirm({
+        title: '删除事件',
+        message: `删除事件「${ev.title || '(无标题)'}」?此操作不可恢复。`,
+        okText: '删除', danger: true, onOk: doDelete,
+      });
+    } else if (confirm(`删除事件「${ev.title || '(无标题)'}」?`)) {
+      doDelete();
+    }
+  };
+}
 function openTaskDetail(id, opts) {
   try {
     return _openTaskDetailInner(id, opts);
@@ -14574,7 +14649,7 @@ function _bindCalBlocks(view) {
   }));
   view.querySelectorAll('[data-event-id]').forEach(el => el.addEventListener('click', (e) => {
     e.stopPropagation();
-    showToast('事件编辑暂未实现,在桌面端查看');
+    openEventDetail(el.dataset.eventId);
   }));
   // session 块点击 → 弹详情 sheet,可看合并段 / 删除单段 / 删除整组
   view.querySelectorAll('.cal-block-session[data-session-id]').forEach(el => el.addEventListener('click', (e) => {

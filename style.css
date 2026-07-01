@@ -7396,6 +7396,15 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 }
 .settings-mini-btn:active { background: var(--bg-hover); }
 
+/* 完成提示音设置 */
+.settings-cs-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 2px;
+}
+.settings-cs-label { font-size: 14px; color: var(--text); }
+.settings-cs-name { font-size: 13px; color: var(--text-dim); }
+.settings-cs-btns { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 0 2px; }
+
 /* =========================================================
    计划模式 (Plan Mode) — 日历额外渲染层
    ========================================================= */

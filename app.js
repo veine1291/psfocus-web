@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260608-1042';
+const _PSFOCUS_BUILD = '20260701-1426';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -7623,6 +7623,44 @@ function _medGetAudioCtx() {
   try { _medAudioCtx = new AC(); } catch (_) { return null; }
   return _medAudioCtx;
 }
+
+// ===== 完成任务提示音 (2026-07-01) =====
+// 默认合成明亮上行三音琶音(复用冥想的 AudioContext);用户可在设置里上传自定义音效,
+// 存 settings.completionSoundData (data URL) 随 state 同步到电脑端 —— 一处上传三端通用。
+let _completionAudioElM = null;
+function _playCompletionSoundM() {
+  const s = (state && state.settings) || {};
+  if (s.completionSoundEnabled === false) return;
+  const data = s.completionSoundData;
+  if (data) {
+    try {
+      if (!_completionAudioElM) _completionAudioElM = new Audio();
+      if (_completionAudioElM.src !== data) _completionAudioElM.src = data;
+      _completionAudioElM.currentTime = 0;
+      _completionAudioElM.play().catch(() => {});
+      return;
+    } catch (_) {}
+  }
+  _mPlayTone(659.25, 0,    0.45, 0.14);   // E5
+  _mPlayTone(830.61, 0.09, 0.45, 0.13);   // G#5
+  _mPlayTone(987.77, 0.18, 0.55, 0.13);   // B5
+}
+function _mPlayTone(freq, delay, dur, peak) {
+  const ctx = _medGetAudioCtx();
+  if (!ctx) return;
+  try { if (ctx.state === 'suspended') ctx.resume(); } catch (_) {}
+  const t0 = ctx.currentTime + (delay || 0);
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, t0);
+  osc.connect(gain).connect(ctx.destination);
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(peak || 0.13, t0 + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.05);
+}
 // 开始冥想(用户手势内)时:resume 音频上下文 + 挂一个近乎静音的持续源占住音频会话。
 // iOS 网页无法可靠穿透侧边静音开关(系统级限制),这只是尽量提高静音下钵声出声的概率,不保证。
 let _medKeepAlive = null;
@@ -9562,6 +9600,7 @@ function _toggleSubtaskForM(sub, parent, occStart) {
   if (!sub || sub.checklistItem !== true || !_isRecurringTaskM(parent) || occStart == null) {
     // 普通路径:写 sub.done
     sub.done = !sub.done; sub.doneAt = sub.done ? Date.now() : null; sub.updatedAt = Date.now();
+    if (sub.done) _playCompletionSoundM();
     return;
   }
   const key = _occDayKeyM(occStart);
@@ -9573,7 +9612,7 @@ function _toggleSubtaskForM(sub, parent, occStart) {
   }
   if (!parent.subtaskCompletions[key]) parent.subtaskCompletions[key] = {};
   const occ = parent.subtaskCompletions[key];
-  if (occ[sub.id]) delete occ[sub.id]; else occ[sub.id] = true;
+  if (occ[sub.id]) delete occ[sub.id]; else { occ[sub.id] = true; _playCompletionSoundM(); }
   if (!Object.keys(occ).length) delete parent.subtaskCompletions[key];
   parent.updatedAt = Date.now();
 }
@@ -10772,7 +10811,7 @@ function toggleTaskDone(id) {
   const willBeDone = !t.done;
   t.done = !t.done;
   t.doneAt = t.done ? Date.now() : null;
-  if (willBeDone) _markDoneAnim(id);
+  if (willBeDone) { _markDoneAnim(id); _playCompletionSoundM(); }
   pushState(); renderAll();
 }
 
@@ -11344,6 +11383,7 @@ function bindTaskDetailEvents(body, id) {
       } else {
         t.done = !t.done;
         t.doneAt = t.done ? Date.now() : null;
+        if (t.done) _playCompletionSoundM();
         pushState(); openTaskDetail(id); renderAll();
       }
     };
@@ -11519,9 +11559,10 @@ function bindTaskDetailEvents(body, id) {
           }
         }
         child.done = !child.done; child.doneAt = child.done ? Date.now() : null; child.updatedAt = Date.now();
+        if (child.done) _playCompletionSoundM();
       } else {
         const s = (t.subtasks || []).find(x => x.id === sid);
-        if (s) { s.done = !s.done; s.doneAt = s.done ? Date.now() : null; }
+        if (s) { s.done = !s.done; s.doneAt = s.done ? Date.now() : null; if (s.done) _playCompletionSoundM(); }
       }
       pushState(); openTaskDetail(id);
     };
@@ -13992,6 +14033,7 @@ function toggleOccurrenceDone(item, schedule, occStart) {
   if (!isRecurring) {
     item.done = !item.done;
     item.doneAt = item.done ? Date.now() : null;
+    if (item.done) _playCompletionSoundM();
   } else {
     if (!Array.isArray(item.completedOccurrences)) item.completedOccurrences = [];
     const idx = item.completedOccurrences.indexOf(occStart);
@@ -14001,6 +14043,7 @@ function toggleOccurrenceDone(item, schedule, occStart) {
     } else {
       // 完成本次 → 推进到下一次 occurrence,**重置子任务**(对齐 TickTick/Todoist:
       // 子任务的勾选属于当次出现,新一次出现应当从未勾选开始)
+      _playCompletionSoundM();
       item.completedOccurrences.push(occStart);
       item.completedOccurrences.sort((a, b) => a - b);
       const now = Date.now();
@@ -16304,6 +16347,9 @@ function renderSettingsAppearance(view) {
 function renderSettingsSystem(view) {
   const order = getMobileTabOrder();
   const hidden = getMobileTabHiddenSet();
+  const _cs = state.settings || {};
+  const csEnabled = _cs.completionSoundEnabled !== false;
+  const csName = _cs.completionSoundData ? esc(_cs.completionSoundName || '自定义') : '内置默认';
   const rowsHtml = order.map(id => {
     const t = TAB_DEFS[id];
     const isFixed = id === 'settings';
@@ -16318,7 +16364,23 @@ function renderSettingsSystem(view) {
     </div>`;
   }).join('');
   view.innerHTML = `
-    <div class="settings-sub-title">底部 tab</div>
+    <div class="settings-sub-title">完成提示音</div>
+    <div class="settings-cs-row">
+      <span class="settings-cs-label">勾选任务时播放</span>
+      <button class="tab-order-toggle ${csEnabled ? 'is-on' : 'is-off'}" data-action="completion-sound-toggle">${csEnabled ? '开' : '关'}</button>
+    </div>
+    <div class="settings-cs-row">
+      <span class="settings-cs-label">当前音效</span>
+      <span class="settings-cs-name">${csName}</span>
+    </div>
+    <div class="settings-cs-btns">
+      <button class="settings-mini-btn" data-action="completion-sound-preview">试听</button>
+      <button class="settings-mini-btn" data-action="completion-sound-upload">上传音效</button>
+      ${_cs.completionSoundData ? `<button class="settings-mini-btn" data-action="completion-sound-reset">恢复默认</button>` : ''}
+    </div>
+    <div class="settings-hint">上传的音效会同步到电脑端;请用 ≤ 1MB 的短音频。</div>
+
+    <div class="settings-sub-title" style="margin-top:24px;">底部 tab</div>
     <div class="settings-hint">长按 ☰ 拖拽重新排序;开关控制是否显示。设置永远固定在最右</div>
     <div class="tab-order-list" id="tab-order-list">${rowsHtml}</div>
     <div class="settings-sub-title" style="margin-top:24px;">版本</div>
@@ -16373,6 +16435,51 @@ function renderSettingsSystem(view) {
         location.reload();
       }
     }, 400);
+  };
+  // 完成提示音 — 开关 / 试听 / 上传 / 恢复默认
+  const csToggle = view.querySelector('[data-action="completion-sound-toggle"]');
+  if (csToggle) csToggle.onclick = () => {
+    const cur = state.settings.completionSoundEnabled !== false;
+    state.settings.completionSoundEnabled = !cur;
+    pushState();
+    renderSettingsSystem(view);
+  };
+  const csPreview = view.querySelector('[data-action="completion-sound-preview"]');
+  if (csPreview) csPreview.onclick = () => _playCompletionSoundM();
+  const csReset = view.querySelector('[data-action="completion-sound-reset"]');
+  if (csReset) csReset.onclick = () => {
+    delete state.settings.completionSoundData;
+    delete state.settings.completionSoundName;
+    pushState();
+    renderSettingsSystem(view);
+  };
+  const csUpload = view.querySelector('[data-action="completion-sound-upload"]');
+  if (csUpload) csUpload.onclick = () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'audio/*';
+    inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', () => {
+      const f = inp.files && inp.files[0];
+      if (f) {
+        if (f.size > 1024 * 1024) {
+          showToast('音效文件太大(需 ≤ 1MB),换个更短的片段');
+        } else {
+          const reader = new FileReader();
+          reader.onload = () => {
+            state.settings.completionSoundData = reader.result;   // data URL,随 state 同步电脑端
+            state.settings.completionSoundName = f.name;
+            pushState();
+            renderSettingsSystem(view);
+            _playCompletionSoundM();   // 上传后自动试听
+          };
+          reader.onerror = () => showToast('读取音效失败');
+          reader.readAsDataURL(f);
+        }
+      }
+      try { document.body.removeChild(inp); } catch (_) {}
+    });
+    inp.click();
   };
 }
 

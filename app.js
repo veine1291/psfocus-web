@@ -7623,6 +7623,43 @@ function _medGetAudioCtx() {
   try { _medAudioCtx = new AC(); } catch (_) { return null; }
   return _medAudioCtx;
 }
+// 开始冥想(用户手势内)时:resume 音频上下文 + 挂一个近乎静音的持续源占住音频会话。
+// iOS 网页无法可靠穿透侧边静音开关(系统级限制),这只是尽量提高静音下钵声出声的概率,不保证。
+let _medKeepAlive = null;
+function _medUnlockAudio() {
+  const ctx = _medGetAudioCtx();
+  if (!ctx) return;
+  try { if (ctx.state === 'suspended') ctx.resume(); } catch (_) {}
+  if (_medKeepAlive) return;
+  try {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);   // 近乎静音,听不见
+    osc.frequency.setValueAtTime(1, ctx.currentTime);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start();
+    _medKeepAlive = { osc, g };
+  } catch (_) {}
+}
+function _medStopKeepAlive() {
+  if (!_medKeepAlive) return;
+  try { _medKeepAlive.osc.stop(); } catch (_) {}
+  try { _medKeepAlive.osc.disconnect(); _medKeepAlive.g.disconnect(); } catch (_) {}
+  _medKeepAlive = null;
+}
+// 结束提醒兜底 —— 静音下声音出不来,用全屏闪一下 + 大字 + 震动(Android 有效,iOS 忽略)提醒。
+function _medEndAlert() {
+  try { if (navigator.vibrate) navigator.vibrate([200, 120, 200]); } catch (_) {}
+  try {
+    let el = document.getElementById('med-end-flash');
+    if (!el) { el = document.createElement('div'); el.id = 'med-end-flash'; el.className = 'med-end-flash'; document.body.appendChild(el); }
+    el.innerHTML = '<div class="med-end-flash-card"><div class="med-end-flash-title">冥想结束</div><div class="med-end-flash-sub">点击关闭</div></div>';
+    el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.remove('show'), 2800);
+    el.onclick = () => { el.classList.remove('show'); };
+  } catch (_) {}
+}
 // 加成式合成 — 同时叠几个正弦/三角波,指数衰减包络,模拟敲击+衰减声
 function _playMedTone({ freqs, gains, decay, type = 'sine' }) {
   const ctx = _medGetAudioCtx();
@@ -7719,6 +7756,7 @@ function _meditationStart(kind, targetMs) {
   meditationState.kind = kind;
   meditationState.startedAt = Date.now();
   meditationState.targetMs = kind === 'count-down' ? targetMs : null;
+  _medUnlockAudio();   // 在开始的用户手势内解锁 + 占住音频会话(尽量让结束钵声在静音下也能出)
   _meditationStartTicker();
   renderAll();
 }
@@ -7749,12 +7787,14 @@ function _meditationStop(autoComplete) {
   meditationState.running = false;
   meditationState.startedAt = null;
   meditationState.targetMs = null;
+  _medStopKeepAlive();
   pushState();
   renderAll();
   if (autoComplete) {
     showToast('冥想结束 · ' + _fmtDurShort(dur));
     // 倒计时到点自动播放选中的铃声 (用户主动按"结束"不播 — 不打扰)
     _playMedBellById(_medBellGetId());
+    _medEndAlert();   // 视觉闪 + 震动兜底 —— 静音下声音出不来时也能收到提醒
   }
 }
 

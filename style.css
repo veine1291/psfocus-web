@@ -3553,6 +3553,30 @@ body.sum-editor-open { overflow: hidden; }
    统计 tab
    ========================================================= */
 /* ===== 冥想计时器 (Kayu 2026-05-28) ===== */
+/* 结束提醒兜底 —— 静音下声音出不来时,全屏闪一下 + 大字提醒(点击关闭) */
+#med-end-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 99990;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent, #7c9cff);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .35s ease;
+}
+#med-end-flash.show { opacity: .97; pointer-events: auto; }
+.med-end-flash-card {
+  text-align: center;
+  color: #fff;
+  transform: scale(.9);
+  transition: transform .35s cubic-bezier(.2,1.4,.4,1);
+}
+#med-end-flash.show .med-end-flash-card { transform: scale(1); }
+.med-end-flash-title { font-size: 34px; font-weight: 700; letter-spacing: 3px; }
+.med-end-flash-sub { margin-top: 12px; font-size: 13px; opacity: .82; }
+
 .med-tab {
   padding: 20px 20px 40px;
   display: flex;

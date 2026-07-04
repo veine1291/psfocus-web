@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260704-1838';
+const _PSFOCUS_BUILD = '20260704-1910';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1505,6 +1505,12 @@ function _slMatchesDate(t, filter) {
     if (t.done) return false;
     const e = end || start || t.dueAt;
     return e != null && e < Date.now();
+  }
+  if (filter === 'recurring') return _isRecurringTask(t);   // 对齐桌面「重复日期」
+  if (filter === 'month') {                                  // 对齐桌面「本月」
+    const a = startOfMonth(new Date()).getTime();
+    const b = addMonths(startOfMonth(new Date()), 1).getTime() - 1;
+    return taskHitDate(t, a, b);
   }
   const win = _slDateWindow(filter);
   if (!win) return true;
@@ -12392,6 +12398,11 @@ function openEditTagSheet(tagName) {
 function openListMoreMenu() {
   const cl = getCurrentList();
   const items = [];
+  if (cl.kind === 'smart-list' && cl.smartList) {
+    // 智能清单 ⋯ 菜单 — 对齐桌面端(编辑/删除),删除在编辑器里
+    const sl = cl.smartList;
+    items.push({ label: '编辑智能清单', icon: 'ico-edit', action: () => { closePopover(); _openSmartListEdit(sl.id); } });
+  }
   if (cl.kind === 'project' && cl.project) {
     const p = cl.project;
     const isProj = (p.kind || 'project') === 'project';
@@ -16710,17 +16721,172 @@ function renderSettingsAbout(view) {
 // =========================================================
 // ===== FAB / 新建任务 =====
 // =========================================================
-// 新建 智能清单 / 标签 — 只需要一个名字的简单 sheet(抽屉底部「+ 添加」菜单入口)
+// 智能清单编辑器 — 新建(slId=null)/ 编辑 共用;字段与桌面端 showSmartListEdit 全量对齐:
+// 名称 / 类型 / 来源(未分类+文件夹+清单+项目)/ 日期(含时间段)/ 关键词 / 标签
+function _openSmartListEdit(slId) {
+  const exist = slId ? (state.smartLists || []).find(x => x.id === slId) : null;
+  // 深拷贝草稿,取消不污染 state
+  const draft = exist ? JSON.parse(JSON.stringify(exist)) : {
+    id: 'sl_' + Math.random().toString(36).slice(2, 10),
+    name: '',
+    builtin: false,
+    filters: { sources: [], date: 'any', keyword: '', types: ['all'] },
+  };
+  const f = draft.filters = draft.filters || {};
+  if (!Array.isArray(f.sources)) f.sources = [];
+  if (f.date === undefined)      f.date = 'any';
+  if (f.keyword === undefined)   f.keyword = '';
+  if (!Array.isArray(f.types))   f.types = ['all'];
+  if (!Array.isArray(f.tags))    f.tags = [];
+
+  const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
+  const folderKindOf = (x) => x.kind || 'project';
+  const folders = (state.folders || []).slice().sort(byOrder);
+  const lists = (state.projects || []).filter(p => !p.archived).slice().sort(byOrder);
+  const srcChecked = (key) => f.sources.includes(key);
+  // 来源行:未分类 + (清单文件夹 → 其下清单) + (项目文件夹 → 其下项目) + 未分组
+  const srcRow = (key, label, indent, ico) => `
+    <label class="sle-src-row" style="padding-left:${8 + indent * 18}px;">
+      <input type="checkbox" data-sle-src="${esc(key)}" ${srcChecked(key) ? 'checked' : ''}>
+      <span class="${ico}"></span><span class="sle-src-label">${esc(label)}</span>
+    </label>`;
+  let srcHtml = srcRow('unsorted', '未分类(无归属)', 0, 'ico-magic');
+  const buildGroup = (kind, title, icoRow) => {
+    const gFolders = folders.filter(x => folderKindOf(x) === kind);
+    const gLists = lists.filter(p => (p.kind || 'project') === (kind === 'tasklist' ? 'tasklist' : 'project'));
+    const inFolder = (fid) => gLists.filter(p => p.folderId === fid);
+    const folderIds = new Set(gFolders.map(x => x.id));
+    const loose = gLists.filter(p => !p.folderId || !folderIds.has(p.folderId));
+    if (!gLists.length && !gFolders.length) return;
+    srcHtml += `<div class="sle-src-group">${title}</div>`;
+    gFolders.forEach(fd => {
+      srcHtml += srcRow('folder:' + fd.id, fd.name || '未命名', 0, 'ico-folder');
+      inFolder(fd.id).forEach(p => { srcHtml += srcRow(p.id, p.name || '未命名', 1, icoRow); });
+    });
+    loose.forEach(p => { srcHtml += srcRow(p.id, p.name || '未命名', 0, icoRow); });
+  };
+  buildGroup('tasklist', '任务清单', 'ico-list');
+  buildGroup('project', '项目', 'ico-grid');
+
+  const dateOpts = [
+    ['any', '全部'], ['none', '无日期'], ['overdue', '已过期'], ['recurring', '重复日期'],
+    ['today', '今天'], ['tomorrow', '明天'], ['week', '本周'], ['month', '本月'], ['range', '时间段…'],
+  ];
+  const curDateKey = (f.date && typeof f.date === 'object') ? 'range' : (f.date || 'any');
+  const dToInput = (ts) => { if (!ts) return ''; const d = new Date(ts); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+
+  const typeOpts = [['all', '所有'], ['event', '事件'], ['task', '任务'], ['project', '项目']];
+  const allTagNames = uniq([
+    ...(state.tags || []).map(x => typeof x === 'string' ? x : x?.name).filter(Boolean),
+    ...state.tasks.flatMap(t => Array.isArray(t.tags) ? t.tags : []),
+  ]).filter(Boolean);
+
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content sle-sheet">
+      <div class="section-title" style="padding:0 0 12px;">${exist ? '编辑智能清单' : '新建智能清单'}</div>
+      <div class="form-row"><label>名称</label>
+        <input type="text" id="sle-name" placeholder="如 本周要做" maxlength="30" value="${esc(draft.name)}">
+      </div>
+      <div class="sle-field-title">类型</div>
+      <div class="sle-chips" id="sle-types">
+        ${typeOpts.map(([v, l]) => `<button class="sle-chip ${f.types.includes(v) ? 'on' : ''}" data-sle-type="${v}">${l}</button>`).join('')}
+      </div>
+      <div class="sle-field-title">日期</div>
+      <div class="form-row">
+        <select id="sle-date">${dateOpts.map(([v, l]) => `<option value="${v}" ${curDateKey === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      </div>
+      <div class="form-row sle-range-row" id="sle-range" style="display:${curDateKey === 'range' ? '' : 'none'};">
+        <input type="date" id="sle-range-from" value="${curDateKey === 'range' ? dToInput(f.date.from) : ''}">
+        <span style="color:var(--text-dim);">→</span>
+        <input type="date" id="sle-range-to" value="${curDateKey === 'range' ? dToInput(f.date.to) : ''}">
+      </div>
+      <div class="sle-field-title">关键词</div>
+      <div class="form-row"><input type="text" id="sle-keyword" placeholder="标题包含的文字(可选)" value="${esc(f.keyword || '')}"></div>
+      <div class="sle-field-title">标签(任一命中)</div>
+      <div class="sle-chips" id="sle-tags">
+        ${allTagNames.length ? allTagNames.map(tg => `<button class="sle-chip ${f.tags.includes(tg) ? 'on' : ''}" data-sle-tag="${esc(tg)}">${esc(tg)}</button>`).join('') : '<span class="sle-empty">还没有标签</span>'}
+      </div>
+      <div class="sle-field-title">来源(不勾 = 全部)</div>
+      <div class="sle-src-list">${srcHtml}</div>
+      ${exist && !exist.builtin ? '<button class="sle-delete" id="sle-delete">删除智能清单</button>' : ''}
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="primary" data-action="save">${exist ? '保存' : '创建'}</button>
+    </div>
+  `, {
+    noMaskClose: true,   // 有原生 date picker,iOS 收 picker 的合成点击易误关
+    onMount: (body) => {
+      const nameEl = body.querySelector('#sle-name');
+      if (!exist) setTimeout(() => { try { nameEl.focus(); } catch (_) {} }, 100);
+      // 类型 chips:'all' 与其它互斥
+      body.querySelectorAll('[data-sle-type]').forEach(b => b.onclick = () => {
+        const v = b.dataset.sleType;
+        let set = new Set(f.types);
+        if (v === 'all') set = new Set(['all']);
+        else {
+          set.delete('all');
+          if (set.has(v)) set.delete(v); else set.add(v);
+          if (!set.size) set.add('all');
+        }
+        f.types = Array.from(set);
+        body.querySelectorAll('[data-sle-type]').forEach(x => x.classList.toggle('on', f.types.includes(x.dataset.sleType)));
+      });
+      body.querySelectorAll('[data-sle-tag]').forEach(b => b.onclick = () => {
+        const v = b.dataset.sleTag;
+        const i = f.tags.indexOf(v);
+        if (i >= 0) f.tags.splice(i, 1); else f.tags.push(v);
+        b.classList.toggle('on', f.tags.includes(v));
+      });
+      const dateSel = body.querySelector('#sle-date');
+      dateSel.onchange = () => { body.querySelector('#sle-range').style.display = dateSel.value === 'range' ? '' : 'none'; };
+      body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+      const delBtn = body.querySelector('#sle-delete');
+      if (delBtn) delBtn.onclick = () => {
+        if (!confirm('删除智能清单「' + (draft.name || '未命名') + '」?筛选器配置会被清掉,任务/事件不会被删。')) return;
+        state.smartLists = (state.smartLists || []).filter(x => x.id !== draft.id);
+        if (ui.selectedKind === 'smart-list' && ui.selectedId === draft.id) { ui.selectedKind = 'smart'; ui.selectedId = 'all'; saveUI(); }
+        pushState(); closeSheet(); renderDrawerNav(); renderAll();
+      };
+      body.querySelector('[data-action="save"]').onclick = () => {
+        const name = (nameEl.value || '').trim();
+        if (!name) { nameEl.focus(); return; }
+        draft.name = name;
+        f.keyword = (body.querySelector('#sle-keyword').value || '').trim();
+        f.sources = Array.from(body.querySelectorAll('[data-sle-src]:checked')).map(x => x.dataset.sleSrc);
+        if (dateSel.value === 'range') {
+          const from = body.querySelector('#sle-range-from').value;
+          const to = body.querySelector('#sle-range-to').value;
+          const fromTs = from ? new Date(from + 'T00:00:00').getTime() : null;
+          const toTs = to ? new Date(to + 'T23:59:59').getTime() : null;
+          f.date = fromTs ? { from: fromTs, to: toTs || (fromTs + 86400000 - 1) } : 'any';
+        } else {
+          f.date = dateSel.value;
+        }
+        if (!Array.isArray(state.smartLists)) state.smartLists = [];
+        if (exist) {
+          const real = state.smartLists.find(x => x.id === draft.id);
+          if (real) { real.name = draft.name; real.filters = f; }
+        } else {
+          state.smartLists.push(draft);
+          showToast('已创建智能清单「' + name + '」');
+        }
+        pushState(); closeSheet(); renderDrawerNav(); renderAll();
+      };
+    },
+  });
+}
+// 新建标签 — 只需要一个名字的简单 sheet(抽屉底部「+ 添加」菜单入口)
 function _openCreateSimpleSheet(kind) {
-  const isSl = kind === 'smart-list';
+  if (kind === 'smart-list') return _openSmartListEdit(null);
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content">
-      <div class="section-title" style="padding:0 0 12px;">${isSl ? '新建智能清单' : '新建标签'}</div>
+      <div class="section-title" style="padding:0 0 12px;">新建标签</div>
       <div class="form-row"><label>名称</label>
-        <input type="text" id="cs-name" placeholder="${isSl ? '如 本周要做' : '标签名'}" maxlength="30">
+        <input type="text" id="cs-name" placeholder="标签名" maxlength="30">
       </div>
-      ${isSl ? '<div class="settings-hint" style="padding:8px 2px 0;">先按名字建一个(默认包含全部任务),筛选条件可在桌面端编辑。</div>' : ''}
     </div>
     <div class="sheet-actions">
       <button data-action="cancel">取消</button>
@@ -16733,28 +16899,16 @@ function _openCreateSimpleSheet(kind) {
     body.querySelector('[data-action="save"]').onclick = () => {
       const name = (nameEl.value || '').trim();
       if (!name) { nameEl.focus(); return; }
-      if (isSl) {
-        // 结构与桌面端 showSmartListEdit 的新建默认一致;sources 空 = 全部来源
-        if (!Array.isArray(state.smartLists)) state.smartLists = [];
-        state.smartLists.push({
-          id: 'sl_' + uuid().slice(0, 8),
-          name,
-          builtin: false,
-          filters: { sources: [], date: 'any', keyword: '', types: ['all'] },
-        });
-        showToast('已创建智能清单「' + name + '」');
-      } else {
-        // 双注册,和桌面端对齐:手机端抽屉读 state.tags,桌面端侧栏读 settings.tags 注册表
-        if (!Array.isArray(state.tags)) state.tags = [];
-        const known = new Set(state.tags.map(x => typeof x === 'string' ? x : x?.name));
-        if (!known.has(name)) state.tags.push(name);
-        if (!Array.isArray(state.settings.tags)) state.settings.tags = [];
-        if (!state.settings.tags.find(t => t && t.name === name)) {
-          const maxOrder = state.settings.tags.length ? Math.max(...state.settings.tags.map(t => (t && t.order) || 0)) : 0;
-          state.settings.tags.push({ name, color: '', order: maxOrder + 100 });
-        }
-        showToast('已创建标签 #' + name);
+      // 双注册,和桌面端对齐:手机端抽屉读 state.tags,桌面端侧栏读 settings.tags 注册表
+      if (!Array.isArray(state.tags)) state.tags = [];
+      const known = new Set(state.tags.map(x => typeof x === 'string' ? x : x?.name));
+      if (!known.has(name)) state.tags.push(name);
+      if (!Array.isArray(state.settings.tags)) state.settings.tags = [];
+      if (!state.settings.tags.find(t => t && t.name === name)) {
+        const maxOrder = state.settings.tags.length ? Math.max(...state.settings.tags.map(t => (t && t.order) || 0)) : 0;
+        state.settings.tags.push({ name, color: '', order: maxOrder + 100 });
       }
+      showToast('已创建标签 #' + name);
       pushState();
       closeSheet();
       renderDrawerNav();

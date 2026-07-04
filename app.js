@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260704-1957';
+const _PSFOCUS_BUILD = '20260704-2005';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1443,7 +1443,7 @@ function getCurrentList() {
   if (selectedKind === 'smart-list') {
     const sl = (state.smartLists || []).find(x => x.id === selectedId);
     if (!sl) return { title: '所有任务', tasks: _topLevelTasks((state.tasks || []).filter(t => !t.archived)), project: null, kind: 'smart-list-fallback' };
-    return { title: sl.name || '智能清单', tasks: _topLevelTasks(smartListTasks(sl)), project: null, kind: 'smart-list', smartList: sl };
+    return { title: sl.name || '智能清单', tasks: _topLevelTasks(smartListTasks(sl)), events: smartListEvents(sl), projects: smartListProjects(sl), project: null, kind: 'smart-list', smartList: sl };
   }
   if (selectedKind === 'tag') {
     return { title: '#' + selectedId, tasks: _topLevelTasks(state.tasks.filter(t => Array.isArray(t.tags) && t.tags.includes(selectedId))), project: null, kind: 'tag', tag: selectedId };
@@ -1474,17 +1474,26 @@ function taskHitDate(t, a, b) {
 function projectOf(t) { if (!t || !t.projectId) return null; return state.projects.find(p => p.id === t.projectId) || null; }
 
 // ===== 智能清单 filter(从桌面端 _sl* 系列简化移植,只关心 task)=====
-function _slMatchesSource(item, sources) {
+function _slMatchesSource(item, sources, kind) {
   if (!sources || sources.length === 0) return true;
   for (const src of sources) {
-    if (src === 'unsorted') { if (!item.projectId) return true; continue; }
-    if (typeof src === 'string' && src.startsWith('folder:')) {
-      const fid = src.slice(7);
-      const proj = state.projects.find(p => p.id === item.projectId);
-      if (proj && proj.folderId === fid) return true;
+    if (src === 'unsorted') {
+      if (kind === 'project') { if (!item.folderId) return true; }
+      else                    { if (!item.projectId) return true; }
       continue;
     }
-    if (item.projectId === src) return true;
+    if (typeof src === 'string' && src.startsWith('folder:')) {
+      const fid = src.slice(7);
+      if (kind === 'project') { if (item.folderId === fid) return true; }
+      else {
+        const proj = state.projects.find(p => p.id === item.projectId);
+        if (proj && proj.folderId === fid) return true;
+      }
+      continue;
+    }
+    // 直接 id:项目比自己的 id,任务/事件比 projectId
+    if (kind === 'project') { if (item.id === src) return true; }
+    else                    { if (item.projectId === src) return true; }
   }
   return false;
 }
@@ -1508,18 +1517,20 @@ function _slItemHitsWindow(item, winStart, winEnd) {
   }
   return false;
 }
-function _slMatchesDate(t, filter) {
+function _slMatchesDate(item, filter, kind) {
   if (!filter || filter === 'any') return true;
-  const start = t.start || null;
-  const end   = t.end   || null;
-  const hasSched = (t.schedules || []).some(s => s && typeof s.start === 'number');
-  if (filter === 'none')    return !start && !end && !t.dueAt && !hasSched;
+  // 项目用 dueStart/dueEnd,任务/事件用 start/end
+  const start = (kind === 'project') ? (item.dueStart || null) : (item.start || null);
+  const end   = (kind === 'project') ? (item.dueEnd   || null) : (item.end   || null);
+  const dueAt = (kind === 'project') ? null : (item.dueAt || null);
+  const hasSched = (item.schedules || []).some(s => s && typeof s.start === 'number');
+  if (filter === 'none')    return !start && !end && !dueAt && !hasSched;
   if (filter === 'overdue') {
-    if (t.done) return false;
-    const e = end || start || t.dueAt;
+    if (item.done) return false;
+    const e = end || start || dueAt;
     return e != null && e < Date.now();
   }
-  if (filter === 'recurring') return _isRecurringTask(t);   // 对齐桌面「重复日期」
+  if (filter === 'recurring') return _isRecurringTask(item);   // 项目无 schedule → false
   let win;
   if (filter === 'month') {                                  // 对齐桌面「本月」
     win = [startOfMonth(new Date()).getTime(), addMonths(startOfMonth(new Date()), 1).getTime() - 1];
@@ -1527,29 +1538,61 @@ function _slMatchesDate(t, filter) {
     win = _slDateWindow(filter);
   }
   if (!win) return true;
-  return _slItemHitsWindow(t, win[0], win[1]);
+  if (kind === 'project') {
+    // 项目按 dueStart/dueEnd 覆盖窗口(项目无 schedule / occurrence)
+    if (start == null && end == null) return false;
+    const s = start || end, e = end || start;
+    return s <= win[1] && e >= win[0];
+  }
+  return _slItemHitsWindow(item, win[0], win[1]);
 }
 function _slMatchesKeyword(t, keyword) {
   if (!keyword) return true;
   const k = String(keyword).trim().toLowerCase();
   if (!k) return true;
-  return String(t.title || '').toLowerCase().includes(k);
+  return String(t.title || t.name || '').toLowerCase().includes(k);   // 项目用 name
 }
-function _slMatchesType(types) {
-  if (!types || types.length === 0 || types.includes('all') || types.includes('task')) return true;
-  return false;
+function _slMatchesType(types, kind) {
+  if (!types || types.length === 0 || types.includes('all')) return true;
+  return types.includes(kind || 'task');
 }
 function smartListTasks(sl) {
   const f = sl.filters || {};
-  if (!_slMatchesType(f.types)) return [];
+  if (!_slMatchesType(f.types, 'task')) return [];
   const tagFilter = Array.isArray(f.tags) ? f.tags : [];
   return (state.tasks || []).filter(t => {
     if (t.archived) return false;
     if (t.parentTaskId) return false;   // 只看顶级任务(对齐桌面 collectSmartListItems + 计时小部件)
     if (tagFilter.length && !tagFilter.some(tg => (t.tags || []).includes(tg))) return false;
-    return _slMatchesSource(t, f.sources)
-        && _slMatchesDate(t, f.date)
+    return _slMatchesSource(t, f.sources, 'task')
+        && _slMatchesDate(t, f.date, 'task')
         && _slMatchesKeyword(t, f.keyword);
+  });
+}
+// 智能清单里的事件 / 项目(对齐桌面 collectSmartListItems 返回 {tasks, events, projects})
+function smartListEvents(sl) {
+  const f = sl.filters || {};
+  if (!_slMatchesType(f.types, 'event')) return [];
+  const tagFilter = Array.isArray(f.tags) ? f.tags : [];
+  return (state.events || []).filter(e => {
+    if (e.archived) return false;
+    if (tagFilter.length && !tagFilter.some(tg => (e.tags || []).includes(tg))) return false;
+    return _slMatchesSource(e, f.sources, 'event')
+        && _slMatchesDate(e, f.date, 'event')
+        && _slMatchesKeyword(e, f.keyword);
+  });
+}
+function smartListProjects(sl) {
+  const f = sl.filters || {};
+  if (!_slMatchesType(f.types, 'project')) return [];
+  const tagFilter = Array.isArray(f.tags) ? f.tags : [];
+  return (state.projects || []).filter(p => {
+    if (p.archived) return false;
+    if ((p.kind || 'project') === 'tasklist') return false;   // 任务清单是容器,本身不算 item
+    if (tagFilter.length && !tagFilter.some(tg => (p.tags || []).includes(tg))) return false;
+    return _slMatchesSource(p, f.sources, 'project')
+        && _slMatchesDate(p, f.date, 'project')
+        && _slMatchesKeyword(p, f.keyword);
   });
 }
 
@@ -8060,11 +8103,23 @@ function renderListView(view, cl) {
   });
   const undone = tasks.filter(t => !t.done);
   const done = tasks.filter(t => t.done);
+  // 智能清单额外带事件 / 项目(对齐桌面:类型筛选含事件/项目时都要显示)
+  const slEvents = (cl.kind === 'smart-list' && Array.isArray(cl.events)) ? cl.events : [];
+  const slProjects = (cl.kind === 'smart-list' && Array.isArray(cl.projects)) ? cl.projects : [];
+  const isEmpty = !tasks.length && !slEvents.length && !slProjects.length;
   let html = '';
-  if (!tasks.length) {
-    html += `<div class="empty">这里还没有任务<br><br>点右下角 <span class="ico-plus" style="vertical-align:-2px"></span> 新建</div>`;
+  if (isEmpty) {
+    html += `<div class="empty">这里还没有内容<br><br>点右下角 <span class="ico-plus" style="vertical-align:-2px"></span> 新建</div>`;
   } else {
     if (undone.length) html += `<div class="card-list">${undone.map(taskCardHtml).join('')}</div>`;
+    if (slEvents.length) {
+      html += `<div class="section-title">事件 (${slEvents.length})</div>`;
+      html += `<div class="card-list">${slEvents.map(eventCardHtml).join('')}</div>`;
+    }
+    if (slProjects.length) {
+      html += `<div class="section-title">项目 (${slProjects.length})</div>`;
+      html += `<div class="card-list">${slProjects.map(projectCardHtml).join('')}</div>`;
+    }
     if (done.length && !hideCompleted) {
       html += `<div class="section-title">已完成 (${done.length})</div>`;
       html += `<div class="card-list">${done.map(taskCardHtml).join('')}</div>`;
@@ -10823,6 +10878,49 @@ function taskCardHtml(t) {
     </div>`;
 }
 
+// 智能清单里的事件卡片(无勾选框,日历图标 + 时间);点开事件详情
+function eventCardHtml(e) {
+  const proj = e.projectId ? state.projects.find(p => p.id === e.projectId) : null;
+  const dotColor = e.color || (proj && proj.color) || '';
+  const timeStr = fmtTaskTime(e);
+  const tCls = timeStateClass(e);
+  const tags = (e.tags || []).slice(0, 3);
+  return `
+    <div class="card card-event" data-event-id="${esc(e.id)}">
+      <div class="card-kind-ico"><span class="ico-calendar"></span></div>
+      <div class="card-body">
+        <div class="card-title">${esc(e.title || '(未命名事件)')}</div>
+        ${(timeStr || proj || tags.length) ? `<div class="card-meta">
+          ${dotColor ? `<span class="proj-color" style="background:${esc(dotColor)}"></span>` : ''}
+          ${proj ? `<span>${esc(proj.name)}</span>` : ''}
+          ${(proj && timeStr) ? `<span class="dot">·</span>` : ''}
+          ${timeStr ? `<span class="meta-due ${tCls}">${esc(timeStr)}</span>` : ''}
+          ${((proj || timeStr) && tags.length) ? `<span class="dot">·</span>` : ''}
+          ${tags.map(tg => `<span class="tag-chip">${esc(tg)}</span>`).join('')}
+        </div>` : ''}
+      </div>
+    </div>`;
+}
+// 智能清单里的项目卡片;点击导航到该项目
+function projectCardHtml(p) {
+  const ico = renderCustomIconHtml(p.icon, 'card-kind-ico-svg', p.color || '');
+  const range = (p.dueStart || p.dueEnd)
+    ? (fmtDate(p.dueStart || p.dueEnd) + (p.dueEnd && p.dueEnd !== p.dueStart ? ' - ' + fmtDate(p.dueEnd) : ''))
+    : '';
+  const undone = state.tasks.filter(t => t.projectId === p.id && !t.done).length;
+  return `
+    <div class="card card-project" data-project-nav="${esc(p.id)}">
+      <div class="card-kind-ico">${ico || `<span class="${p.color ? '' : 'ico-folder'}" ${p.color ? `style="width:11px;height:11px;border-radius:50%;background:${esc(p.color)}"` : ''}></span>`}</div>
+      <div class="card-body">
+        <div class="card-title">${esc(p.name || '未命名项目')}</div>
+        ${(range || undone) ? `<div class="card-meta">
+          ${range ? `<span class="meta-due">${esc(range)}</span>` : ''}
+          ${(range && undone) ? `<span class="dot">·</span>` : ''}
+          ${undone ? `<span>${undone} 个未完成</span>` : ''}
+        </div>` : ''}
+      </div>
+    </div>`;
+}
 function bindTaskCards(view) {
   view.querySelectorAll('.card[data-task-id]').forEach(card => {
     const id = card.dataset.taskId;
@@ -10831,6 +10929,15 @@ function bindTaskCards(view) {
       toggleTaskDone(id);
     });
     card.addEventListener('click', () => openTaskDetail(id, { mode: 'p1' }));
+  });
+  view.querySelectorAll('.card[data-event-id]').forEach(card => {
+    card.addEventListener('click', () => openEventDetail(card.dataset.eventId));
+  });
+  view.querySelectorAll('.card[data-project-nav]').forEach(card => {
+    card.addEventListener('click', () => {
+      ui.selectedKind = 'project'; ui.selectedId = card.dataset.projectNav;
+      saveUI(); renderAll();
+    });
   });
 }
 
@@ -13176,7 +13283,8 @@ function renderDrawerNav() {
     html += navSectionTitle('__smart__', '智能清单');
     if (!ui.collapsedSections.has('__smart__')) {
       html += smartLists.map(sl => {
-        const cnt = smartListTasks(sl).filter(t => !t.done).length;
+        const cnt = smartListTasks(sl).filter(t => !t.done).length
+          + smartListEvents(sl).length + smartListProjects(sl).length;
         return navRowHtml({ kind: 'smart-list', id: sl.id, label: sl.name || '未命名', icon: 'ico-magic', count: cnt });
       }).join('');
     }

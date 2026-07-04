@@ -689,12 +689,11 @@ html, body { overscroll-behavior-y: contain; }
 #drawer-nav .nav-folder-head,
 #drawer-nav .nav-label,
 #drawer-nav .nav-folder-name {
-  font-size: 16px;
-  font-weight: 500;
-  letter-spacing: 0.2px;
+  font-size: 14px;
+  font-weight: 400;
 }
-#drawer-nav .nav-section-title { color: var(--text-strong); padding: 18px 18px 8px; }
-#drawer-nav .nav-row, #drawer-nav .nav-folder-head { color: var(--text-strong); padding-left: 34px; padding-top: 12px; padding-bottom: 12px; }
+#drawer-nav .nav-section-title { color: var(--text); padding: 16px 18px 6px; }
+#drawer-nav .nav-row, #drawer-nav .nav-folder-head { color: var(--text); padding-left: 34px; padding-top: 10px; padding-bottom: 10px; }
 #drawer-nav .nav-folder-children { padding-left: 18px; }
 #drawer-nav .nav-folder-children .nav-row { padding-left: 34px; }
 #drawer-nav .nav-folder-children::before { left: 40px; }

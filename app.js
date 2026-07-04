@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260701-1426';
+const _PSFOCUS_BUILD = '20260704-1436';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -4617,6 +4617,22 @@ function _extractWikilinks(text) {
   }
   return out;
 }
+// 把 note 拆成段落(按换行,跳过空行),带字符偏移 — 反链/未链接提及以段落为粒度 (2026-07-02,与桌面端对齐)
+function _noteParagraphs(note) {
+  const out = [];
+  let start = 0;
+  for (const p of String(note).split('\n')) {
+    if (p.trim()) out.push({ start, end: start + p.length, text: p });
+    start += p.length + 1;   // +1 = 换行符
+  }
+  return out;
+}
+// 段落做上下文:短段全文;长段裁到命中位置附近(内含省略号,渲染层不再额外加)
+function _paraClamp(text, idx, len) {
+  if (text.length <= 220) return text;
+  const a = Math.max(0, idx - 80), b = Math.min(text.length, idx + len + 120);
+  return (a > 0 ? '…' : '') + text.slice(a, b) + (b < text.length ? '…' : '');
+}
 function _extractBacklinks(concept) {
   if (!concept) return [];
   const names = [concept.name].concat(concept.aliases || []).filter(Boolean);
@@ -4625,17 +4641,20 @@ function _extractBacklinks(concept) {
   const reAlt = names.map(escRe).join('|');
   const re = new RegExp('\\[\\[(' + reAlt + ')\\]\\]');
   const out = [];
-  // (1) summaries
+  // (1) summaries — 逐段落出条目(同一篇多个段落各链了 [[name]] → 一段一条)
   for (const s of (state.summaries || [])) {
     const note = s.note || '';
-    const m = note.match(re);
-    if (!m) continue;
-    const idx = m.index;
-    out.push({
-      summary: s,
-      ts: s.createdAt || 0,
-      context: note.slice(Math.max(0, idx - 30), idx) + m[0] + note.slice(idx + m[0].length, idx + m[0].length + 30),
-    });
+    if (!re.test(note)) continue;
+    for (const para of _noteParagraphs(note)) {
+      const m = para.text.match(re);
+      if (!m) continue;
+      out.push({
+        summary: s,
+        ts: s.createdAt || 0,
+        context: _paraClamp(para.text, m.index, m[0].length),
+        paraStart: para.start,
+      });
+    }
   }
   // (2) 别的概念的描述里引用本概念 — Obsidian 标准的概念间双向链接
   for (const c of (state.concepts || [])) {
@@ -4647,27 +4666,30 @@ function _extractBacklinks(concept) {
     out.push({
       concept: c,
       ts: c.updatedAt || 0,
-      context: desc.slice(Math.max(0, idx - 30), idx) + m[0] + desc.slice(idx + m[0].length, idx + m[0].length + 30),
+      context: (idx > 30 ? '…' : '') + desc.slice(Math.max(0, idx - 30), idx) + m[0] + desc.slice(idx + m[0].length, idx + m[0].length + 30) + (idx + m[0].length + 30 < desc.length ? '…' : ''),
     });
   }
   out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   return out;
 }
+// 段落粒度规则:某段已有 [[name]] → 该段是反链;同篇其它段的裸提及各自出条目,可逐段「+链上」
 function _extractUnlinkedMentions(concept) {
   if (!concept) return [];
   const names = [concept.name].concat(concept.aliases || []).filter(Boolean);
   if (!names.length) return [];
+  const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const linkedRe = new RegExp('\\[\\[(' + names.map(escRe).join('|') + ')\\]\\]');
   // 跳过 [[...]] 区段查找 name 位置 — 否则刚包过的还会显示成 "未链接" 重复
-  const findUnwrappedIdx = (note, name) => {
+  const findUnwrappedIdx = (text, name) => {
     let i = 0;
-    while (i < note.length) {
-      if (note.startsWith('[[', i)) {
-        const end = note.indexOf(']]', i + 2);
+    while (i < text.length) {
+      if (text.startsWith('[[', i)) {
+        const end = text.indexOf(']]', i + 2);
         if (end === -1) { i++; continue; }
         i = end + 2;
         continue;
       }
-      if (note.startsWith(name, i)) return i;
+      if (text.startsWith(name, i)) return i;
       i++;
     }
     return -1;
@@ -4675,31 +4697,35 @@ function _extractUnlinkedMentions(concept) {
   const out = [];
   for (const s of (state.summaries || [])) {
     const note = s.note || '';
-    for (const n of names) {
-      const noteIdx = findUnwrappedIdx(note, n);
-      if (noteIdx < 0) continue;
-      const before = note.slice(Math.max(0, noteIdx - 30), noteIdx);
-      const after  = note.slice(noteIdx + n.length, noteIdx + n.length + 30);
-      out.push({
-        summary: s, name: n,
-        context: before + '〚' + n + '〛' + after,
-        noteIdx,
-      });
-      break;
+    for (const para of _noteParagraphs(note)) {
+      if (linkedRe.test(para.text)) continue;   // 该段已链接 → 只进反链区
+      for (const n of names) {
+        const idx = findUnwrappedIdx(para.text, n);
+        if (idx < 0) continue;
+        const marked = para.text.slice(0, idx) + '〚' + n + '〛' + para.text.slice(idx + n.length);
+        out.push({
+          summary: s, name: n,
+          context: _paraClamp(marked, idx, n.length + 2),
+          paraStart: para.start,
+          paraEnd: para.end,
+        });
+        break;   // 每段一条(「+链上」会把该段所有裸提及一起包)
+      }
     }
   }
   out.sort((a, b) => (b.summary.createdAt || 0) - (a.summary.createdAt || 0));
   return out;
 }
-function _wrapMentionWithLink(summaryId, name) {
+// 传 paraStart/paraEnd 时只包该段落内的裸提及(段落级选择性加链);不传 = 整篇
+function _wrapMentionWithLink(summaryId, name, paraStart, paraEnd) {
   const s = (state.summaries || []).find(x => x.id === summaryId);
   if (!s || !s.note) return false;
-  // 把所有未包的同名出现都包成 [[name]], 跳过已经在 [[...]] 内的
-  // (Kayu 2026-05-27: 之前只包第一处, 同一笔记有多处时未链接条目不消失)
-  let out = '';
-  let i = 0;
+  const from = (paraStart != null && paraStart >= 0) ? Math.min(paraStart, s.note.length) : 0;
+  const to   = (paraEnd != null && paraEnd >= from)  ? Math.min(paraEnd, s.note.length)   : s.note.length;
+  let out = s.note.slice(0, from);
+  let i = from;
   let changed = false;
-  while (i < s.note.length) {
+  while (i < to) {
     if (s.note.startsWith('[[', i)) {
       const end = s.note.indexOf(']]', i + 2);
       if (end === -1) { out += s.note[i]; i++; continue; }
@@ -4716,6 +4742,7 @@ function _wrapMentionWithLink(summaryId, name) {
     out += s.note[i];
     i++;
   }
+  out += s.note.slice(Math.max(i, to));
   if (!changed) return false;
   s.note = out;
   s.updatedAt = Date.now();
@@ -5938,7 +5965,10 @@ const _summaryActions = {
     const sid = el.dataset.summaryId;
     const name = el.dataset.name;
     if (!sid || !name) return;
-    if (_wrapMentionWithLink(sid, name)) {
+    // 段落级:只包该段落内的裸提及,同篇其它段落不动(可逐段选择性加链)
+    const ps = el.dataset.paraStart != null ? parseInt(el.dataset.paraStart, 10) : null;
+    const pe = el.dataset.paraEnd != null ? parseInt(el.dataset.paraEnd, 10) : null;
+    if (_wrapMentionWithLink(sid, name, isFinite(ps) ? ps : null, isFinite(pe) ? pe : null)) {
       pushState();
       const cid = (state.concepts || []).find(c => c.name === name || (c.aliases||[]).indexOf(name) >= 0);
       if (cid) _openConceptSheet(cid.id);
@@ -12629,12 +12659,12 @@ function _openConceptSheet(conceptId) {
           return `<button class="concept-backlink" data-action="concept-goto-summary" data-summary-id="${esc(bl.summary.id)}">
             ${_summaryBlMeta(bl.summary)}
             ${_summaryTitle(bl.summary)}
-            <div class="concept-backlink-ctx">…${_ctxHtml(bl.context)}…</div>
+            <div class="concept-backlink-ctx">${_ctxHtml(bl.context)}</div>
           </button>`;
         } else if (bl.concept) {
           return `<button class="concept-backlink concept-backlink-cpt" data-action="concept-open" data-concept-id="${esc(bl.concept.id)}">
             <div class="concept-backlink-meta">概念 <span class="concept-link-bracket">[[</span>${esc(bl.concept.name)}<span class="concept-link-bracket">]]</span></div>
-            <div class="concept-backlink-ctx">…${_ctxHtml(bl.context)}…</div>
+            <div class="concept-backlink-ctx">${_ctxHtml(bl.context)}</div>
           </button>`;
         }
         return '';
@@ -12646,9 +12676,9 @@ function _openConceptSheet(conceptId) {
           <button class="concept-unlinked-main" data-action="concept-goto-summary" data-summary-id="${esc(u.summary.id)}">
             ${_summaryBlMeta(u.summary)}
             ${_summaryTitle(u.summary)}
-            <div class="concept-backlink-ctx">…${esc(u.context)}…</div>
+            <div class="concept-backlink-ctx">${esc(u.context).replace(/〚([^〛]*)〛/g, '<span class="concept-mention-hl">$1</span>')}</div>
           </button>
-          <button class="concept-wrap-btn" data-action="concept-wrap-mention" data-summary-id="${esc(u.summary.id)}" data-name="${esc(u.name)}">+ 链上</button>
+          <button class="concept-wrap-btn" data-action="concept-wrap-mention" data-summary-id="${esc(u.summary.id)}" data-name="${esc(u.name)}" data-para-start="${u.paraStart}" data-para-end="${u.paraEnd}">+ 链上</button>
         </div>`).join('')
     : '';
   const aliasesHtml = (c.aliases || []).map(a =>

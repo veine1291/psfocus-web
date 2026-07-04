@@ -4743,6 +4743,7 @@ body.sum-editor-open { overflow: hidden; }
 }
 .concept-backlink-meta { font-size: 11px; color: var(--text-faint); margin-bottom: 4px; }
 .concept-backlink-ctx { font-size: 12.5px; color: var(--text); line-height: 1.5; word-break: break-word; }
+.concept-mention-hl { color: var(--accent); font-weight: 600; }
 .concept-unlinked {
   display: flex; gap: 8px; align-items: flex-start;
   background: var(--bg-section);

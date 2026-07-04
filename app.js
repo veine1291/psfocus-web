@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260704-1933';
+const _PSFOCUS_BUILD = '20260704-1957';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1496,25 +1496,38 @@ function _slDateWindow(filter) {
   if (filter && typeof filter === 'object' && filter.from) return [filter.from, filter.to || (filter.from + 86400000 - 1)];
   return null;
 }
+// 智能清单「日期窗口」命中 — 逐天调用 expandItemOccurrencesInDay(与日历/计时小部件同源),
+// 覆盖重复任务的 occurrence。修:之前 taskHitDate 只看 flat start/end/dueAt,重复任务(日期在
+// schedules[] 里、flat start 是过去锚点)在「今日/本周/本月」窗口全漏(2026-07-04 Kayu:今日清单空)
+function _slItemHitsWindow(item, winStart, winEnd) {
+  for (let d = startOfDay(new Date(winStart)).getTime(); d <= winEnd; d += 86400000) {
+    const dEnd = d + 86400000;
+    if (expandItemOccurrencesInDay(item, d, dEnd).length) return true;
+    // dueAt-only(无 start / 无 schedule)
+    if (!item.start && item.dueAt != null && item.dueAt >= d && item.dueAt < dEnd) return true;
+  }
+  return false;
+}
 function _slMatchesDate(t, filter) {
   if (!filter || filter === 'any') return true;
   const start = t.start || null;
   const end   = t.end   || null;
-  if (filter === 'none')    return !start && !end && !t.dueAt;
+  const hasSched = (t.schedules || []).some(s => s && typeof s.start === 'number');
+  if (filter === 'none')    return !start && !end && !t.dueAt && !hasSched;
   if (filter === 'overdue') {
     if (t.done) return false;
     const e = end || start || t.dueAt;
     return e != null && e < Date.now();
   }
   if (filter === 'recurring') return _isRecurringTask(t);   // 对齐桌面「重复日期」
+  let win;
   if (filter === 'month') {                                  // 对齐桌面「本月」
-    const a = startOfMonth(new Date()).getTime();
-    const b = addMonths(startOfMonth(new Date()), 1).getTime() - 1;
-    return taskHitDate(t, a, b);
+    win = [startOfMonth(new Date()).getTime(), addMonths(startOfMonth(new Date()), 1).getTime() - 1];
+  } else {
+    win = _slDateWindow(filter);
   }
-  const win = _slDateWindow(filter);
   if (!win) return true;
-  return taskHitDate(t, win[0], win[1]);
+  return _slItemHitsWindow(t, win[0], win[1]);
 }
 function _slMatchesKeyword(t, keyword) {
   if (!keyword) return true;
@@ -1532,6 +1545,7 @@ function smartListTasks(sl) {
   const tagFilter = Array.isArray(f.tags) ? f.tags : [];
   return (state.tasks || []).filter(t => {
     if (t.archived) return false;
+    if (t.parentTaskId) return false;   // 只看顶级任务(对齐桌面 collectSmartListItems + 计时小部件)
     if (tagFilter.length && !tagFilter.some(tg => (t.tags || []).includes(tg))) return false;
     return _slMatchesSource(t, f.sources)
         && _slMatchesDate(t, f.date)

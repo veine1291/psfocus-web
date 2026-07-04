@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260704-1910';
+const _PSFOCUS_BUILD = '20260704-1920';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -13215,7 +13215,7 @@ function renderDrawerNav() {
         html += `</div>`;
       });
       if (folderlessTasklists.length) {
-        if (tasklistFolders.length) html += `<div class="nav-section-title" style="text-transform:none;font-weight:500;">未分组</div>`;
+        if (tasklistFolders.length) html += `<div class="nav-section-title">未分组</div>`;
         html += folderlessTasklists.map(p => projectRowHtml(p)).join('');
       }
     }
@@ -13251,7 +13251,7 @@ function renderDrawerNav() {
       html += `</div>`;
     });
     if (ungroupedProjects.length) {
-      html += `<div class="nav-section-title" style="text-transform:none;font-weight:500;">未分组</div>`;
+      html += `<div class="nav-section-title">未分组</div>`;
       html += ungroupedProjects.map(p => projectRowHtml(p)).join('');
     }
     // 已归档项目不在任务视图列出 — 归档后就从清单导航里隐藏(项目 tab 仍可查看)

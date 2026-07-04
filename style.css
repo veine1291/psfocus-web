@@ -536,13 +536,13 @@ html, body { overscroll-behavior-y: contain; }
 .drawer-add-menu button:active { background: var(--bg-hover); }
 .drawer-add-menu button > span:first-child { width: 18px; height: 18px; color: var(--text-dim); flex-shrink: 0; }
 
-/* 分区标题 — 小号弱化,只当"分隔符"用(仿滴答清单:分区退后,行统一) */
+/* 分区标题 — 与行完全同字号字色字重(2026-07-04 Kayu:全部统一,层级只靠缩进) */
 .nav-section-title {
   display: flex; align-items: center;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 400;
-  color: var(--text-faint);
-  padding: 16px 18px 5px;
+  color: var(--text);
+  padding: 14px 18px 6px;
 }
 .nav-section-title .ico-chevron-down { width: 12px; height: 12px; margin-right: 6px; transition: transform .15s ease; }
 .nav-section-title.collapsed .ico-chevron-down { transform: rotate(-90deg); }
@@ -655,7 +655,13 @@ html, body { overscroll-behavior-y: contain; }
   color: var(--text);
   -webkit-tap-highlight-color: transparent;
 }
-.sle-src-row input { flex-shrink: 0; }
+/* 压住全局 input{width:100%;padding:12px} — 否则复选框被撑成整行大块,图标标签全被挤飞(2026-07-04 实测) */
+.sle-src-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 18px; height: 18px;
+  padding: 0; margin: 0;
+  accent-color: var(--accent);
+}
 .sle-src-row [class^="ico-"] { width: 15px; height: 15px; color: var(--text-dim); flex-shrink: 0; }
 .sle-src-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sle-delete {
@@ -669,9 +675,11 @@ html, body { overscroll-behavior-y: contain; }
   -webkit-tap-highlight-color: transparent;
 }
 
-/* ===== 抽屉排版统一兜底(2026-07-04 Kayu:字级字重仍不齐)=====
-   用 #drawer-nav 高优先级把所有行(含 label 子元素、active 态)钉死在同一字级字重;
-   active 选中态改成 accent 色文字 + 浅底 — 之前的 accent-text 近黑,看起来像"随机加粗" */
+/* ===== 抽屉排版统一兜底(2026-07-04 Kayu:分区标题/文件夹/清单 全部同字号字色字重)=====
+   用 #drawer-nav 高优先级把分区标题 + 所有行(含 label 子元素、active 态)钉死在同一字级字重;
+   层级只靠缩进:分区标题 18px → 行/文件夹 34px → 文件夹内子清单再进一层。
+   active 选中态 accent 色文字 + 浅底 — 之前的 accent-text 近黑,看起来像"随机加粗" */
+#drawer-nav .nav-section-title,
 #drawer-nav .nav-row,
 #drawer-nav .nav-folder-head,
 #drawer-nav .nav-label,
@@ -679,7 +687,11 @@ html, body { overscroll-behavior-y: contain; }
   font-size: 15px;
   font-weight: 400;
 }
-#drawer-nav .nav-row, #drawer-nav .nav-folder-head { color: var(--text); }
+#drawer-nav .nav-section-title { color: var(--text); }
+#drawer-nav .nav-row, #drawer-nav .nav-folder-head { color: var(--text); padding-left: 34px; }
+#drawer-nav .nav-folder-children { padding-left: 18px; }
+#drawer-nav .nav-folder-children .nav-row { padding-left: 34px; }
+#drawer-nav .nav-folder-children::before { left: 40px; }
 #drawer-nav .nav-row.active,
 #drawer-nav .nav-folder-head.active {
   color: var(--accent);

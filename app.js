@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260704-1825';
+const _PSFOCUS_BUILD = '20260704-1838';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -13112,6 +13112,8 @@ function renderDrawerNav() {
         <button data-add-kind="tasklist"><span class="ico-list"></span><span>任务清单</span></button>
         <button data-add-kind="project"><span class="ico-grid"></span><span>项目</span></button>
         <button data-add-kind="folder"><span class="ico-folder"></span><span>文件夹</span></button>
+        <button data-add-kind="smart-list"><span class="ico-magic"></span><span>智能清单</span></button>
+        <button data-add-kind="tag"><span class="ico-tag"></span><span>标签</span></button>
       </div>
       <button class="drawer-add-btn"><span class="ico-plus"></span><span>添加</span></button>`;
     drawerPanel.appendChild(foot);
@@ -13127,9 +13129,15 @@ function renderDrawerNav() {
     foot.querySelectorAll('[data-add-kind]').forEach(b => b.onclick = (e) => {
       e.stopPropagation();
       menu.classList.add('hidden');
+      const k = b.dataset.addKind;
+      if (k === 'smart-list' || k === 'tag') {
+        closeDrawerNav();
+        setTimeout(() => _openCreateSimpleSheet(k), 220);
+        return;
+      }
       closeDrawerNav();
       // 等抽屉动画收完再开 sheet,避免 transition 期间 layout 抖动
-      setTimeout(() => openCreateProjectSheet(b.dataset.addKind), 220);
+      setTimeout(() => openCreateProjectSheet(k), 220);
     });
   }
   if (foot) foot.style.display = (ui.tab === 'summary' || ui.tab === 'works') ? 'none' : '';
@@ -16702,6 +16710,58 @@ function renderSettingsAbout(view) {
 // =========================================================
 // ===== FAB / 新建任务 =====
 // =========================================================
+// 新建 智能清单 / 标签 — 只需要一个名字的简单 sheet(抽屉底部「+ 添加」菜单入口)
+function _openCreateSimpleSheet(kind) {
+  const isSl = kind === 'smart-list';
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content">
+      <div class="section-title" style="padding:0 0 12px;">${isSl ? '新建智能清单' : '新建标签'}</div>
+      <div class="form-row"><label>名称</label>
+        <input type="text" id="cs-name" placeholder="${isSl ? '如 本周要做' : '标签名'}" maxlength="30">
+      </div>
+      ${isSl ? '<div class="settings-hint" style="padding:8px 2px 0;">先按名字建一个(默认包含全部任务),筛选条件可在桌面端编辑。</div>' : ''}
+    </div>
+    <div class="sheet-actions">
+      <button data-action="cancel">取消</button>
+      <button class="primary" data-action="save">创建</button>
+    </div>
+  `, (body) => {
+    const nameEl = body.querySelector('#cs-name');
+    setTimeout(() => { try { nameEl.focus(); } catch (_) {} }, 100);
+    body.querySelector('[data-action="cancel"]').onclick = closeSheet;
+    body.querySelector('[data-action="save"]').onclick = () => {
+      const name = (nameEl.value || '').trim();
+      if (!name) { nameEl.focus(); return; }
+      if (isSl) {
+        // 结构与桌面端 showSmartListEdit 的新建默认一致;sources 空 = 全部来源
+        if (!Array.isArray(state.smartLists)) state.smartLists = [];
+        state.smartLists.push({
+          id: 'sl_' + uuid().slice(0, 8),
+          name,
+          builtin: false,
+          filters: { sources: [], date: 'any', keyword: '', types: ['all'] },
+        });
+        showToast('已创建智能清单「' + name + '」');
+      } else {
+        // 双注册,和桌面端对齐:手机端抽屉读 state.tags,桌面端侧栏读 settings.tags 注册表
+        if (!Array.isArray(state.tags)) state.tags = [];
+        const known = new Set(state.tags.map(x => typeof x === 'string' ? x : x?.name));
+        if (!known.has(name)) state.tags.push(name);
+        if (!Array.isArray(state.settings.tags)) state.settings.tags = [];
+        if (!state.settings.tags.find(t => t && t.name === name)) {
+          const maxOrder = state.settings.tags.length ? Math.max(...state.settings.tags.map(t => (t && t.order) || 0)) : 0;
+          state.settings.tags.push({ name, color: '', order: maxOrder + 100 });
+        }
+        showToast('已创建标签 #' + name);
+      }
+      pushState();
+      closeSheet();
+      renderDrawerNav();
+      renderAll();
+    };
+  });
+}
 // 新建项目 / 任务清单 / 文件夹
 function openCreateProjectSheet(presetKind) {
   const folders = (state.folders || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));

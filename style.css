@@ -623,6 +623,27 @@ html, body { overscroll-behavior-y: contain; }
 .nav-folder-children .nav-row { padding-left: 8px; }
 .nav-folder-head.collapsed + .nav-folder-children { display: none; }
 
+/* ===== 抽屉排版统一兜底(2026-07-04 Kayu:字级字重仍不齐)=====
+   用 #drawer-nav 高优先级把所有行(含 label 子元素、active 态)钉死在同一字级字重;
+   active 选中态改成 accent 色文字 + 浅底 — 之前的 accent-text 近黑,看起来像"随机加粗" */
+#drawer-nav .nav-row,
+#drawer-nav .nav-folder-head,
+#drawer-nav .nav-label,
+#drawer-nav .nav-folder-name {
+  font-size: 15px;
+  font-weight: 400;
+}
+#drawer-nav .nav-row, #drawer-nav .nav-folder-head { color: var(--text); }
+#drawer-nav .nav-row.active,
+#drawer-nav .nav-folder-head.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+  font-weight: 400;
+}
+#drawer-nav .nav-row.active .nav-icon,
+#drawer-nav .nav-folder-head.active .nav-icon { color: var(--accent); }
+
 /* =========================================================
    全屏笔记编辑页 (Kayu 2026-05-29) — 长文本不适合 sheet
    ========================================================= */

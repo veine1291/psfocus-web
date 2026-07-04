@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260704-1436';
+const _PSFOCUS_BUILD = '20260704-1825';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -13098,31 +13098,41 @@ function openWorksSortMenu(anchor) {
 
 function renderDrawerNav() {
   $('drawer-user-name').textContent = uid || '未登录';
-  // 在 drawer header 区放一个 + 按钮 — 任务 tab 用于"新建清单/项目/文件夹",摘要 tab 隐藏
-  const drawerHead = document.querySelector('#drawer-nav .drawer-head');
-  if (drawerHead) {
-    let createBtn = drawerHead.querySelector('[data-action="drawer-create"]');
-    if (!createBtn) {
-      createBtn = document.createElement('button');
-      createBtn.className = 'drawer-create-btn';
-      createBtn.dataset.action = 'drawer-create';
-      createBtn.innerHTML = '<span class="ico-plus"></span>';
-      createBtn.onclick = (e) => {
-        e.stopPropagation();
-        // 先关抽屉再开 sheet — 否则在窄屏 / 抽屉边缘附近,sheet 会被左侧抽屉遮一部分,视觉看起来「跑下面去了」
-        closeDrawerNav();
-        // 等抽屉动画收完再开 sheet,避免 transition 期间 layout 抖动
-        setTimeout(() => openCreateProjectSheet(), 220);
-      };
-      drawerHead.appendChild(createBtn);
-    }
-    if (ui.tab === 'summary') {
-      createBtn.style.display = 'none';
-    } else {
-      createBtn.style.display = '';
-      createBtn.title = '新建清单 / 项目 / 文件夹';
-    }
+  // 头部旧 + 按钮移除 — 新建入口改为底部「+ 添加」(2026-07-04,仿滴答清单)
+  const _oldCreate = document.querySelector('#drawer-nav .drawer-head [data-action="drawer-create"]');
+  if (_oldCreate) _oldCreate.remove();
+  // 底部固定「+ 添加」栏(create-once)— 点击弹小菜单选 清单/项目/文件夹
+  const drawerPanel = document.querySelector('#drawer-nav .drawer-panel');
+  let foot = drawerPanel && drawerPanel.querySelector('.drawer-foot');
+  if (drawerPanel && !foot) {
+    foot = document.createElement('div');
+    foot.className = 'drawer-foot';
+    foot.innerHTML = `
+      <div class="drawer-add-menu hidden">
+        <button data-add-kind="tasklist"><span class="ico-list"></span><span>任务清单</span></button>
+        <button data-add-kind="project"><span class="ico-grid"></span><span>项目</span></button>
+        <button data-add-kind="folder"><span class="ico-folder"></span><span>文件夹</span></button>
+      </div>
+      <button class="drawer-add-btn"><span class="ico-plus"></span><span>添加</span></button>`;
+    drawerPanel.appendChild(foot);
+    const menu = foot.querySelector('.drawer-add-menu');
+    foot.querySelector('.drawer-add-btn').onclick = (e) => {
+      e.stopPropagation();
+      menu.classList.toggle('hidden');
+    };
+    // 点抽屉其它区域收起菜单
+    drawerPanel.addEventListener('click', (e) => {
+      if (!foot.contains(e.target)) menu.classList.add('hidden');
+    });
+    foot.querySelectorAll('[data-add-kind]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      menu.classList.add('hidden');
+      closeDrawerNav();
+      // 等抽屉动画收完再开 sheet,避免 transition 期间 layout 抖动
+      setTimeout(() => openCreateProjectSheet(b.dataset.addKind), 220);
+    });
   }
+  if (foot) foot.style.display = (ui.tab === 'summary' || ui.tab === 'works') ? 'none' : '';
   // 根据当前 tab 决定渲染什么 — 摘要 tab 用 tag 侧栏,项目 tab 用分类列表,其它用任务清单导航
   if (ui.tab === 'summary') { _renderSummaryDrawerNav(); return; }
   if (ui.tab === 'works')   { _renderWorksDrawerNav();   return; }
@@ -13176,10 +13186,10 @@ function renderDrawerNav() {
         const active = ui.selectedKind === 'folder' && ui.selectedId === f.id;
         const undoneCnt = state.tasks.filter(t => children.some(p => p.id === t.projectId) && !t.done).length;
         html += `<div class="nav-folder-head ${collapsed?'collapsed':''} ${active?'active':''}" data-select-kind="folder" data-select-id="${esc(f.id)}">
-          <button class="nav-folder-chev" data-folder-toggle="${esc(f.id)}" aria-label="${collapsed?'展开':'折叠'}"><span class="ico-chevron-down"></span></button>
           ${folderCustomIco || `<span class="nav-icon ico-folder"></span>`}
           <span class="nav-folder-name">${esc(f.name || '未命名')}</span>
           <span class="nav-count">${undoneCnt || children.length}</span>
+          <button class="nav-folder-chev" data-folder-toggle="${esc(f.id)}" aria-label="${collapsed?'展开':'折叠'}"><span class="ico-chevron-down"></span></button>
         </div>`;
         html += `<div class="nav-folder-children">`;
         html += children.map(p => projectRowHtml(p)).join('');
@@ -13212,10 +13222,10 @@ function renderDrawerNav() {
       const active = ui.selectedKind === 'folder' && ui.selectedId === f.id;
       const undoneCnt = state.tasks.filter(t => children.some(p => p.id === t.projectId) && !t.done).length;
       html += `<div class="nav-folder-head ${collapsed?'collapsed':''} ${active?'active':''}" data-select-kind="folder" data-select-id="${esc(f.id)}">
-        <button class="nav-folder-chev" data-folder-toggle="${esc(f.id)}" aria-label="${collapsed?'展开':'折叠'}"><span class="ico-chevron-down"></span></button>
         ${folderCustomIco || `<span class="nav-icon ico-folder"></span>`}
         <span class="nav-folder-name">${esc(f.name || '未命名')}</span>
         <span class="nav-count">${undoneCnt || children.length}</span>
+        <button class="nav-folder-chev" data-folder-toggle="${esc(f.id)}" aria-label="${collapsed?'展开':'折叠'}"><span class="ico-chevron-down"></span></button>
       </div>`;
       html += `<div class="nav-folder-children">`;
       html += children.map(p => projectRowHtml(p)).join('');
@@ -16693,7 +16703,7 @@ function renderSettingsAbout(view) {
 // ===== FAB / 新建任务 =====
 // =========================================================
 // 新建项目 / 任务清单 / 文件夹
-function openCreateProjectSheet() {
+function openCreateProjectSheet(presetKind) {
   const folders = (state.folders || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
   // 帮 select 选项做 kind 标签 — 没设 kind 的老 folder 默认当 'project'
   const folderKindOf = (f) => f.kind || 'project';
@@ -16734,6 +16744,7 @@ function openCreateProjectSheet() {
   `, (body) => {
     const nameEl = body.querySelector('#cp-name');
     const kindEl = body.querySelector('#cp-kind');
+    if (presetKind && ['project', 'tasklist', 'folder'].includes(presetKind)) kindEl.value = presetKind;
     const folderRow = body.querySelector('#cp-folder-row');
     const folderKindRow = body.querySelector('#cp-folder-kind-row');
     const folderSelect = body.querySelector('#cp-folder');

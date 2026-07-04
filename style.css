@@ -490,24 +490,71 @@ html, body { overscroll-behavior-y: contain; }
 }
 .drawer-body { flex: 1 1 0; overflow-y: auto; padding: 8px 0 24px; }
 
+/* 抽屉底部固定「+ 添加」栏(仿滴答清单)— 点击弹小菜单选 清单/项目/文件夹 */
+.drawer-foot {
+  position: relative;
+  flex-shrink: 0;
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border-soft);
+}
+.drawer-add-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: none; background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.drawer-add-btn:active { background: var(--bg-hover); }
+.drawer-add-btn .ico-plus { width: 18px; height: 18px; color: var(--text-dim); }
+.drawer-add-menu {
+  position: absolute;
+  left: 12px; bottom: calc(100% + 6px);
+  min-width: 200px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  z-index: 5;
+}
+.drawer-add-menu.hidden { display: none; }
+.drawer-add-menu button {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%;
+  border: none; background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  cursor: pointer;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+.drawer-add-menu button:active { background: var(--bg-hover); }
+.drawer-add-menu button > span:first-child { width: 18px; height: 18px; color: var(--text-dim); flex-shrink: 0; }
+
+/* 分区标题 — 小号弱化,只当"分隔符"用(仿滴答清单:分区退后,行统一) */
 .nav-section-title {
   display: flex; align-items: center;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 400;
   color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  padding: 14px 18px 4px;
+  padding: 16px 18px 5px;
 }
 .nav-section-title .ico-chevron-down { width: 12px; height: 12px; margin-right: 6px; transition: transform .15s ease; }
 .nav-section-title.collapsed .ico-chevron-down { transform: rotate(-90deg); }
 
+/* 行 — 清单/项目/文件夹统一字级字重,层级只靠缩进表达(2026-07-04 仿滴答清单重排版) */
 .nav-row {
   display: flex; align-items: center;
   gap: 10px;
-  padding: 9px 18px;
+  padding: 11px 18px;
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 400;
   line-height: 1.3;
 }
 .nav-row:active { background: var(--bg-hover); }
@@ -518,7 +565,7 @@ html, body { overscroll-behavior-y: contain; }
 /* 自定义 SVG 图标 — 项目/文件夹选过的图 */
 .nav-icon-svg { flex: 0 0 auto; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }
 .nav-icon-svg svg { width: 100%; height: 100%; }
-.nav-folder-ico { width: 14px; height: 14px; margin-right: 4px; }
+.nav-folder-ico { width: 18px; height: 18px; }
 .nav-folder-ico svg { width: 100%; height: 100%; }
 /* 顶栏标题前的项目图标 */
 .topbar-title-ico { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; vertical-align: middle; margin-right: 6px; }
@@ -548,21 +595,22 @@ html, body { overscroll-behavior-y: contain; }
 .nav-folder-chev:active { background: var(--bg-hover); }
 .nav-folder-chev .ico-chevron-down { width: 12px; height: 12px; transition: transform .15s ease; margin: 0; }
 .nav-folder-head.collapsed .nav-folder-chev .ico-chevron-down { transform: rotate(-90deg); }
+/* 文件夹行 — 跟普通行同字级同字重,只是图标不同 + 右侧折叠箭头(仿滴答清单) */
 .nav-folder-head {
   display: flex; align-items: center;
-  padding: 10px 12px 4px 14px;
-  font-size: 12px;
-  color: var(--text-dim);
-  font-weight: 500;
+  gap: 10px;
+  padding: 11px 12px 11px 18px;
+  font-size: 15px;
+  color: var(--text);
+  font-weight: 400;
   cursor: pointer;
   border-radius: var(--radius);
-  margin: 0 6px;
 }
 .nav-folder-head:active { background: var(--bg-hover); }
 .nav-folder-head .nav-folder-name { flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nav-folder-head .ico-chevron-down { width: 12px; height: 12px; margin-right: 6px; transition: transform .15s ease; }
+.nav-folder-head .ico-chevron-down { width: 13px; height: 13px; transition: transform .15s ease; }
 .nav-folder-head.collapsed .ico-chevron-down { transform: rotate(-90deg); }
-/* 子级清单/项目缩进 — 跟 folder chevron 对齐(chev 24px + margin 6px + 边距 = 约 32px) */
+/* 子级清单/项目缩进 — 递进表达层级 */
 .nav-folder-children { padding-left: 28px; position: relative; }
 .nav-folder-children::before {
   content: '';

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260704-1920';
+const _PSFOCUS_BUILD = '20260704-1928';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -16744,13 +16744,20 @@ function _openSmartListEdit(slId) {
   const folders = (state.folders || []).slice().sort(byOrder);
   const lists = (state.projects || []).filter(p => !p.archived).slice().sort(byOrder);
   const srcChecked = (key) => f.sources.includes(key);
+  // 实体自己的视觉:自定义图标 > 颜色点 > 默认图标 —— 全局规则:可设颜色/图标的东西在任何复用处都要体现
+  const entityIcon = (entity, fallbackIco) => {
+    const custom = entity && entity.icon ? renderCustomIconHtml(entity.icon, 'sle-src-ico', entity.color || '') : null;
+    if (custom) return custom;
+    if (entity && entity.color) return `<span class="sle-src-dot" style="background:${esc(entity.color)}"></span>`;
+    return `<span class="${fallbackIco}"></span>`;
+  };
   // 来源行:未分类 + (清单文件夹 → 其下清单) + (项目文件夹 → 其下项目) + 未分组
-  const srcRow = (key, label, indent, ico) => `
+  const srcRow = (key, label, indent, iconHtml) => `
     <label class="sle-src-row" style="padding-left:${8 + indent * 18}px;">
       <input type="checkbox" data-sle-src="${esc(key)}" ${srcChecked(key) ? 'checked' : ''}>
-      <span class="${ico}"></span><span class="sle-src-label">${esc(label)}</span>
+      ${iconHtml}<span class="sle-src-label">${esc(label)}</span>
     </label>`;
-  let srcHtml = srcRow('unsorted', '未分类(无归属)', 0, 'ico-magic');
+  let srcHtml = srcRow('unsorted', '未分类(无归属)', 0, '<span class="ico-magic"></span>');
   const buildGroup = (kind, title, icoRow) => {
     const gFolders = folders.filter(x => folderKindOf(x) === kind);
     const gLists = lists.filter(p => (p.kind || 'project') === (kind === 'tasklist' ? 'tasklist' : 'project'));
@@ -16760,13 +16767,18 @@ function _openSmartListEdit(slId) {
     if (!gLists.length && !gFolders.length) return;
     srcHtml += `<div class="sle-src-group">${title}</div>`;
     gFolders.forEach(fd => {
-      srcHtml += srcRow('folder:' + fd.id, fd.name || '未命名', 0, 'ico-folder');
-      inFolder(fd.id).forEach(p => { srcHtml += srcRow(p.id, p.name || '未命名', 1, icoRow); });
+      srcHtml += srcRow('folder:' + fd.id, fd.name || '未命名', 0, entityIcon(fd, 'ico-folder'));
+      inFolder(fd.id).forEach(p => { srcHtml += srcRow(p.id, p.name || '未命名', 1, entityIcon(p, icoRow)); });
     });
-    loose.forEach(p => { srcHtml += srcRow(p.id, p.name || '未命名', 0, icoRow); });
+    loose.forEach(p => { srcHtml += srcRow(p.id, p.name || '未命名', 0, entityIcon(p, icoRow)); });
   };
   buildGroup('tasklist', '任务清单', 'ico-list');
   buildGroup('project', '项目', 'ico-grid');
+  // 标签 chip 的着色:选中 = 该标签色的浅底 + 同色文字;未选中也带色点,一眼识别
+  const tagChipStyle = (tg, on) => {
+    const c = colorOfTag(tg);
+    return on ? `background:color-mix(in srgb, ${c} 16%, transparent);color:${c};border-color:${c};` : '';
+  };
 
   const dateOpts = [
     ['any', '全部'], ['none', '无日期'], ['overdue', '已过期'], ['recurring', '重复日期'],
@@ -16805,7 +16817,7 @@ function _openSmartListEdit(slId) {
       <div class="form-row"><input type="text" id="sle-keyword" placeholder="标题包含的文字(可选)" value="${esc(f.keyword || '')}"></div>
       <div class="sle-field-title">标签(任一命中)</div>
       <div class="sle-chips" id="sle-tags">
-        ${allTagNames.length ? allTagNames.map(tg => `<button class="sle-chip ${f.tags.includes(tg) ? 'on' : ''}" data-sle-tag="${esc(tg)}">${esc(tg)}</button>`).join('') : '<span class="sle-empty">还没有标签</span>'}
+        ${allTagNames.length ? allTagNames.map(tg => `<button class="sle-chip ${f.tags.includes(tg) ? 'on' : ''}" data-sle-tag="${esc(tg)}" style="${tagChipStyle(tg, f.tags.includes(tg))}"><span class="sle-chip-dot" style="background:${esc(colorOfTag(tg))}"></span>${esc(tg)}</button>`).join('') : '<span class="sle-empty">还没有标签</span>'}
       </div>
       <div class="sle-field-title">来源(不勾 = 全部)</div>
       <div class="sle-src-list">${srcHtml}</div>
@@ -16837,7 +16849,9 @@ function _openSmartListEdit(slId) {
         const v = b.dataset.sleTag;
         const i = f.tags.indexOf(v);
         if (i >= 0) f.tags.splice(i, 1); else f.tags.push(v);
-        b.classList.toggle('on', f.tags.includes(v));
+        const on = f.tags.includes(v);
+        b.classList.toggle('on', on);
+        b.style.cssText = tagChipStyle(v, on);   // 选中态跟标签自身颜色走
       });
       const dateSel = body.querySelector('#sle-date');
       dateSel.onchange = () => { body.querySelector('#sle-range').style.display = dateSel.value === 'range' ? '' : 'none'; };

@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260704-2005';
+const _PSFOCUS_BUILD = '20260708-1419';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -13664,7 +13664,7 @@ function renderMonthView(view) {
       const rTL = r.isFirstWeek ? '4px' : '0';
       const rTR = r.isLastWeek  ? '4px' : '0';
       const labelHtml = r.isFirstWeek ? `<span class="cal-ribbon-label">${esc(r.title)}</span>` : '';
-      return `<div class="cal-ribbon ${r.done?'done':''}"
+      return `<div class="cal-ribbon ${r.done?'done':''}" data-item-kind="${esc(r.kind)}" data-item-id="${esc(r.id)}"
         style="left:${leftPct}%;width:${widthPct}%;top:${topPx}px;height:${RIBBON_H}px;background:${esc(r.color)};border-top-left-radius:${rTL};border-bottom-left-radius:${rTL};border-top-right-radius:${rTR};border-bottom-right-radius:${rTR};"
         title="${esc(r.title)}">${labelHtml}</div>`;
     }).join('');
@@ -13680,7 +13680,7 @@ function renderMonthView(view) {
       const pills = pillsByDay.get(dms) || [];
       const MAX_PILLS = 3;
       const pillsHtml = pills.slice(0, MAX_PILLS).map(p => {
-        return `<div class="cal-cell-pill ${p.done?'done':''}" style="--pill-color:${esc(p.color)}" title="${esc(p.title)}">${esc(p.title)}</div>`;
+        return `<div class="cal-cell-pill ${p.done?'done':''}" data-item-kind="${esc(p.kind)}" data-item-id="${esc(p.id)}" style="--pill-color:${esc(p.color)}" title="${esc(p.title)}">${esc(p.title)}</div>`;
       }).join('');
       const moreHtml = pills.length > MAX_PILLS
         ? `<div class="cal-cell-more">+${pills.length - MAX_PILLS}</div>`
@@ -13753,6 +13753,34 @@ function renderMonthView(view) {
       if (c.dataset.cellMonth) applyActiveMonth(grid, +c.dataset.cellMonth);
       renderCalDayDetail();
       renderTopbar();
+    });
+  });
+
+  // 点任务条 / 项目条 / 单日 chip → 直接打开对应详情。
+  // 之前月视图只有「整格选日」,条目本身没有 id 也没有 handler,所以点任务条打不开详情。
+  // 跟周/日视图 pill 点击对齐:task→详情 sheet;event→事件详情;project→跳到该项目任务视图。
+  const _openCalItemDetail = (kind, id) => {
+    if (!id) return;
+    if (kind === 'task') {
+      try { openTaskDetail(id); }
+      catch (err) { showToast('打开任务详情失败: ' + (err && err.message || err)); }
+    } else if (kind === 'event') {
+      openEventDetail(id);
+    } else if (kind === 'project') {
+      const p = (state.projects || []).find(x => x.id === id);
+      if (!p) { showToast('该项目已被删除'); return; }
+      ui.tab = 'tasks';
+      ui.selectedKind = 'project';
+      ui.selectedId = id;
+      saveUI();
+      renderAll();
+    }
+  };
+  view.querySelectorAll('.cal-ribbon[data-item-id], .cal-cell-pill[data-item-id]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (_calDragCreating) return;   // 拖拽刚结束的 ghost click,忽略
+      e.stopPropagation();            // 别冒到 cell 只选日,而是直接开条目详情
+      _openCalItemDetail(el.dataset.itemKind, el.dataset.itemId);
     });
   });
 

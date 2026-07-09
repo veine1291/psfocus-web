@@ -6250,6 +6250,18 @@ body.canvas-open { overflow: hidden; }
   margin-bottom: 4px;
 }
 .sum-item-time { font-size: 10px; color: var(--text-dim); }
+/* 收藏(星标)— 单色 mask 图标,状态色用 color 切(铁律:不要彩色 emoji) */
+.ico-star {
+  display: inline-block;
+  width: 14px; height: 14px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l2.7 5.6 6.1.8-4.5 4.3 1.1 6-5.4-2.9-5.4 2.9 1.1-6L3.2 9.4l6.1-.8z'/></svg>") no-repeat center / contain;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l2.7 5.6 6.1.8-4.5 4.3 1.1 6-5.4-2.9-5.4 2.9 1.1-6L3.2 9.4l6.1-.8z'/></svg>") no-repeat center / contain;
+}
+/* meta 行是 space-between:星标贴在时间右侧,margin-right:auto 把 ⋯ 按钮留在最右 */
+.sum-item-fav { color: var(--accent); width: 11px; height: 11px; flex: 0 0 auto; margin-left: 5px; margin-right: auto; }
+.sum-menu-star-on { color: var(--accent); }
+.sf-chip-star { width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; }
 .sum-item-more {
   width: 24px; height: 24px;
   border: 0;

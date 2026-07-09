@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260708-1419';
+const _PSFOCUS_BUILD = '20260710-0426';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1941,6 +1941,7 @@ let summaryState = {
   // 高级筛选 (Kayu 2026-05-28): 跟 searchQuery 叠加, 不动 sidebar 的 filter
   searchTime: { mode: 'all', start: null, end: null },   // mode: all|this-week|this-month|custom
   searchTags: { mode: 'all', list: [] },                 // mode: all|none|include|exclude; list = tag 名数组
+  searchFav: false,                                      // 只看收藏(s.fav)开关
   // 排序方式 (Kayu 2026-05-30): created (默认, 发布时间倒序) / updated (编辑时间倒序, 回退到 createdAt)
   sortMode: (() => {
     try { return localStorage.getItem('psfocus_sumSortMode') || 'created'; }
@@ -5047,13 +5048,15 @@ function _summaryApplySearchFilters(list) {
       return !tg.list.some(want => stags.some(x => x === want || x.startsWith(want + '/')));
     });
   }
+  // 收藏
+  if (summaryState.searchFav) list = list.filter(s => !!s.fav);
   return list;
 }
 // 高级筛选是否在生效 (任一项不是默认值 = 在生效) — 用于 UI 显 active badge / 判定是否计入'搜索态'
 function _summaryAnyFilterActive() {
   const t = summaryState.searchTime || {};
   const tg = summaryState.searchTags || {};
-  return (t.mode && t.mode !== 'all') || (tg.mode && tg.mode !== 'all');
+  return (t.mode && t.mode !== 'all') || (tg.mode && tg.mode !== 'all') || !!summaryState.searchFav;
 }
 
 // ms → YYYY-MM-DD (本地时区,给 <input type="date"> 用)
@@ -5148,6 +5151,13 @@ function openSummaryFilterSheet() {
           <div class="sf-section-title">标签</div>
           <div class="sf-chip-row">${tagChips}</div>
           ${tagPoolHtml}
+        </div>
+        <div class="sf-section">
+          <div class="sf-section-title">收藏</div>
+          <div class="sf-chip-row">
+            <button class="sf-chip ${!summaryState.searchFav ? 'active' : ''}" data-action="summary-filter-fav-mode" data-mode="all">全部内容</button>
+            <button class="sf-chip ${summaryState.searchFav ? 'active' : ''}" data-action="summary-filter-fav-mode" data-mode="fav"><span class="ico-star sf-chip-star"></span>只看收藏</button>
+          </div>
         </div>
         <div class="sf-actions">
           <button class="sf-btn-clear" data-action="summary-filter-clear">清除筛选</button>
@@ -5349,6 +5359,7 @@ function _renderSummaryItem(s) {
   return `<div class="sum-item ${backlinks.length ? 'has-backlinks' : ''}" data-summary-id="${esc(s.id)}">
     <div class="sum-item-meta">
       <span class="sum-item-time">${esc(tStr)}</span>
+      ${s.fav ? `<span class="ico-star sum-item-fav" title="已收藏"></span>` : ''}
       <button class="sum-item-more" data-action="summary-item-more" data-id="${esc(s.id)}">⋯</button>
     </div>
     ${(s.note||'').trim() ? `<div class="sum-item-note">${_renderSummaryNoteHtml(s.note)}</div>` : ''}
@@ -6632,8 +6643,14 @@ const _summaryActions = {
   'summary-filter-clear': () => {
     summaryState.searchTime = { mode: 'all', start: null, end: null };
     summaryState.searchTags = { mode: 'all', list: [] };
+    summaryState.searchFav = false;
     closeSheet();
     renderAll();
+  },
+  // 收藏筛选 chips(全部 / 只看收藏)
+  'summary-filter-fav-mode': (el) => {
+    summaryState.searchFav = (el && el.dataset && el.dataset.mode) === 'fav';
+    if (summaryState._filterSheetRerender) summaryState._filterSheetRerender();
   },
   // 完成 — 应用筛选并关闭 sheet
   'summary-filter-done': () => {
@@ -7017,6 +7034,9 @@ const _summaryActions = {
         <button class="sheet-item" data-action="summary-item-edit" data-id="${esc(id)}">
           <span class="ico-pencil sheet-item-icon"></span><span>编辑</span>
         </button>
+        <button class="sheet-item" data-action="summary-item-toggle-fav" data-id="${esc(id)}">
+          <span class="ico-star sheet-item-icon ${s.fav ? 'sum-menu-star-on' : ''}"></span><span>${s.fav ? '取消收藏' : '收藏'}</span>
+        </button>
         <button class="sheet-item" data-action="summary-item-set-template" data-id="${esc(id)}">
           <span class="ico-template sheet-item-icon"></span><span>设为模板</span>
         </button>
@@ -7033,6 +7053,16 @@ const _summaryActions = {
     const id = el.dataset.id;
     closeSheet();
     openSaveSummaryAsTemplateSheet(id);
+  },
+  // 收藏 / 取消收藏 — s.fav 布尔;不 bump updatedAt(收藏不算编辑,别影响「编辑时间」排序)
+  'summary-item-toggle-fav': (el) => {
+    const s = (state.summaries || []).find(x => x.id === el.dataset.id);
+    closeSheet();
+    if (!s) return;
+    if (s.fav) delete s.fav; else s.fav = true;
+    pushState();
+    renderAll();
+    showToast(s.fav ? '已收藏' : '已取消收藏');
   },
   // 把这条笔记内容暂存到 pendingQuoteSource — 顶部浮动 chip 立刻出现, 点 chip 一键粘贴
   'summary-item-copy-as-quote': (el) => {

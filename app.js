@@ -44,22 +44,8 @@ function psLog(level, ...args) {
   } catch (_) {}
   // 节流写 localStorage — 1s 内合并,避免高频写盘拖慢主线程
   if (!_psLogFlushTimer) _psLogFlushTimer = setTimeout(_psLogFlush, 1000);
-  // 把日志快照同步注入 state,任何 pushState 都会顺路带上去,省掉单独的云调用
-  // 注意:只是改 state 的字段,不触发 pushState — 这里不能 push,会变成每条日志一次云调用
-  // ⚠️ 用 try/catch 包 — `state` 用 let 声明在文件后面(行 282 附近),
-  // 但 psLog 在文件最前面就被调用了,会落进 TDZ 触发 ReferenceError 把整个 boot 干掉
-  // → setupAuth 没机会绑登录按钮 → "登录键按了没用"。所以这里必须吞掉异常。
-  try {
-    if (state) {
-      state._mobileDebugLog = _psLogBuf.slice(-_PSLOG_MAX);
-      state._mobileDebugMeta = {
-        build: (typeof _PSFOCUS_BUILD !== 'undefined' ? _PSFOCUS_BUILD : '?'),
-        ua: ((navigator && navigator.userAgent) || '').slice(0, 200),
-        url: location.href,
-        updatedAt: Date.now(),
-      };
-    }
-  } catch (_) {}
+  // 2026-07-11:不再把日志注入 state —— 那会让每次业务 push 都捎带日志、且日志强推变成
+  // 「整份 stale 业务快照旁路」(审计确认的跨端回滚源头)。日志现在走独立 action 'log' 独立文档。
   // ERR 级别 → 立刻强推一次到云端,即便 tab 接下来被 kill 我也能看到崩前痕迹
   if (level === 'ERR') {
     try { _pushMobileLogCloud(true); } catch (_) {}
@@ -95,31 +81,17 @@ async function _doPushLogCloud() {
       updatedAt: Date.now(),
     };
     const lines = (_psLogBuf || []).slice(-_PSLOG_MAX);
-    // 走云函数 syncState/push — 这是唯一被授权写 user_states 的管道。
-    // 直接 db.collection.update 在 CloudBase 默认权限下会被拒(只有 watch / get 是允许的)。
-    // 把 _mobileDebugLog 注入 state 后整份 push 上去,desktop _applyRemoteState 会落盘。
-    if (state && _initialPullOk && typeof tcbApp !== 'undefined' && tcbApp.callFunction) {
-      state._mobileDebugLog = lines;
-      state._mobileDebugMeta = meta;
-      // bump ts 防 watcher 回声压回去
-      state._cloudUpdatedAt = Math.max(Date.now(), (+state._cloudUpdatedAt || 0) + 1);   // 单调递增防时钟偏移
+    // 2026-07-11:日志走独立 action 'log' → 独立文档 user_states_logs,与业务 state 完全解耦。
+    // 旧方案(注入 state 整份 push + bump ts)= 每次心跳/ERR 把整份可能 stale 的业务快照以更高
+    // ts 覆盖云端,不 strip currentSession、绕过一切 merge —— 跨端数据回滚的一大源头(审计确认)。
+    if (typeof tcbApp !== 'undefined' && tcbApp.callFunction) {
       const res = await tcbApp.callFunction({
         name: 'syncState',
-        data: { action: 'push', docId: uid, state },
+        data: { action: 'log', docId: uid, lines, meta },
       });
       const r = res && res.result;
       if (!r || r.ok !== true) {
         try { console.warn('[mlog push] cloud-fn returned !ok', r && r.error); } catch (_) {}
-      }
-    } else if (db) {
-      // 兜底:state 还没初始化(super-early crash)— 试直接 db update,可能因权限失败
-      try {
-        await db.collection(COLLECTION).doc(uid).update({
-          _mobileDebugLog: lines,
-          _mobileDebugMeta: meta,
-        });
-      } catch (e2) {
-        try { console.warn('[mlog push direct fail]', e2 && e2.message || e2); } catch (_) {}
       }
     }
   } catch (e) {
@@ -647,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260711-1623';
+const _PSFOCUS_BUILD = '20260711-1657';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1219,6 +1191,11 @@ async function pullStateOnce() {
     } else if (remote) {
       // 哪怕没更新也算云端可达
       _initialPullOk = true;
+      // 「较旧」的远端也可能带对端新条目(时钟偏移/并发写;watcher 断线期间这是唯一接收通道)
+      // → 静默并集,不 push(下次任何 push 自然带上)。审计 2026-07-11 补。
+      if (remoteTs && remoteTs < localBefore) {
+        try { if (_mergeRemoteAdditive(remote)) renderAll(); } catch (_) {}
+      }
     }
   } catch (_) {}
   finally { _pullInflight = false; }
@@ -1254,9 +1231,17 @@ async function manualPullState() {
     if (!remote) { _lastSyncErrorMsg = '云端无 state'; return 'no-change'; }
     if (pushTimer) { flushPendingPush(); return 'no-change'; }   // await 期间又产生了本地改动
     const before = _stateFingerprint(state);
+    // 下拉刷新 = 用户要求强拉云端;但若本地 ts 更新(比如之前 push 三连败,云端其实落后),
+    // 直接整份覆盖会无提示回滚本地改动 → 覆盖后把旧本地 additive merge 回来并推联合集(审计 2026-07-11)
+    const prevLocal = state;
+    const prevTs = (state && state._cloudUpdatedAt) || 0;
+    const remoteTs2 = (remote && remote._cloudUpdatedAt) || 0;
     applyingRemote = true;
     state = sanitizeState(remote);
     applyingRemote = false;
+    if (prevTs > remoteTs2 && prevLocal) {
+      try { if (_mergeRemoteAdditive(prevLocal)) { pushState(); } } catch (_) {}
+    }
     _initialPullOk = true;
     _lastKnownGoodTaskCount = (state.tasks || []).length;
     applyAllAppearance();

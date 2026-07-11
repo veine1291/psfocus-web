@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260712-0304';
+const _PSFOCUS_BUILD = '20260712-0311';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11523,6 +11523,7 @@ function _openTaskDetailInner(id, opts) {
     </li>`;
   // 多级嵌套(2026-07-12):每行后递归渲染它的子树,depth 递进缩进
   const _renderSubTree = (c, depth) => {
+    if (depth > 40) return '';   // 深度守卫:normalize 前的瞬时环不至于爆栈白屏
     let h = _renderSubRow({
       source: 'task', id: c.id, title: c.title,
       checklistItem: c.checklistItem === true,

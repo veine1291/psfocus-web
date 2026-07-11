@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260710-0426';
+const _PSFOCUS_BUILD = '20260711-1611';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1020,7 +1020,12 @@ function _flushPendingRemoteM() {
   const rt = (raw && raw._cloudUpdatedAt) || 0;
   const lt = (state && state._cloudUpdatedAt) || 0;
   if (rt >= lt) _applyRemoteSnapshot(raw);
-  else { try { pushState(); } catch (_) {} }
+  else {
+    // 同 watcher:较旧的远端也可能带对端新条目,先并集再推,别直接反推冲掉
+    try { _mergeRemoteAdditive(raw); } catch (_) {}
+    try { pushState(); } catch (_) {}
+    try { renderAll(); } catch (_) {}
+  }
 }
 document.addEventListener('compositionstart', () => { _imeComposingM = true; });
 document.addEventListener('compositionend', () => { _imeComposingM = false; setTimeout(_flushPendingRemoteM, 0); });
@@ -1066,10 +1071,15 @@ function startWatch() {
         // 精确跳过"自己的回声"(同 _cloudUpdatedAt)。不再用「push 后 2 秒盲窗」——
         // 旧逻辑会把桌面端在这 2 秒内推上来的改动整段丢弃,导致刚同步的状态收不到。
         if (remoteTs && remoteTs === localTs) return;
-        // 时间戳防御:云端比本地旧 → 跳过(本地有未同步的改动),并把本地推上去
+        // 时间戳防御:云端比本地旧 → 不整份应用,但也不能直接反推 ——
+        // 跨设备时钟偏移/并发写时,"较旧"的远端快照可能带着对端刚创建的条目
+        // (桌面端在手机 push 前后一瞬也写了 state,或桌面时钟偏快)。
+        // 先 additive merge 把远端新增并进来,再推联合集(跟 dashboard 同款修复)。
         if (remoteTs < localTs) {
-          console.warn('[watch] skip older snapshot:', remoteTs, '<', localTs, '— 本地更新,主动推一次');
+          console.warn('[watch] older snapshot:', remoteTs, '<', localTs, '— additive merge 后推联合集');
+          try { _mergeRemoteAdditive(data.state); } catch (e) { console.warn('[watch] merge fail', e); }
           try { pushState(); } catch (_) {}
+          try { renderAll(); } catch (_) {}
           return;
         }
         _applyRemoteSnapshot(data.state);
@@ -12550,9 +12560,20 @@ function openListMoreMenu() {
   const cl = getCurrentList();
   const items = [];
   if (cl.kind === 'smart-list' && cl.smartList) {
-    // 智能清单 ⋯ 菜单 — 对齐桌面端(编辑/删除),删除在编辑器里
+    // 智能清单 ⋯ 菜单 — 对齐桌面端与普通清单的「编辑 / 删除」结构
     const sl = cl.smartList;
     items.push({ label: '编辑智能清单', icon: 'ico-edit', action: () => { closePopover(); _openSmartListEdit(sl.id); } });
+    if (!sl.builtin) {
+      items.push({ divider: true });
+      items.push({ label: '删除智能清单', icon: 'ico-trash', danger: true, action: () => {
+        if (!confirm('删除智能清单「' + (sl.name || '未命名') + '」?筛选器配置会被清掉,但底下的任务/事件不会被删。')) return;
+        state.smartLists = (state.smartLists || []).filter(x => x.id !== sl.id);
+        if (ui.selectedKind === 'smart-list' && ui.selectedId === sl.id) {
+          ui.selectedKind = 'smart'; ui.selectedId = 'all'; saveUI();
+        }
+        pushState(); closePopover(); renderAll();
+      } });
+    }
   }
   if (cl.kind === 'project' && cl.project) {
     const p = cl.project;

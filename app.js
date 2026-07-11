@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260711-2210';
+const _PSFOCUS_BUILD = '20260711-2304';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -721,10 +721,9 @@ function _mergeRemoteAdditive(remote) {
     }
     return out;
   };
-  const _tombsAfter = () => {
-    if (!tombs.size) return;
-    state._tombstones = Array.from(tombs, ([id, ts]) => ({ id, ts }));
-    try { _tombSyncBaselineM(state); } catch (_) {}   // merge 移除的不算本机删除
+  const _tombsAfter = (didChange) => {
+    if (tombs.size) state._tombstones = Array.from(tombs, ([id, ts]) => ({ id, ts }));
+    if (tombs.size || didChange) { try { _tombSyncBaselineM(state); } catch (_) {} }   // merge 带入/移除的不算本机修改
   };
   let changed = false;
   const keys = ['summaries', 'tasks', 'events', 'projects', 'folders', 'taskLists',
@@ -781,16 +780,33 @@ function _mergeRemoteAdditive(remote) {
     }
   }
   // settings 不动:用户最近的 UI 偏好优先;远端的旧 settings 不该覆盖
-  _tombsAfter();
+  _tombsAfter(changed);
   return changed;
 }
 
 // ===== 删除墓碑(2026-07-11,与桌面同款):自动差分记录本机删除,merge/救援不复活 =====
 const TOMB_KEYS_M = ['tasks', 'events', 'summaries', 'projects', 'smartLists'];
 let _tombBaselineM = null;
+let _fpBaselineM = null;   // Map('key:id' → 内容指纹)— updatedAt 自动 bump 用
+function _itemFpM(item) {
+  let str;
+  try { str = JSON.stringify(item, (k, v) => k === 'updatedAt' ? undefined : v); } catch (_) { return 0; }
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return h;
+}
 function _tombSyncBaselineM(s) {
   _tombBaselineM = {};
-  for (const k of TOMB_KEYS_M) _tombBaselineM[k] = new Set(((s && s[k]) || []).map(x => x && x.id).filter(Boolean));
+  _fpBaselineM = new Map();
+  for (const k of TOMB_KEYS_M) {
+    const ids = new Set();
+    for (const x of ((s && s[k]) || [])) {
+      if (!x || !x.id) continue;
+      ids.add(x.id);
+      _fpBaselineM.set(k + ':' + x.id, _itemFpM(x));
+    }
+    _tombBaselineM[k] = ids;
+  }
 }
 function _tombAutoDiffM(s) {
   if (!s) return;
@@ -798,9 +814,21 @@ function _tombAutoDiffM(s) {
   if (!_tombBaselineM) { _tombSyncBaselineM(s); return; }
   const now = Date.now();
   for (const k of TOMB_KEYS_M) {
-    const cur = new Set(((s[k]) || []).map(x => x && x.id).filter(Boolean));
+    const cur = new Set();
+    for (const x of ((s[k]) || [])) {
+      if (!x || !x.id) continue;
+      cur.add(x.id);
+      // updatedAt 自动 bump(2026-07-11 #3):没 bump updatedAt 的修改在 merge 里必输被反向覆盖
+      const key = k + ':' + x.id;
+      const fp = _itemFpM(x);
+      const prev = _fpBaselineM.get(key);
+      if (prev !== undefined && prev !== fp) {
+        x.updatedAt = Math.max(now, (+x.updatedAt || 0) + 1);
+      }
+      _fpBaselineM.set(key, fp);
+    }
     for (const id of _tombBaselineM[k] || []) {
-      if (!cur.has(id)) s._tombstones.push({ id, ts: now });
+      if (!cur.has(id)) { s._tombstones.push({ id, ts: now }); _fpBaselineM.delete(k + ':' + id); }
     }
     _tombBaselineM[k] = cur;
   }

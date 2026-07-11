@@ -2012,13 +2012,19 @@ body.sum-editor-open { overflow: hidden; }
   flex: 1; min-width: 0;
   font-size: 14px;
   color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* 超一行自动换行(2026-07-11 #4)— 原 nowrap+ellipsis 长标题被截断 */
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
   cursor: text;
   outline: none;
   border-radius: 4px;
   padding: 2px 4px;
   margin: -2px -4px;
+  line-height: 1.45;
 }
+.dp-sub { align-items: flex-start; }
+.dp-sub .dp-sub-check { margin-top: 2px; }
 .dp-sub-title:focus {
   background: var(--bg-section);
   white-space: normal;

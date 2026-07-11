@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260711-1738';
+const _PSFOCUS_BUILD = '20260711-2210';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -683,29 +683,48 @@ function _mergeRemoteAdditive(remote) {
     for (const x of arr) if (x && x.id) m.set(x.id, x);
     return m;
   };
+  // 墓碑并集(2026-07-11,修「删掉的任务过两秒又回来」):merge 天生会复活删除
+  // (分不清「对端还没同步」和「我刚删掉」)。墓碑压住(ts ≥ 条目最后编辑)的不复活、删除传播;
+  // 删除之后对端又编辑过 → 编辑胜出允许回来。
+  const tombs = new Map();
+  for (const t of (state._tombstones || [])) if (t && t.id) tombs.set(t.id, Math.max(t.ts || 0, tombs.get(t.id) || 0));
+  for (const t of (remote._tombstones || [])) if (t && t.id) tombs.set(t.id, Math.max(t.ts || 0, tombs.get(t.id) || 0));
+  const buried = (item) => {
+    const ts = tombs.get(item && item.id);
+    return ts != null && ts >= ((item && (item.updatedAt || item.createdAt)) || 0);
+  };
   // updatedAt-aware:本地有同 id 但远端 updatedAt 更新 → 用远端(对方做了 edit)
-  // 本地没有该 id → 直接补上(对方新增的内容,不能丢)
-  // 本地有但远端没有 → **保留本地**(本地新增的内容,云端还没收到,也不能丢)
+  // 本地没有该 id → 补上(对方新增,不能丢);本地有远端没有 → 保留本地(本地新增云端没收到)
   const _mergeArr = (localArr, remoteArr) => {
     const out = [];
     const lm = _byId(localArr);
     const rm = _byId(remoteArr);
     const seen = new Set();
     for (const [id, l] of lm) {
+      seen.add(id);
+      if (buried(l) && !rm.has(id)) continue;
       const r = rm.get(id);
       if (r) {
         const lt = (l && l.updatedAt) || 0;
         const rt = (r && r.updatedAt) || 0;
-        out.push(rt > lt ? r : l);
+        const win = rt > lt ? r : l;
+        if (buried(win)) continue;
+        out.push(win);
       } else {
         out.push(l);
       }
-      seen.add(id);
     }
     for (const [id, r] of rm) {
-      if (!seen.has(id)) out.push(r);
+      if (seen.has(id)) continue;
+      if (buried(r)) continue;
+      out.push(r);
     }
     return out;
+  };
+  const _tombsAfter = () => {
+    if (!tombs.size) return;
+    state._tombstones = Array.from(tombs, ([id, ts]) => ({ id, ts }));
+    try { _tombSyncBaselineM(state); } catch (_) {}   // merge 移除的不算本机删除
   };
   let changed = false;
   const keys = ['summaries', 'tasks', 'events', 'projects', 'folders', 'taskLists',
@@ -762,7 +781,33 @@ function _mergeRemoteAdditive(remote) {
     }
   }
   // settings 不动:用户最近的 UI 偏好优先;远端的旧 settings 不该覆盖
+  _tombsAfter();
   return changed;
+}
+
+// ===== 删除墓碑(2026-07-11,与桌面同款):自动差分记录本机删除,merge/救援不复活 =====
+const TOMB_KEYS_M = ['tasks', 'events', 'summaries', 'projects', 'smartLists'];
+let _tombBaselineM = null;
+function _tombSyncBaselineM(s) {
+  _tombBaselineM = {};
+  for (const k of TOMB_KEYS_M) _tombBaselineM[k] = new Set(((s && s[k]) || []).map(x => x && x.id).filter(Boolean));
+}
+function _tombAutoDiffM(s) {
+  if (!s) return;
+  if (!Array.isArray(s._tombstones)) s._tombstones = [];
+  if (!_tombBaselineM) { _tombSyncBaselineM(s); return; }
+  const now = Date.now();
+  for (const k of TOMB_KEYS_M) {
+    const cur = new Set(((s[k]) || []).map(x => x && x.id).filter(Boolean));
+    for (const id of _tombBaselineM[k] || []) {
+      if (!cur.has(id)) s._tombstones.push({ id, ts: now });
+    }
+    _tombBaselineM[k] = cur;
+  }
+  if (s._tombstones.length) {
+    s._tombstones = s._tombstones.filter(t => t && t.id && now - t.ts < 7 * 86400000);
+    if (s._tombstones.length > 800) s._tombstones = s._tombstones.slice(-800);
+  }
 }
 
 // 抢救本地草稿:每次 sanitize/push 时把最近 30 天的 summaries 写到 localStorage,
@@ -824,6 +869,7 @@ async function bindCloud() {
                   'summaries=' + ((remote.summaries||[]).length),
                   'sessions=' + ((remote.sessions||[]).length));
       state = sanitizeState(remote);
+    try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换不算本机删除(墓碑差分基线重置)
       _initialPullOk = true;
       _lastKnownGoodTaskCount = (state.tasks || []).length;
       // 兜底:对比 localStorage 备份,本地有但云端没有的近期 summaries 自动补回
@@ -971,6 +1017,7 @@ function _applyRemoteSnapshot(rawState) {
   try {
     applyingRemote = true;
     state = sanitizeState(rawState);
+    try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换不算本机删除(墓碑差分基线重置)
     applyingRemote = false;
     _initialPullOk = true;
     _lastKnownGoodTaskCount = (state.tasks || []).length;
@@ -1132,6 +1179,16 @@ function _normalizeEntitiesLightM(s) {
     }
   };
   for (const t of (s.tasks || [])) fix(t, true);
+  // 子任务 projectId 级联(2026-07-11 #5):与 dashboard 同款,改归属瞬间级联 + 存量自愈
+  {
+    const byId = new Map();
+    for (const t of (s.tasks || [])) if (t && t.id) byId.set(t.id, t);
+    for (const t of (s.tasks || [])) {
+      if (!t || !t.parentTaskId) continue;
+      const parent = byId.get(t.parentTaskId);
+      if (parent && t.projectId !== parent.projectId) t.projectId = (parent.projectId == null ? null : parent.projectId);
+    }
+  }
   for (const ev of (s.events || [])) fix(ev, false);
   for (const p of (s.projects || [])) {
     if (!p) continue;
@@ -1143,6 +1200,7 @@ function _normalizeEntitiesLightM(s) {
 function pushState() {
   if (applyingRemote || !uid) return;
   try { _normalizeEntitiesLightM(state); } catch (_) {}
+  try { _tombAutoDiffM(state); } catch (_) {}
   // 安全闸:第一次 pull 没成功 → 严禁 push(否则会用空 state 覆盖云端真实数据)
   if (!_initialPullOk) {
     console.warn('[push blocked] initial pull not ok — refusing to push (data protection)');
@@ -1306,6 +1364,7 @@ async function manualPullState() {
     const remoteTs2 = (remote && remote._cloudUpdatedAt) || 0;
     applyingRemote = true;
     state = sanitizeState(remote);
+    try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换不算本机删除(墓碑差分基线重置)
     applyingRemote = false;
     if (prevTs > remoteTs2 && prevLocal) {
       try { if (_mergeRemoteAdditive(prevLocal)) { pushState(); } } catch (_) {}
@@ -11489,7 +11548,9 @@ function _openTaskDetailInner(id, opts) {
       <!-- 子待办 (列表 + 加新入口)
        * enterkeyhint=send 让 iOS 软键盘上显送出键 (不是"下一项"/"换行")
        * + 按钮兜底 — 拼音 IME 第一下 Enter 用来确认输入, 不一定触发 keydown,
-         所以提供显式 + 按钮一定能加 */
+         所以提供显式 + 按钮一定能加
+       ⚠ 这条注释曾以 */ 结尾(JS 写法)—— HTML 注释没闭合,把整个子待办区+底栏吞成注释文本,
+         表现为「详情里子任务 UI 点了没反应」(2026-07-11 #1)。HTML 注释必须 - - > 闭合! -->
       <div class="td-subs">
         ${subsHtml}
         <div class="td-sub-add dp-sub-add">
@@ -17999,6 +18060,28 @@ function openQuickTimePickerSheet(currentSched, onSave) {
 
   showSheet(_render(), _bind);
 }
+
+// 子任务 ↔ 检查事项 互转(2026-07-11 #7)— contextmenu(安卓长按触发;iOS Safari 无此事件)
+document.addEventListener('contextmenu', (e) => {
+  const li = e.target.closest && e.target.closest('li.dp-sub[data-sub-id]');
+  if (!li) return;
+  const sub = (state && state.tasks || []).find(x => x.id === li.dataset.subId);
+  if (!sub || !sub.parentTaskId) return;
+  e.preventDefault();
+  showPopover([{
+    label: sub.checklistItem ? '转为普通子任务(持久)' : '转为检查事项(每次重复重置)',
+    icon: 'ico-list',
+    action: () => {
+      closePopover();
+      sub.checklistItem = !sub.checklistItem;
+      if (!sub.checklistItem) { sub.done = false; sub.doneAt = null; }   // 回持久语义,默认未完成
+      sub.updatedAt = Date.now();
+      pushState();
+      openTaskDetail(sub.parentTaskId);
+      renderAll();
+    },
+  }], { anchor: li });
+});
 
 // =========================================================
 // ===== 全局事件绑定 =====

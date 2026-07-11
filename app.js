@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260711-2333';
+const _PSFOCUS_BUILD = '20260712-0304';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -794,6 +794,18 @@ function _itemFpM(item) {
   let h = 5381;
   for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
   return h;
+}
+// 多级嵌套(2026-07-12):删除任务 = 删除整棵子树(只删一层会留下永远隐身的深层孤儿)
+function _taskSubtreeIdsM(rootIds) {
+  const ids = new Set(Array.isArray(rootIds) ? rootIds : [rootIds]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const x of (state.tasks || [])) {
+      if (x && x.parentTaskId && ids.has(x.parentTaskId) && !ids.has(x.id)) { ids.add(x.id); grew = true; }
+    }
+  }
+  return ids;
 }
 function _tombSyncBaselineM(s) {
   // 基线必须在【本端 canonical 形态】上取(2026-07-11 反向覆盖修复)— 否则收到对端形态后,
@@ -1219,28 +1231,35 @@ function _normalizeEntitiesLightM(s) {
     if (!Array.isArray(t.schedules)) t.schedules = [];
   };
   for (const t of (s.tasks || [])) fix(t, true);
-  // 层级上限 1(2026-07-11 #2):孙级拍平到顶层祖先 + 断链子任务提升为顶级(与 dashboard 同款)
+  // 多级嵌套(2026-07-12):任意深度父子链合法,只防自指/成环(环会让整棵子树隐身);断链孤儿不动
   {
     const byId = new Map();
     for (const t of (s.tasks || [])) if (t && t.id) byId.set(t.id, t);
     for (const t of (s.tasks || [])) {
       if (!t || !t.parentTaskId) continue;
       if (t.parentTaskId === t.id) { t.parentTaskId = null; continue; }
+      const seen = new Set([t.id]);
       let p = byId.get(t.parentTaskId);
-      if (!p) continue;   // 断链孤儿不动:提升会让「删父没删子」的历史垃圾冒回顶层
-      let hops = 0;
-      while (p && p.parentTaskId && p.parentTaskId !== p.id && hops < 10) { p = byId.get(p.parentTaskId); hops++; }
-      if (hops > 0 && p && p.id && p.id !== t.parentTaskId) t.parentTaskId = p.id;
+      while (p) {
+        if (seen.has(p.id)) { t.parentTaskId = null; break; }   // 成环 → 切断这条链
+        seen.add(p.id);
+        p = p.parentTaskId ? byId.get(p.parentTaskId) : null;
+      }
     }
   }
   // 子任务 projectId 级联(2026-07-11 #5):与 dashboard 同款,改归属瞬间级联 + 存量自愈
   {
     const byId = new Map();
     for (const t of (s.tasks || [])) if (t && t.id) byId.set(t.id, t);
-    for (const t of (s.tasks || [])) {
-      if (!t || !t.parentTaskId) continue;
-      const parent = byId.get(t.parentTaskId);
-      if (parent && t.projectId !== parent.projectId) t.projectId = (parent.projectId == null ? null : parent.projectId);
+    // 多级嵌套:级联到收敛(深链上父级先变、子级下一趟才跟)
+    for (let pass = 0; pass < 12; pass++) {
+      let changed = false;
+      for (const t of (s.tasks || [])) {
+        if (!t || !t.parentTaskId) continue;
+        const parent = byId.get(t.parentTaskId);
+        if (parent && t.projectId !== parent.projectId) { t.projectId = (parent.projectId == null ? null : parent.projectId); changed = true; }
+      }
+      if (!changed) break;
     }
   }
   for (const ev of (s.events || [])) fix(ev, false);
@@ -11363,6 +11382,10 @@ function openEventDetail(id) {
   if (delBtn) delBtn.onclick = () => {
     const doDelete = () => {
       state.events = (state.events || []).filter(x => x.id !== id);
+      // 级联删事件下的检查事项/子任务整棵子树,否则留下永远隐身还一直同步的孤儿(桌面两端已级联)
+      const _seed = (state.tasks || []).filter(x => x.parentEventId === id).map(x => x.id);
+      const _del = _taskSubtreeIdsM(_seed);
+      state.tasks = (state.tasks || []).filter(x => !_del.has(x.id));
       pushState(); closeSheet(); renderAll();
     };
     if (typeof showConfirm === 'function') {
@@ -11469,52 +11492,60 @@ function _openTaskDetailInner(id, opts) {
   }).join('');
 
   // 子任务 — union 桌面模型(parentTaskId)+ 老 mobile 模型(t.subtasks 数组)
-  // 重复任务下「检查事项(checklistItem=true)」的完成态走 parent.subtaskCompletions[dayKey] map,
-  // 跟自然时间走,每次出现自动重置 — 对齐桌面 _subtaskDoneFor 逻辑
-  const _parentRecurring = _isRecurringTaskM(t);
-  const _occStart = _parentRecurring ? _currentOccurrenceForTaskM(t) : null;
-  const _isChecklistDoneNow = (sub) => {
-    if (!sub || sub.checklistItem !== true) return !!sub.done;
-    if (!_parentRecurring || _occStart == null) return false;
-    const key = _occDayKeyM(_occStart);
-    const all = t.subtaskCompletions || {};
-    const occ = all[key] || all[_occStart] || {};
-    return !!occ[sub.id];
-  };
-  const childTasks = (state.tasks || [])
-    .filter(x => x.parentTaskId === t.id)
+  const _kidsOf = (pid) => (state.tasks || [])
+    .filter(x => x.parentTaskId === pid)
     .sort((a, b) => (a.order || 0) - (b.order || 0));
+  const childTasks = _kidsOf(t.id);
   const legacySubs = Array.isArray(t.subtasks) ? t.subtasks : [];
-  const subItemsRaw = [
-    ...childTasks.map(c => ({
-      source: 'task', id: c.id, title: c.title,
-      checklistItem: c.checklistItem === true,
-      done: _isChecklistDoneNow(c),
-    })),
-    ...legacySubs.map(s => ({
-      source: 'legacy', id: s.id, title: s.title,
-      checklistItem: false,
-      done: !!s.done,
-    })),
-  ];
-  // 普通子任务(checklistItem=false)在上,检查事项在下;同组内未完成在前已完成在后
-  const normalSubs = subItemsRaw.filter(s => !s.checklistItem)
-    .sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
-  const checklistSubs = subItemsRaw.filter(s => s.checklistItem)
-    .sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
+  // 完成态:检查事项 + 【直接父级】是重复任务 → per-occurrence(parent.subtaskCompletions[dayKey]),
+  // 否则 !!c.done。对齐桌面 _renderDpSubRow;多级嵌套后直接父级不一定是本详情的任务 t,现场解析。
+  // (旧实现只处理「直属 t」的检查事项,深层检查事项恒回落 c.done → 勾了永不亮,toggle 却在暗改 map)
+  const _subDoneNow = (c) => {
+    if (c && c.checklistItem === true) {
+      const par = c.parentTaskId === t.id ? t : (state.tasks || []).find(x => x.id === c.parentTaskId);
+      if (par && _isRecurringTaskM(par)) {
+        const occ = _currentOccurrenceForTaskM(par);
+        if (occ == null) return false;
+        const key = _occDayKeyM(occ);
+        const all = par.subtaskCompletions || {};
+        const m = all[key] || all[occ] || {};
+        return !!m[c.id];
+      }
+    }
+    return !!(c && c.done);
+  };
   const _renderSubRow = (s) => `
-    <li class="dp-sub ${s.done?'done':''}" data-sub-id="${esc(s.id)}" data-sub-source="${s.source}"${s.checklistItem ? ' data-sub-checklist="1"' : ''}>
+    <li class="dp-sub ${s.done?'done':''}" data-sub-id="${esc(s.id)}" data-sub-source="${s.source}"${s.checklistItem ? ' data-sub-checklist="1"' : ''}${s.depth ? ` style="margin-left:${s.depth * 14}px"` : ''}>
       <button class="dp-sub-check ${s.done?'done':''}" data-action="toggle-sub">${s.done ? '✓' : ''}</button>
       ${s.checklistItem ? '<span class="dp-sub-checklist-mark" title="检查事项 — 每次重复都会重置">≡</span>' : ''}
       <span class="dp-sub-title" contenteditable="true" spellcheck="false" data-action="edit-sub-title">${esc(s.title || '')}</span>
       <button class="dp-sub-del" data-action="del-sub" title="删除">×</button>
     </li>`;
-  let subsInner = normalSubs.map(_renderSubRow).join('');
-  if (checklistSubs.length) {
-    if (normalSubs.length) subsInner += `<li class="dp-sub-divider"><span>检查事项</span></li>`;
-    subsInner += checklistSubs.map(_renderSubRow).join('');
+  // 多级嵌套(2026-07-12):每行后递归渲染它的子树,depth 递进缩进
+  const _renderSubTree = (c, depth) => {
+    let h = _renderSubRow({
+      source: 'task', id: c.id, title: c.title,
+      checklistItem: c.checklistItem === true,
+      done: _subDoneNow(c), depth,
+    });
+    for (const k of _kidsOf(c.id)) h += _renderSubTree(k, depth + 1);
+    return h;
+  };
+  // 普通子任务(checklistItem=false)在上,检查事项在下;同组内未完成在前已完成在后
+  const _doneSort = (a, b) => (_subDoneNow(a) ? 1 : 0) - (_subDoneNow(b) ? 1 : 0);
+  const normalKids = childTasks.filter(c => c.checklistItem !== true).sort(_doneSort);
+  const checklistKids = childTasks.filter(c => c.checklistItem === true).sort(_doneSort);
+  const legacyRows = legacySubs.map(s => ({
+    source: 'legacy', id: s.id, title: s.title,
+    checklistItem: false, done: !!s.done, depth: 0,
+  }));
+  let subsInner = normalKids.map(c => _renderSubTree(c, 0)).join('')
+    + legacyRows.map(_renderSubRow).join('');
+  if (checklistKids.length) {
+    if (normalKids.length + legacyRows.length) subsInner += `<li class="dp-sub-divider"><span>检查事项</span></li>`;
+    subsInner += checklistKids.map(c => _renderSubTree(c, 0)).join('');
   }
-  const subsHtml = subItemsRaw.length
+  const subsHtml = (childTasks.length + legacySubs.length)
     ? `<ul class="dp-sub-list">${subsInner}</ul>`
     : '<div class="dp-empty">还没有子任务</div>';
 
@@ -11916,10 +11947,12 @@ function bindTaskDetailEvents(body, id) {
       if (source === 'task') {
         const child = state.tasks.find(x => x.id === sid);
         if (!child) { pushState(); openTaskDetail(id); return; }
-        if (child.checklistItem === true && _isRecurringTaskM(t)) {
-          const occ = _currentOccurrenceForTaskM(t);
+        // 检查事项 per-occurrence 判定看【直接父级】(多级嵌套后不一定是本详情的任务)
+        const par = child.parentTaskId === t.id ? t : state.tasks.find(x => x.id === child.parentTaskId);
+        if (child.checklistItem === true && par && _isRecurringTaskM(par)) {
+          const occ = _currentOccurrenceForTaskM(par);
           if (occ != null) {
-            _toggleSubtaskForM(child, t, occ);
+            _toggleSubtaskForM(child, par, occ);
             pushState(); openTaskDetail(id); return;
           }
         }
@@ -11934,7 +11967,8 @@ function bindTaskDetailEvents(body, id) {
     const delBtn = row.querySelector('[data-action="del-sub"]');
     if (delBtn) delBtn.onclick = () => {
       if (source === 'task') {
-        state.tasks = state.tasks.filter(x => x.id !== sid);
+        const _del = _taskSubtreeIdsM(sid);
+        state.tasks = state.tasks.filter(x => !_del.has(x.id));
       } else {
         t.subtasks = (t.subtasks || []).filter(x => x.id !== sid);
       }
@@ -12369,8 +12403,9 @@ function openTaskDetailMenu(id, anchor) {
   }
   items.push({ divider: true });
   items.push({ label: '删除任务', icon: 'ico-trash', danger: true, action: () => {
-    // 子任务级联删,否则留下永远隐身还一直同步的孤儿(桌面两端都级联)
-    state.tasks = state.tasks.filter(x => x.id !== id && x.parentTaskId !== id);
+    // 级联删整棵子树,否则留下永远隐身还一直同步的孤儿(多级嵌套后必须递归)
+    const _del = _taskSubtreeIdsM(id);
+    state.tasks = state.tasks.filter(x => !_del.has(x.id));
     pushState(); closePopover(); closeSheet(); renderAll();
   }});
   showPopover(items, { anchor });

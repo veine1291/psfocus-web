@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260711-2304';
+const _PSFOCUS_BUILD = '20260711-2333';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -796,6 +796,9 @@ function _itemFpM(item) {
   return h;
 }
 function _tombSyncBaselineM(s) {
+  // 基线必须在【本端 canonical 形态】上取(2026-07-11 反向覆盖修复)— 否则收到对端形态后,
+  // 本端下次 normalize 一改形态,指纹误判「本机修改」→ 旧内容 updatedAt 被顶到最新 → 反向覆盖真实编辑
+  try { _normalizeEntitiesLightM(s); } catch (_) {}
   _tombBaselineM = {};
   _fpBaselineM = new Map();
   for (const k of TOMB_KEYS_M) {
@@ -1195,18 +1198,41 @@ function _normalizeEntitiesLightM(s) {
     if (!t.createdAt) t.createdAt = Date.now();
     if (!t.updatedAt) t.updatedAt = t.createdAt;
     if (!Array.isArray(t.tags))   t.tags = [];
-    if ((!Array.isArray(t.schedules) || !t.schedules.length) && Number.isFinite(+t.start)) t.schedules = [mkSched(t)];
+    if (isTask && !Array.isArray(t.images)) t.images = [];
+    // +null 是 0,Number.isFinite(+null) 为 true — 必须先判 != null,
+    // 否则 start:null 的条目每次 normalize 都无中生有一条随机 id 的 schedule(指纹永远在变 → 反向覆盖)
+    if ((!Array.isArray(t.schedules) || !t.schedules.length) && t.start != null && Number.isFinite(+t.start)) t.schedules = [mkSched(t)];
     if (Array.isArray(t.schedules) && t.schedules.length) {
       const s0 = t.schedules[0];
-      if (s0 && Number.isFinite(+s0.start)) {
+      if (s0 && s0.start != null && Number.isFinite(+s0.start)) {
         if (t.start == null) t.start = s0.start;
         if (isTask && t.dueAt == null) t.dueAt = s0.start;
         if (t.end == null && s0.end) t.end = s0.end;
         if (t.allDay === undefined) t.allDay = !!s0.allDay;
       }
     }
+    // 跨端 canonical 兜底 — 与 dashboard 形态对齐,三端指纹必须一致
+    if (t.start === undefined)  t.start = null;
+    if (t.end === undefined)    t.end = null;
+    if (t.allDay === undefined) t.allDay = false;
+    if (isTask && t.dueAt === undefined) t.dueAt = null;
+    if (!Array.isArray(t.schedules)) t.schedules = [];
   };
   for (const t of (s.tasks || [])) fix(t, true);
+  // 层级上限 1(2026-07-11 #2):孙级拍平到顶层祖先 + 断链子任务提升为顶级(与 dashboard 同款)
+  {
+    const byId = new Map();
+    for (const t of (s.tasks || [])) if (t && t.id) byId.set(t.id, t);
+    for (const t of (s.tasks || [])) {
+      if (!t || !t.parentTaskId) continue;
+      if (t.parentTaskId === t.id) { t.parentTaskId = null; continue; }
+      let p = byId.get(t.parentTaskId);
+      if (!p) continue;   // 断链孤儿不动:提升会让「删父没删子」的历史垃圾冒回顶层
+      let hops = 0;
+      while (p && p.parentTaskId && p.parentTaskId !== p.id && hops < 10) { p = byId.get(p.parentTaskId); hops++; }
+      if (hops > 0 && p && p.id && p.id !== t.parentTaskId) t.parentTaskId = p.id;
+    }
+  }
   // 子任务 projectId 级联(2026-07-11 #5):与 dashboard 同款,改归属瞬间级联 + 存量自愈
   {
     const byId = new Map();
@@ -12343,7 +12369,8 @@ function openTaskDetailMenu(id, anchor) {
   }
   items.push({ divider: true });
   items.push({ label: '删除任务', icon: 'ico-trash', danger: true, action: () => {
-    state.tasks = state.tasks.filter(x => x.id !== id);
+    // 子任务级联删,否则留下永远隐身还一直同步的孤儿(桌面两端都级联)
+    state.tasks = state.tasks.filter(x => x.id !== id && x.parentTaskId !== id);
     pushState(); closePopover(); closeSheet(); renderAll();
   }});
   showPopover(items, { anchor });

@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260711-1657';
+const _PSFOCUS_BUILD = '20260711-1738';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1093,8 +1093,56 @@ function startPeriodicPull() {
     pullStateOnceThrottled('periodic');
   }, 60000);
 }
+// 写入时轻量规范化(2026-07-11 可见性审计)— sanitizeState 只在 pull/收远端时跑,
+// 本会话自建对象不过它;push 前在原地补全缺失字段 + schedules↔legacy 双向镜像
+// (sanitize 只做 legacy→schedules 单向,反向缺失会让 legacy 读者看不到 schedules-only 条目)。
+// 只补 undefined,绝不覆盖已有值、不 bump updatedAt。
+function _normalizeEntitiesLightM(s) {
+  if (!s) return;
+  const mkSched = (t) => ({
+    id: 'sl-' + Math.random().toString(36).slice(2, 10),
+    kind: (t.end && t.end > t.start + 60000) ? 'range' : 'date',
+    start: t.start, end: t.end || undefined,
+    allDay: !!t.allDay, repeat: 'none', reminderOffset: null,
+  });
+  const fix = (t, isTask) => {
+    if (!t) return;
+    if (isTask) {
+      if (t.parentTaskId === undefined)  t.parentTaskId = null;
+      if (t.parentEventId === undefined) t.parentEventId = null;
+      if (t.projectId === undefined)     t.projectId = null;
+      if (t.done === undefined)          t.done = false;
+      if (t.doneAt === undefined)        t.doneAt = null;
+      if (!Number.isFinite(+t.order))    t.order = 100;
+      if (!Array.isArray(t.completedOccurrences)) t.completedOccurrences = [];
+      if (t.kanbanColumn === undefined)  t.kanbanColumn = null;
+    }
+    if (!t.createdAt) t.createdAt = Date.now();
+    if (!t.updatedAt) t.updatedAt = t.createdAt;
+    if (!Array.isArray(t.tags))   t.tags = [];
+    if ((!Array.isArray(t.schedules) || !t.schedules.length) && Number.isFinite(+t.start)) t.schedules = [mkSched(t)];
+    if (Array.isArray(t.schedules) && t.schedules.length) {
+      const s0 = t.schedules[0];
+      if (s0 && Number.isFinite(+s0.start)) {
+        if (t.start == null) t.start = s0.start;
+        if (isTask && t.dueAt == null) t.dueAt = s0.start;
+        if (t.end == null && s0.end) t.end = s0.end;
+        if (t.allDay === undefined) t.allDay = !!s0.allDay;
+      }
+    }
+  };
+  for (const t of (s.tasks || [])) fix(t, true);
+  for (const ev of (s.events || [])) fix(ev, false);
+  for (const p of (s.projects || [])) {
+    if (!p) continue;
+    if (!p.name && p.title) p.name = p.title;
+    if (p.archived === undefined) p.archived = false;
+  }
+}
+
 function pushState() {
   if (applyingRemote || !uid) return;
+  try { _normalizeEntitiesLightM(state); } catch (_) {}
   // 安全闸:第一次 pull 没成功 → 严禁 push(否则会用空 state 覆盖云端真实数据)
   if (!_initialPullOk) {
     console.warn('[push blocked] initial pull not ok — refusing to push (data protection)');
@@ -1134,9 +1182,29 @@ async function _performPush(attempt) {
     const _payload = Object.assign({}, state, { currentSession: null });
     const res = await tcbApp.callFunction({ name: 'syncState', data: { action: 'push', docId: uid, state: _payload } });
     const r = res && res.result;
-    if (!r || r.ok !== true) throw new Error((r && r.error) || '云函数返回失败');
+    if (!r || r.ok !== true) {
+      // 防清空闸门拒写 → 盲目重试同一份残缺 state 只会永远被拦(该设备从此推不上任何改动)。
+      // 自愈:拉云端完整数据 → additive merge 进本地 → 推联合集(只多不少,闸门放行)。
+      if (r && r.blocked) {
+        console.warn('[push] 被服务端闸门拦下(' + (r.detail || r.error) + ')→ 自愈:拉云端合并再推');
+        setSync('syncing', '云端数据更完整,合并中…');
+        try {
+          const pres = await tcbApp.callFunction({ name: 'syncState', data: { action: 'pull', docId: uid } });
+          const remote = pres && pres.result && pres.result.ok ? pres.result.state : null;
+          if (remote) {
+            try { _mergeRemoteAdditive(remote); } catch (_) {}
+            state._cloudUpdatedAt = Math.max(Date.now(), (+state._cloudUpdatedAt || 0) + 1, (+remote._cloudUpdatedAt || 0) + 1);
+            renderAll();
+            pushTimer = setTimeout(() => _performPush(0), 500);   // 推联合集
+          }
+        } catch (e2) { console.warn('[push] blocked 自愈失败', e2); setSync('error', '同步被保护闸拦下,合并失败'); }
+        return;
+      }
+      throw new Error((r && r.error) || '云函数返回失败');
+    }
+    if (r.sizeWarning) setSync('synced', '⚠ 数据体积 ' + r.sizeWarning + ',接近云端上限');
     _lastKnownGoodTaskCount = (state.tasks || []).length;  // push 成功后更新基准
-    setSync('synced', '已同步');
+    if (!r.sizeWarning) setSync('synced', '已同步');
     _saveSummariesBackupLS();   // push 成功 → 把最近 summaries 落地一份, 万一云端被覆盖能恢复
   } catch (e) {
     const errMsg = (e && (e.message || e.code || String(e))) || '未知';
@@ -12204,17 +12272,13 @@ function buildTaskTemplatePayload(task) {
       .map(s => ({ title: s.title || '' })),
   };
 }
-function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
-  const p = tmpl.payload || {};
+// 模板套用的时间推导(task / event 共用):
+//   opts.startTs(明确传)→ 直接用(从时间轴拖出来时,只接管起点;时长仍走模板)
+//   日历选中日 = 今天 → 当前时刻 + 5min snap;≠ 今天 → 那天 09:00;未传 dayMs → 当前时刻
+//   end 始终用模板 duration(Kayu 要求模板保留模板时长)
+function _tmplDeriveStartEnd(p, dayMs, opts) {
   opts = opts || {};
   const hasExplicitStart = Number.isFinite(opts.startTs);
-  // 调用方传了具体时间(从时间轴拖出来)→ 一定不是全天;否则尊重模板
-  const allDay = hasExplicitStart ? false : !!p.allDay;
-  // start 取值优先级:
-  //   opts.startTs(明确传)→ 直接用(从时间轴拖出来时,只接管起点;时长仍走模板)
-  //   日历选中日 = 今天 → 当前时刻 + 5min snap(对齐 Kayu 期望"从触发时间点创建")
-  //   日历选中日 ≠ 今天 → 那天 09:00(只能落到目标日)
-  //   未传 dayMs → 当前时刻
   let start;
   if (hasExplicitStart) {
     start = opts.startTs;
@@ -12222,7 +12286,6 @@ function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
     const today0 = startOfDay(new Date()).getTime();
     const day0 = startOfDay(new Date(dayMs)).getTime();
     if (day0 === today0) {
-      // 当前时间向上对 5 分钟取整
       const now = new Date();
       now.setSeconds(0, 0);
       const SNAP = 5;
@@ -12238,9 +12301,14 @@ function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
     now.setMinutes(Math.ceil(min / 5) * 5);
     start = now.getTime();
   }
-  // end 始终用模板 duration(用户拖出来的时长被故意忽略 —— Kayu 要求模板任务保留模板时长)
   const dur = (Number.isFinite(p.duration) && p.duration > 0) ? p.duration : 30 * 60000;
-  const end = start + dur;
+  return { start, end: start + dur };
+}
+
+function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
+  const p = tmpl.payload || {};
+  opts = opts || {};
+  const { start, end } = _tmplDeriveStartEnd(p, dayMs, opts);
   const sibs = state.tasks.filter(t => t.projectId === (projectId || null) && !t.parentTaskId && !t.parentEventId);
   const newOrder = sibs.length ? Math.max(...sibs.map(s => s.order || 0)) + 100 : 100;
   // 新 task 字段对齐桌面 sanitize 期望(防被严格过滤过滤掉)
@@ -12259,8 +12327,7 @@ function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
     allDay: !!p.allDay,
     color: p.color || '',
     tags: Array.isArray(p.tags) ? [...p.tags] : [],
-    subtasks: (Array.isArray(p.subtasks) ? p.subtasks : [])
-      .map(s => ({ id: genId('s'), title: s.title || '', done: false, createdAt: Date.now() })),
+    subtasks: [],   // 子待办不再内嵌 —— 桌面/小部件只渲染 parentTaskId 子任务,内嵌数组在桌面永久不可见(2026-07-11 审计)
     schedules: [{
       id: 'sl-' + Math.random().toString(36).slice(2, 10),
       kind: p.allDay ? 'date' : 'range',
@@ -12276,7 +12343,73 @@ function applyTaskTemplate(tmpl, dayMs, projectId, opts) {
     order: newOrder,
   };
   state.tasks.push(newTask);
+  // 模板子待办 → 独立子任务(parentTaskId 挂接),与桌面 _applyTaskTemplate 同模型,三端都可见
+  (Array.isArray(p.subtasks) ? p.subtasks : []).forEach((s, i) => {
+    state.tasks.push({
+      id: genId('t'),
+      title: (s && s.title) || '',
+      done: false, doneAt: null,
+      createdAt: Date.now(), updatedAt: Date.now(),
+      projectId: projectId || null,
+      parentTaskId: newTask.id,
+      parentEventId: null,
+      dueAt: null, start: null, end: null, allDay: false,
+      tags: [], subtasks: [], images: [], completedOccurrences: [],
+      kanbanColumn: null, order: (i + 1) * 100,
+      schedules: [],
+    });
+  });
   return newTask;
+}
+
+// 事件模板 → 建事件(与桌面 _applyEventTemplate 对齐)。
+// 以前手机把 kind==='event' 的模板也建成任务:同一模板两端产出不同实体,
+// 手机套的「事件」永远进不了任何事件分区(2026-07-11 审计 confirmed)。
+function applyEventTemplate(tmpl, dayMs, opts) {
+  const p = tmpl.payload || {};
+  const { start, end } = _tmplDeriveStartEnd(p, dayMs, opts);
+  if (!Array.isArray(state.events)) state.events = [];
+  const newEv = {
+    id: genId('e'),
+    title: p.title || '新事件',
+    projectId: null,
+    schedules: [{
+      id: 'sl-' + Math.random().toString(36).slice(2, 10),
+      kind: p.allDay ? 'date' : 'range',
+      start,
+      end: p.allDay ? undefined : end,
+      allDay: !!p.allDay,
+      repeat: 'none',
+      reminderOffset: null,
+    }],
+    color: p.color || '',
+    tags: Array.isArray(p.tags) ? [...p.tags] : [],
+    icon: p.icon || '',
+    note: '',
+    images: [],
+    createdAt: Date.now(), updatedAt: Date.now(),
+    start,
+    end: p.allDay ? null : end,
+    allDay: !!p.allDay,
+  };
+  state.events.push(newEv);
+  // 事件检查事项 → parentEventId 子任务(桌面同模型)
+  (Array.isArray(p.subtasks) ? p.subtasks : []).forEach((s, i) => {
+    state.tasks.push({
+      id: genId('t'),
+      title: (s && s.title) || '',
+      done: false, doneAt: null,
+      createdAt: Date.now(), updatedAt: Date.now(),
+      projectId: null,
+      parentTaskId: null,
+      parentEventId: newEv.id,
+      dueAt: null, start: null, end: null, allDay: false,
+      tags: [], subtasks: [], images: [], completedOccurrences: [],
+      kanbanColumn: null, order: (i + 1) * 100,
+      schedules: [],
+    });
+  });
+  return newEv;
 }
 
 function openSaveTaskAsTemplateSheet(taskId) {
@@ -12333,17 +12466,21 @@ function openCreateFromTemplatePicker(opts) {
     const projectId = (opts.projectId !== undefined && opts.projectId !== null)
       ? opts.projectId
       : (cl.kind === 'project' ? cl.project?.id : null);
-    let newTask;
-    if (Number.isFinite(opts.startTs)) {
-      // 从时间轴拖出来的:用拖出来的起点,时长走模板自身(不接管 endTs)
-      newTask = applyTaskTemplate(tmpl, null, projectId, { startTs: opts.startTs });
+    const day = Number.isFinite(opts.startTs) ? null
+      : (ui.tab === 'calendar' ? (ui.calSelectedDay || ui.calCursor) : Date.now());
+    const tOpts = Number.isFinite(opts.startTs) ? { startTs: opts.startTs } : undefined;
+    // 按模板类型分派 —— 事件模板建事件、任务模板建任务(与桌面一致;以前全建成任务)
+    if (tmpl.kind === 'event') {
+      const newEv = applyEventTemplate(tmpl, day, tOpts);
+      pushState();
+      renderAll();
+      showToast(`已新建事件「${newEv.title}」`);
     } else {
-      const day = ui.tab === 'calendar' ? (ui.calSelectedDay || ui.calCursor) : Date.now();
-      newTask = applyTaskTemplate(tmpl, day, projectId);
+      const newTask = applyTaskTemplate(tmpl, day, projectId, tOpts);
+      pushState();
+      renderAll();
+      showToast(`已新建任务「${newTask.title}」`);
     }
-    pushState();
-    renderAll();
-    showToast(`已新建任务「${newTask.title}」`);
   };
   if (tasks.length) {
     items.push({ sectionTitle: '任务模板' });

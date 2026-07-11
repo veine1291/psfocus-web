@@ -102,7 +102,7 @@ async function _doPushLogCloud() {
       state._mobileDebugLog = lines;
       state._mobileDebugMeta = meta;
       // bump ts 防 watcher 回声压回去
-      state._cloudUpdatedAt = Date.now();
+      state._cloudUpdatedAt = Math.max(Date.now(), (+state._cloudUpdatedAt || 0) + 1);   // 单调递增防时钟偏移
       const res = await tcbApp.callFunction({
         name: 'syncState',
         data: { action: 'push', docId: uid, state },
@@ -647,7 +647,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260711-1611';
+const _PSFOCUS_BUILD = '20260711-1623';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1142,7 +1142,7 @@ function pushState() {
   // 关键:_cloudUpdatedAt 同步 bump,不要等防抖 — 否则在防抖窗口(0~1s)内 watcher
   // 收到旧云端 snapshot 时,localTs 还是旧值,会被误判为"远端较新"而覆盖本地刚改的字段
   // (如:模块标题改了但还没 push,watcher 把还没同步的旧云端推回来,标题被复原)
-  state._cloudUpdatedAt = Date.now();
+  state._cloudUpdatedAt = Math.max(Date.now(), (+state._cloudUpdatedAt || 0) + 1);   // 单调递增防时钟偏移
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(_performPush, 1000);
 }
@@ -1185,7 +1185,7 @@ function flushPendingPush() {
   clearTimeout(pushTimer);
   pushTimer = null;
   if (applyingRemote || !uid || !_initialPullOk) return;
-  state._cloudUpdatedAt = Date.now();
+  state._cloudUpdatedAt = Math.max(Date.now(), (+state._cloudUpdatedAt || 0) + 1);   // 单调递增防时钟偏移
   _performPush();
 }
 let _pullInflight = false;

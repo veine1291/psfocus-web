@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260712-0311';
+const _PSFOCUS_BUILD = '20260714-0235';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11345,7 +11345,7 @@ function openEventDetail(id) {
     <input class="dp-title-input" id="ev-detail-title" value="${esc(ev.title || '')}" placeholder="事件标题" style="width:100%;font-size:17px;font-weight:600;border:0;outline:0;background:transparent;margin-bottom:12px;" />
     <div class="dp-sched-row" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
       ${schedHtml}
-      <button class="dp-add-sched-btn" id="ev-add-sched"><span class="ico-clock"></span> ${schedules.length ? '改时间' : '加时间'}</button>
+      <button class="dp-add-sched-btn" id="ev-add-sched"><span class="ico-plus"></span> 加时间</button>
     </div>
     <button id="ev-delete" style="margin-top:22px;width:100%;padding:11px;border:1px solid var(--danger,#d54141);border-radius:10px;background:transparent;color:var(--danger,#d54141);font-size:14px;">删除事件</button>
     <div style="margin-top:12px;color:var(--text-dim);font-size:11.5px;text-align:center;">颜色 / 项目归属等更多设置请在桌面端编辑</div>
@@ -11358,18 +11358,44 @@ function openEventDetail(id) {
     titleEl.addEventListener('blur', saveTitle);
     titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); } });
   }
+  // +加时间 → 永远【新增】一段(不再覆盖第一段);单击已有 pill 才是改那一段(与任务详情/桌面一致)
   const addBtn = body.querySelector('#ev-add-sched');
   if (addBtn) addBtn.onclick = () => {
-    const existing = (ev.schedules && ev.schedules[0])
-      || (ev.start ? { start: ev.start, end: ev.end, allDay: ev.allDay, repeat: 'none', kind: ev.end ? 'range' : 'date' } : null);
-    openQuickTimePickerSheet(existing, (newSched) => {
+    openQuickTimePickerSheet(null, (newSched) => {
       if (!newSched) return;
       if (!Array.isArray(ev.schedules)) ev.schedules = [];
-      if (ev.schedules.length) ev.schedules[0] = newSched; else ev.schedules.push(newSched);
+      ev.schedules.push(newSched);
       _syncLegacy();
       pushState(); openEventDetail(id); renderAll();
     });
   };
+  // 单击已有时间 pill 的文字/时钟 → 编辑该 schedule
+  body.querySelectorAll('.dp-sched-pill').forEach(pill => {
+    const xBtn = pill.querySelector('[data-ev-sched-x]');
+    const sid = xBtn && xBtn.dataset.evSchedX;
+    const editAreas = [pill.querySelector('.dp-sched-text'), pill.querySelector('.ico-clock')].filter(Boolean);
+    editAreas.forEach(el => {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', (evt) => {
+        evt.stopPropagation();
+        const existing = (sid && sid !== 'legacy')
+          ? (ev.schedules || []).find(s => s.id === sid)
+          : (ev.schedules || [])[0] || (ev.start ? { start: ev.start, end: ev.end, allDay: !!ev.allDay, repeat: 'none' } : null);
+        openQuickTimePickerSheet(existing || null, (newSched) => {
+          if (!newSched) return;
+          if (!Array.isArray(ev.schedules)) ev.schedules = [];
+          if (sid && sid !== 'legacy') {
+            const idx = ev.schedules.findIndex(s => s.id === sid);
+            if (idx >= 0) ev.schedules[idx] = newSched; else ev.schedules.push(newSched);
+          } else {
+            if (ev.schedules.length) ev.schedules[0] = newSched; else ev.schedules.push(newSched);
+          }
+          _syncLegacy();
+          pushState(); openEventDetail(id); renderAll();
+        });
+      });
+    });
+  });
   body.querySelectorAll('[data-ev-sched-x]').forEach(b => b.onclick = () => {
     const sid = b.dataset.evSchedX;
     if (!Array.isArray(ev.schedules)) ev.schedules = [];

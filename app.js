@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260714-0235';
+const _PSFOCUS_BUILD = '20260718-1130';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11319,6 +11319,35 @@ function renderGanttView(view, cl) {
 let _taskDetailMode = 'p1';
 // _restoreFocus = 重渲后要把光标聚回哪个 input (p1→p2 切换用)
 let _taskDetailRestoreFocus = null;
+// 详情抽屉「新增子任务」输入框里没提交的草稿 — 重建 DOM 会连锅端掉,这里跨重建带过去
+let _taskDetailPendingSubText = '';
+// 重建详情前抢救未落库的输入:标题 / 备注直接写回 state(不依赖 blur 时序),
+// 子任务输入框没有落库路径 → 存进模块变量,渲染后再填回去。
+// 参照时间选择器已有的 _readInputs-before-rerender 模式(见 openQuickTimePickerSheet)。
+function _flushTaskDetailInputs() {
+  try {
+    const body = $('sheet-body');
+    if (!body) return;
+    const sub = body.querySelector('.dp-sub-add-input');
+    if (sub && sub.value.trim()) _taskDetailPendingSubText = sub.value;
+    const titleEl = body.querySelector('.dp-title-input');
+    const noteEl = body.querySelector('.dp-note-input');
+    const tid = body.dataset.taskId;
+    if (!tid) return;
+    const cur = (state.tasks || []).find(x => x.id === tid);
+    if (!cur) return;
+    let dirty = false;
+    // 标题空值不落库(沿用原 blur 守卫:清空标题视为误操作,不写)
+    if (titleEl && titleEl.value.trim() && titleEl.value.trim() !== cur.title) {
+      cur.title = titleEl.value.trim(); dirty = true;
+    }
+    // 备注允许清空 —— 清备注是正常意图
+    if (noteEl && (noteEl.value || '') !== (cur.note || '')) {
+      cur.note = noteEl.value || ''; dirty = true;
+    }
+    if (dirty) { cur.updatedAt = Date.now(); pushState(); }
+  } catch (_) {}
+}
 
 // 手机端事件详情 sheet — 看详情 / 改时间(含重复)/ 删除。颜色、项目归属等高级编辑仍在桌面端。
 // 复用任务那套时间编辑器 openQuickTimePickerSheet + legacy 镜像同步。
@@ -11454,6 +11483,10 @@ function _openTaskDetailInner(id, opts) {
   const _sheetEl = $('sheet');
   const _wasOpen = _sheetEl && !_sheetEl.classList.contains('hidden');
   const _prevScrollTop = _wasOpen ? (($('sheet-body').querySelector('.dp-detail') || {}).scrollTop || 0) : 0;
+  // 重建前 flush 未提交的输入(2026-07-18)—— 本函数用 body.innerHTML 整块重建 DOM,任何触发它的
+  // 操作(删时间/删标签/删图/切项目…)都会把没落库的输入连锅端掉。标题/备注靠 blur 落库、次序不可靠;
+  // 「新增子任务」输入框更是压根没有落库路径,值只活在 DOM 里。这里统一在重建前抢救一次。
+  if (_wasOpen) _flushTaskDetailInputs();
   const proj = projectOf(t);
   const projColor = proj ? (proj.color || '') : '';
   const projLabel = proj ? proj.name : '未分类';
@@ -11508,12 +11541,16 @@ function _openTaskDetailInner(id, opts) {
     if (s.start < today1) return 'today';
     return 'future';
   };
-  const schedHtml = schedules.map(s => {
+  // 是否是「由 t.start 合成的伪 schedule」(任务只有 legacy 时间字段,没有 schedules 数组)
+  const _isLegacySynth = !(t.schedules && t.schedules.length);
+  const schedHtml = schedules.map((s, i) => {
     const eff = _effectiveSchedule(s);
+    // data-sched-idx 是删除的兜底身份:老数据 / 非本端写入的 schedule 可能没有 id,
+    // 原来一律回落成字符串 'legacy',会命中 handler 的「清空整个 schedules」分支 → 删一条把别的全带走
     return `<span class="dp-sched-pill ${_schedStateClass(eff)}">
       <span class="ico-clock"></span>
       <span class="dp-sched-text">${esc(fmtSchedule(eff))}</span>
-      <button class="dp-sched-x" data-action="dp-remove-schedule" data-task-id="${t.id}" data-sched-id="${esc(s.id || 'legacy')}" title="删除此时间">×</button>
+      <button class="dp-sched-x" data-action="dp-remove-schedule" data-task-id="${t.id}" data-sched-id="${esc(s.id || '')}" data-sched-idx="${i}"${_isLegacySynth ? ' data-sched-legacy="1"' : ''} title="删除此时间">×</button>
     </span>`;
   }).join('');
 
@@ -11612,6 +11649,7 @@ function _openTaskDetailInner(id, opts) {
   // - tags / images / sub-todos 分别 section, 不再挤在 merged-row
   // - 底部图标条: 附件 + 收起
   // 兼容性:保留所有 dp-* 类名以便 bindTaskDetailEvents 不动
+  body.dataset.taskId = t.id;   // 给 _flushTaskDetailInputs 认领「当前 DOM 属于哪个任务」
   body.innerHTML = `
     <div class="sheet-handle"></div>
     <div class="dp-detail td-detail">
@@ -11729,8 +11767,17 @@ function _openTaskDetailInner(id, opts) {
       } catch (_) {}
     }, 30);
   }
+  // 把重建前抢救下来的子任务草稿填回去(见 _flushTaskDetailInputs)
+  if (_taskDetailPendingSubText) {
+    const _subEl = body.querySelector('.dp-sub-add-input');
+    if (_subEl) {
+      _subEl.value = _taskDetailPendingSubText;
+      _taskDetailPendingSubText = '';
+    }
+  }
   body.style.transform = '';
   body.style.transition = '';
+  _applySheetHeight();      // 套用用户拉过的高度(没拉过则回 CSS 默认档)
   sheet.classList.remove('hidden');
   bindTaskDetailEvents(body, id);
   bindSheetSwipeClose(body);
@@ -11874,15 +11921,29 @@ function bindTaskDetailEvents(body, id) {
   });
 
   // schedule pill ×按钮 → 删除
-  body.querySelectorAll('[data-action="dp-remove-schedule"]').forEach(b => b.onclick = (ev) => {
-    ev.stopPropagation();
-    const sid = b.dataset.schedId;
-    if (sid && sid !== 'legacy' && Array.isArray(t.schedules)) {
-      t.schedules = t.schedules.filter(s => s.id !== sid);
-    }
-    if (sid === 'legacy') t.schedules = [];
-    _syncLegacyFromSchedules();
-    pushState(); openTaskDetail(id); renderAll();
+  body.querySelectorAll('[data-action="dp-remove-schedule"]').forEach(b => {
+    const doRemove = (ev) => {
+      if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+      if (b._schedRemoving) return;      // click + touchend 双绑 → 防重入(别一下删两条)
+      b._schedRemoving = true;
+      const sid = b.dataset.schedId || '';
+      const idx = parseInt(b.dataset.schedIdx, 10);
+      if (b.dataset.schedLegacy === '1') {
+        // 任务本来就没有 schedules 数组,pill 是从 t.start 合成的 → 清掉 legacy 时间字段
+        t.schedules = [];
+      } else if (Array.isArray(t.schedules)) {
+        // 有 id 按 id 删;没 id(老数据 / 别处写入)按下标删,绝不再回落成「清空全部」
+        t.schedules = sid
+          ? t.schedules.filter(s => s.id !== sid)
+          : t.schedules.filter((s, i) => i !== idx);
+      }
+      _syncLegacyFromSchedules();
+      pushState(); openTaskDetail(id); renderAll();
+    };
+    // 同时绑 click 和 touchend — sheet 的 passive:false touchmove 在 iOS Safari 上偶尔吞掉后续 click
+    // (与 toggle-done 同款兜底,见本文件 checkBtn 的处理)
+    b.addEventListener('click', doRemove);
+    b.addEventListener('touchend', doRemove);
   });
 
   // 备注 + #tag 自动解析:blur 时把 note 里的 #xxx 抽取为标签(去重),note 文本保留
@@ -12281,6 +12342,10 @@ function closeSheet() {
   const body = $('sheet-body');
   body.style.transform = '';
   body.style.transition = '';
+  // 清掉拉高留下的内联高度 —— 否则会串到下一个打开的 sheet(通用 sheet 各有自己的高度预期)
+  body.style.height = '';
+  body.style.maxHeight = '';
+  delete body.dataset.taskId;
   $('sheet').classList.add('hidden');
   body.innerHTML = '';
   // 清掉 sheet 上下文标记(day-edit / 模块详情)
@@ -12289,11 +12354,52 @@ function closeSheet() {
     summaryState._modDetailOpen = null;
   }
 }
-// 下拉关闭手势 — 接受 sheet 顶部 60px 区域内任何位置触摸,识别区扩大
+// ===== 抽屉可拉高(2026-07-18)=====
+// 存「占视口高度的比例」而不是 px —— 换设备 / 转屏 / 键盘弹出改变视口时仍然合理。
+// 本机 UI 偏好,走 localStorage 不进云同步(与 psfocus_* 其它 UI 态一致)。
+let _sheetHeightRatio = (() => {
+  try {
+    const v = parseFloat(localStorage.getItem('psfocus_sheetHeightRatio'));
+    return (v >= 0.3 && v <= 0.96) ? v : 0;   // 0 = 没自定义过,用 CSS 默认档
+  } catch (_) { return 0; }
+})();
+let _sheetHeightPx = 0;
+function _vh() { return (window.visualViewport && window.visualViewport.height) || window.innerHeight || 800; }
+function _sheetMinPx() { return Math.round(_vh() * 0.3); }
+function _sheetMaxPx() { return Math.round(_vh() * 0.96); }
+function _setSheetHeightPx(body, px) {
+  if (!body) return;
+  // height 和 max-height 一起写:CSS 里 P1/P2 各有 max-height 档位,只写 height 会被它压回去
+  body.style.height = px + 'px';
+  body.style.maxHeight = px + 'px';
+}
+function _saveSheetHeight() {
+  try {
+    _sheetHeightRatio = Math.min(0.96, Math.max(0.3, _sheetHeightPx / _vh()));
+    localStorage.setItem('psfocus_sheetHeightRatio', _sheetHeightRatio.toFixed(3));
+  } catch (_) {}
+}
+// 打开抽屉时套用记住的高度;没自定义过就清掉内联样式回到 CSS 默认档(P1 60svh / P2 95svh)
+function _applySheetHeight() {
+  const body = $('sheet-body');
+  if (!body) return;
+  if (_sheetHeightRatio) {
+    const px = Math.min(_sheetMaxPx(), Math.max(_sheetMinPx(), Math.round(_vh() * _sheetHeightRatio)));
+    _sheetHeightPx = px;
+    _setSheetHeightPx(body, px);
+  } else {
+    body.style.height = '';
+    body.style.maxHeight = '';
+  }
+}
+// 抽屉手势 — 顶部 60px 区域内触摸:【下拉】关闭(原有),【上拉】增高(2026-07-18 新增)
 // 触摸点落在输入控件 / 按钮上时跳过(避免影响打字 / 点击)
+// 方向在首次有效位移时锁定,拖动过程中不再翻转,避免手抖来回切模式。
 function bindSheetSwipeClose(body) {
   let startY = 0, dy = 0, dragging = false;
+  let startH = 0, mode = null;           // mode: null 未定 | 'close' 下拉关 | 'grow' 上拉增高
   const HIT_AREA_PX = 60; // 顶部 60px 内任何空白区域可下拉
+  const DIR_LOCK_PX = 6;  // 位移超过这个值才锁定方向
   function isInteractive(target) {
     if (!(target instanceof Element)) return false;
     return !!target.closest('input, textarea, select, button, [contenteditable="true"]');
@@ -12306,18 +12412,41 @@ function bindSheetSwipeClose(body) {
     if (isInteractive(t.target)) return;
     startY = t.clientY;
     dy = 0;
+    mode = null;
+    startH = r.height;
     dragging = true;
     body.style.transition = 'none';
   }
   function onMove(e) {
     if (!dragging) return;
-    dy = Math.max(0, e.touches[0].clientY - startY);
+    const raw = e.touches[0].clientY - startY;
+    if (!mode) {
+      if (Math.abs(raw) < DIR_LOCK_PX) return;
+      mode = raw > 0 ? 'close' : 'grow';
+    }
+    if (mode === 'grow') {
+      // 上拉增高:直接改高度跟手(不能用 transform,那样只是把抽屉整体往上挪、露出下方空隙)
+      const h = Math.min(_sheetMaxPx(), Math.max(_sheetMinPx(), startH - raw));
+      _setSheetHeightPx(body, h);
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
+    dy = Math.max(0, raw);
     body.style.transform = `translateY(${dy}px)`;
     if (dy > 5 && e.cancelable) e.preventDefault();
   }
   function onEnd() {
     if (!dragging) return;
     dragging = false;
+    if (mode === 'grow') {
+      _sheetHeightPx = body.getBoundingClientRect().height;
+      // 只有任务详情抽屉记住高度 —— 其它 sheet(创建任务/时间选择等)各有自己的内容高度预期,
+      // 让它们把比例写进去会串味;那些 sheet 上拉高只在本次有效,关掉即还原。
+      if (body.dataset.taskId) _saveSheetHeight();
+      body.style.transition = '';
+      mode = null;
+      return;
+    }
     body.style.transition = 'transform .22s ease';
     const threshold = Math.max(80, body.offsetHeight * 0.25);
     if (dy > threshold) {
@@ -12326,6 +12455,7 @@ function bindSheetSwipeClose(body) {
     } else {
       body.style.transform = '';
     }
+    mode = null;
   }
   body.addEventListener('touchstart', onStart, { passive: true });
   body.addEventListener('touchmove',  onMove,  { passive: false });
@@ -17704,6 +17834,7 @@ function openCreateTaskSheet(opts) {
       <input type="text" class="qe-title" id="qe-title" placeholder="准备做什么?">
       <textarea class="qe-note" id="qe-note" rows="2" placeholder="描述"></textarea>
       <div id="qe-img-list" class="qe-img-list"></div>
+      <div id="qe-sub-wrap" class="qe-sub-wrap"></div>
       <div id="qe-sched-row" class="qe-sched-row">${_renderSchedRowHtml()}</div>
     </div>
     <div class="qe-bar">
@@ -17724,10 +17855,52 @@ function openCreateTaskSheet(opts) {
     const noteEl  = body.querySelector('#qe-note');
     const imgList = body.querySelector('#qe-img-list');
     const pendingImages = _r && Array.isArray(_r.pendingImages) ? _r.pendingImages.slice() : [];
+    // 创建时就能加子任务(2026-07-18):先攒进 pendingSubs,保存时连同主任务一起写入。
+    // 与 pendingImages / schedules 同款「待提交列表」模式,必须一并进 _captureRestore —— 否则
+    // 中途开时间 picker 会替换 sheet body,攒好的子任务全丢。
+    const pendingSubs = _r && Array.isArray(_r.pendingSubs) ? _r.pendingSubs.slice() : [];
+    const subWrap = body.querySelector('#qe-sub-wrap');
     if (_r) {
       if (titleEl && _r.title) titleEl.value = _r.title;
       if (noteEl  && _r.note ) noteEl.value  = _r.note;
     }
+    // 子任务区:有内容才显示列表,输入框常驻(留空即不加)
+    const refreshSubs = (focusInput) => {
+      if (!subWrap) return;
+      const rows = pendingSubs.map((s, i) => `
+        <li class="qe-sub-row" data-sub-idx="${i}">
+          <span class="qe-sub-dot"></span>
+          <span class="qe-sub-title">${esc(s.title)}</span>
+          <button type="button" class="qe-sub-del" data-sub-idx="${i}" title="删除">×</button>
+        </li>`).join('');
+      subWrap.innerHTML = `
+        ${pendingSubs.length ? `<ul class="qe-sub-list">${rows}</ul>` : ''}
+        <div class="qe-sub-add">
+          <input type="text" class="qe-sub-input" placeholder="添加子任务" enterkeyhint="done" autocapitalize="off">
+          <button type="button" class="qe-sub-plus" title="加">+</button>
+        </div>`;
+      subWrap.querySelectorAll('.qe-sub-del').forEach(b => b.onclick = (ev) => {
+        ev.stopPropagation();
+        const i = +b.dataset.subIdx;
+        if (i >= 0 && i < pendingSubs.length) { pendingSubs.splice(i, 1); refreshSubs(); }
+      });
+      const subInput = subWrap.querySelector('.qe-sub-input');
+      const addSub = () => {
+        const v = (subInput.value || '').trim();
+        if (!v) return;
+        pendingSubs.push({ title: v });
+        subInput.value = '';
+        refreshSubs(true);
+      };
+      subWrap.querySelector('.qe-sub-plus').onclick = addSub;
+      subInput.addEventListener('keydown', (e) => {
+        // 中文输入法组词中的 Enter 是选字,不能当提交(否则拼音串被当成标题)
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') { e.preventDefault(); addSub(); }
+      });
+      if (focusInput) subInput.focus();
+    };
+    refreshSubs();
     const refreshImgs = () => {
       imgList.innerHTML = pendingImages.map(im => `
         <div class="qe-img-cell" data-img-id="${esc(im.id)}">
@@ -17765,12 +17938,16 @@ function openCreateTaskSheet(opts) {
     }
 
     function _captureRestore() {
+      // 连同「输入框里没按回车的那条子任务」一起快照 — 否则开时间 picker 回来就没了
+      const _subIn = subWrap ? subWrap.querySelector('.qe-sub-input') : null;
+      const _typed = _subIn && _subIn.value.trim() ? [{ title: _subIn.value.trim() }] : [];
       return {
         title: titleEl ? titleEl.value : '',
         note:  noteEl  ? noteEl.value  : '',
         pickedProjectId,
         schedules: schedules.slice(),
         pendingImages: pendingImages.slice(),
+        pendingSubs: pendingSubs.concat(_typed),
       };
     }
     function _updateFolderPill() {
@@ -17910,6 +18087,27 @@ function openCreateTaskSheet(opts) {
         order: 100,
       };
       state.tasks.push(newTask);
+      // 攒好的子任务 → 独立 task 靠 parentTaskId 挂接(内嵌 subtasks 数组桌面端永久不可见,见 12508 审计注释)。
+      // 输入框里还没提交的那条也一起收(用户打完字直接点保存,不该丢)。
+      const _subIn = subWrap ? subWrap.querySelector('.qe-sub-input') : null;
+      const _typed = _subIn && _subIn.value.trim() ? [{ title: _subIn.value.trim() }] : [];
+      pendingSubs.concat(_typed).forEach((ps, i) => {
+        state.tasks.push({
+          id: genId('t'),
+          title: ps.title,
+          done: false, doneAt: null,
+          createdAt: Date.now(), updatedAt: Date.now(),
+          projectId: newTask.projectId || null,
+          parentTaskId: newTask.id,
+          parentEventId: null,
+          dueAt: null, start: null, end: null, allDay: false,
+          color: '',
+          tags: [], subtasks: [], images: [], completedOccurrences: [],
+          kanbanColumn: null,
+          order: (i + 1) * 100,
+          schedules: [],
+        });
+      });
       pushState();
       // 加子待办:存完直接打开该任务详情(P2)并聚焦子任务输入框
       if (saveOpts.thenOpenSub) {

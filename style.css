@@ -898,13 +898,23 @@ body.sum-editor-open { overflow: hidden; }
   overflow: hidden;
 }
 
+/* 把手 —— 下拉关闭 / 上拉增高(手势在 bindSheetSwipeClose,识别区是抽屉顶部 60px)
+   命中区靠透明 ::before 撑到 44×高度,视觉仍是细条 */
 .sheet-handle {
+  position: relative;
   flex: 0 0 auto;
   width: 38px; height: 4px;
   background: var(--text-mute);
   opacity: 0.6;
   border-radius: 2px;
   margin: 6px auto 4px;
+  touch-action: none;          /* 手势自己接管,别让浏览器抢去做页面滚动 */
+  cursor: grab;
+}
+.sheet-handle::before {
+  content: '';
+  position: absolute;
+  left: -24px; right: -24px; top: -10px; bottom: -10px;
 }
 
 .sheet-head {
@@ -971,9 +981,11 @@ body.sum-editor-open { overflow: hidden; }
 #sheet.td-p1 .td-bar-spacer { display: none; }
 /* P1 顶栏对齐: bar 顶部分隔线柔和点 */
 #sheet.td-p1 .td-bar { border-top: 0; }
-/* P1 隐藏所有编辑性 UI (× 删 / + 加 / 列表 add input 等) */
-#sheet.td-p1 .dp-sched-x,
-#sheet.td-p1 .td-add-sched,
+/* P1 隐藏编辑性 UI (× 删 / 列表 add input 等)
+ * 例外 —— 时间(schedule)的增 / 改 / 删在 P1 全部可用(2026-07-18 修):
+ *   P1 下「+加时间」本来就能点(它的真实 class 是 .td-add-sched-icon,原规则里写的 .td-add-sched
+ *   从来没匹配上过,是条死选择器,已删),pill 点击改时间也一直生效 —— 唯独 .dp-sched-x 被藏,
+ *   造成「能加能改、就是删不掉」。时间是高频操作,统一放开,别让用户为了删一个时间去找 P2。 */
 #sheet.td-p1 .td-sub-add,
 #sheet.td-p1 [data-action="dp-remove-tag"],
 #sheet.td-p1 .dp-image-del,
@@ -1273,6 +1285,71 @@ body.sum-editor-open { overflow: hidden; }
   margin-top: 12px;
 }
 .qe-img-list:empty { margin-top: 0; }
+/* 创建任务时的子任务区(2026-07-18)— 攒进 pendingSubs, 保存时一起写入 */
+.qe-sub-wrap { margin-top: 10px; }
+.qe-sub-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.qe-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px;
+  font-size: 13px;
+  color: var(--text);
+}
+.qe-sub-dot {
+  flex: 0 0 auto;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--text-mute);
+}
+.qe-sub-title { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+.qe-sub-del {
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-mute);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.qe-sub-del:active { background: var(--bg-hover); color: var(--text); }
+.qe-sub-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qe-sub-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 2px;
+  outline: none;
+}
+.qe-sub-input::placeholder { color: var(--text-mute); }
+.qe-sub-plus {
+  flex: 0 0 auto;
+  width: 26px; height: 26px;
+  border: 1px dashed var(--border-light);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.qe-sub-plus:active { background: var(--bg-hover); color: var(--text); }
 /* 时间段行 — qe-content 内, note 下方; 可水平滚动多 pill */
 .qe-sched-row {
   display: flex;

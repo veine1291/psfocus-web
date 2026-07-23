@@ -619,7 +619,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260718-1130';
+const _PSFOCUS_BUILD = '20260720-1420';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1229,6 +1229,16 @@ function _normalizeEntitiesLightM(s) {
     if (t.allDay === undefined) t.allDay = false;
     if (isTask && t.dueAt === undefined) t.dueAt = null;
     if (!Array.isArray(t.schedules)) t.schedules = [];
+    // schedule id 去重/补漏(与 dashboard _dedupeScheduleIds 同款,2026-07-20 #1):
+    // 同任务多条 schedule 撞 id(时间选择器曾继承 'legacy' 哨兵)会让「按 id 删」连删多条
+    {
+      const seen = new Set();
+      for (const sc of t.schedules) {
+        if (!sc) continue;
+        if (!sc.id || sc.id === 'legacy' || seen.has(sc.id)) sc.id = 'sl-' + Math.random().toString(36).slice(2, 10);
+        seen.add(sc.id);
+      }
+    }
   };
   for (const t of (s.tasks || [])) fix(t, true);
   // 多级嵌套(2026-07-12):任意深度父子链合法,只防自指/成环(环会让整棵子树隐身);断链孤儿不动
@@ -18351,7 +18361,11 @@ function openQuickTimePickerSheet(currentSched, onSave) {
     body.querySelector('[data-action="save"]').onclick = () => {
       _readInputs(body);
       const out = {
-        id: (currentSched && currentSched.id) || ('sl-' + Math.random().toString(36).slice(2, 10)),
+        // 'legacy' 是「从 t.start 合成的伪 schedule」哨兵,不许继承成真实 id ——
+        // 两条都叫 legacy 时按 id 删除会连删多条(2026-07-20 #1 根源)
+        id: (currentSched && currentSched.id && currentSched.id !== 'legacy')
+          ? currentSched.id
+          : ('sl-' + Math.random().toString(36).slice(2, 10)),
         kind: mode === 'range' ? 'range' : 'date',
         start,
         allDay,

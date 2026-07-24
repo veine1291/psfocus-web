@@ -285,7 +285,9 @@ html, body { overscroll-behavior-y: contain; }
 .pull-refresh {
   position: absolute;
   left: 0; right: 0;
-  top: 0;
+  /* 从顶栏底下滑出 — 原来 top:0 整个行程都藏在 topbar(z5)后面,
+     用户只看到列表被拽下来、露出一段空白,提示文案根本看不见(Kayu 2026-07-24) */
+  top: calc(var(--safe-top) + var(--topbar-h));
   height: 50px;
   display: flex;
   align-items: center;

@@ -359,6 +359,8 @@ function fmtTaskTime(t) {
 // 时间状态:overdue / today / future / ''(已完成或无时间)
 function timeStateClass(t) {
   if (!t || t.done) return '';
+  // 每日重复的任务/事件天天都有,标过期只会常年飘红 — 不显示时间状态(Kayu 2026-07-24)
+  if ((t.schedules || []).some(s => s && s.repeat === 'daily')) return '';
   let ts;
   // 重复任务用 nextPendingOccurrence(显示下一个未完成的)
   if (typeof _isRecurringTask === 'function' && _isRecurringTask(t)) {
@@ -407,6 +409,8 @@ function loadUI() {
     collapsedSections: new Set(saved.collapsedSections || []),
     calSideOpen: !!saved.calSideOpen,
     calSideExpanded: new Set(saved.calSideExpanded || []),
+    // 新建任务的清单记忆:非清单上下文(日历滑动新建等)默认沿用上次选的(Kayu 2026-07-24)
+    lastCreateProjectId: saved.lastCreateProjectId || null,
   };
 }
 function saveUI() {
@@ -418,6 +422,7 @@ function saveUI() {
     collapsedSections: Array.from(ui.collapsedSections),
     calSideOpen: !!ui.calSideOpen,
     calSideExpanded: Array.from(ui.calSideExpanded || []),
+    lastCreateProjectId: ui.lastCreateProjectId || null,
   };
   try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (_) {}
 }
@@ -619,7 +624,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260720-1420';
+const _PSFOCUS_BUILD = '20260724-1100';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11545,6 +11550,7 @@ function _openTaskDetailInner(id, opts) {
   const _schedStateClass = (s) => {
     if (t.done) return '';
     if (!s || !s.start) return '';
+    if (s.repeat === 'daily') return '';   // 每日重复不标过期,同 timeStateClass
     const today0 = startOfDay(new Date()).getTime();
     const today1 = today0 + 86400000;
     if (s.start < today0) return 'overdue';
@@ -17746,8 +17752,11 @@ function openCreateTaskSheet(opts) {
   // _restore: 时间选择 sheet 回来时带回闭包状态 — sheet body innerHTML 替换会丢
   const _r = opts._restore || null;
   const cl = getCurrentList();
+  // 默认清单:清单上下文优先;否则沿用上次创建任务时选的(日历滑动新建等场景,Kayu 2026-07-24)
+  const _lastPid = ui.lastCreateProjectId;
+  const _lastPidValid = _lastPid && (state.projects || []).some(p => p.id === _lastPid);
   let pickedProjectId = _r ? _r.pickedProjectId
-    : (cl.kind === 'project' ? cl.project?.id : null);
+    : (cl.kind === 'project' ? cl.project?.id : (_lastPidValid ? _lastPid : null));
 
   // 滴答清单风:新建任务默认建立在今天 (allDay) — 用户不点日期 pill 也有一个默认值。
   // opts.startTs/startDay (从日历视图拖拽进来) 仍然优先, _restore 用回存的 sched
@@ -18097,6 +18106,9 @@ function openCreateTaskSheet(opts) {
         order: 100,
       };
       state.tasks.push(newTask);
+      // 记住这次选的清单,下次非清单上下文新建时沿用
+      ui.lastCreateProjectId = pickedProjectId || null;
+      saveUI();
       // 攒好的子任务 → 独立 task 靠 parentTaskId 挂接(内嵌 subtasks 数组桌面端永久不可见,见 12508 审计注释)。
       // 输入框里还没提交的那条也一起收(用户打完字直接点保存,不该丢)。
       const _subIn = subWrap ? subWrap.querySelector('.qe-sub-input') : null;

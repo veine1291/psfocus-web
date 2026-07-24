@@ -232,7 +232,10 @@ input:focus, textarea:focus { border-color: var(--accent); }
   gap: 8px;
   background: var(--bg-page);
   border-bottom: 1px solid var(--border-soft);
-  z-index: 5;
+  /* position:relative 保证 z-index 在所有 WebKit 下生效 — 真机 iOS 26 上
+     纯 flex-item z-index 挡不住下拉刷新时被 transform 拽下来的 #view(Kayu 2026-07-24) */
+  position: relative;
+  z-index: 10;
 }
 .topbar-btn {
   width: 40px; height: 40px;
@@ -343,7 +346,8 @@ html, body { overscroll-behavior-y: contain; }
   display: flex;
   background: var(--bg-panel);
   border-top: 1px solid var(--border-soft);
-  z-index: 5;
+  position: relative;   /* 同 topbar:确保盖住下拉时下移的 #view 内容 */
+  z-index: 10;
 }
 .tab {
   flex: 1 1 0;

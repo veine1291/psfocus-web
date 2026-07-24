@@ -624,7 +624,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260724-1115';
+const _PSFOCUS_BUILD = '20260724-1125';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2104,6 +2104,8 @@ function renderTab(tab) {
   if (view) {
     if (view.dataset.lastTab !== tab) {
       view.style.transform = '';
+      view.style.clipPath = '';
+      view.style.webkitClipPath = '';
       view.style.transition = '';
       view.scrollTop = 0;
       view.dataset.lastTab = tab;
@@ -18682,6 +18684,10 @@ const _PSF_STANDALONE = window.navigator.standalone === true
     indicator.style.opacity = String(Math.min(1, d / 30));
     // 让整个 view 跟着手指一起下移,看起来像把列表从顶部"拽下来"露出 indicator
     view.style.transform = `translateY(${clamped}px)`;
+    // 底边裁掉下移量 — 玻璃皮肤 tabbar 是透明的,不裁的话列表内容会从 tabbar 后面透出来
+    // (iPhone 17e 实机反馈 2026-07-24);不透明皮肤下等价无感
+    view.style.clipPath = `inset(0 0 ${clamped}px 0)`;
+    view.style.webkitClipPath = view.style.clipPath;
     const ready = d >= THRESHOLD;
     indicator.classList.toggle('ready', ready);
     const lbl = indicator.querySelector('.pull-refresh-label');
@@ -18689,10 +18695,12 @@ const _PSF_STANDALONE = window.navigator.standalone === true
   }
   function reset() {
     indicator.style.transition = 'transform .22s ease, opacity .22s ease';
-    view.style.transition = 'transform .22s ease';
+    view.style.transition = 'transform .22s ease, clip-path .22s ease';
     indicator.style.transform = '';
     indicator.style.opacity = '';
     view.style.transform = '';
+    view.style.clipPath = '';
+    view.style.webkitClipPath = '';
     setTimeout(() => {
       indicator.style.transition = '';
       view.style.transition = '';
@@ -18762,6 +18770,8 @@ const _PSF_STANDALONE = window.navigator.standalone === true
       indicator.style.opacity = '1';
       // refreshing 状态下让 view 留在 indicator 下方一段距离,跟手指松开后视觉连贯
       view.style.transform = 'translateY(70px)';
+      view.style.clipPath = 'inset(0 0 70px 0)';
+      view.style.webkitClipPath = view.style.clipPath;
       const lbl = indicator.querySelector('.pull-refresh-label');
       if (lbl) lbl.textContent = '正在同步…';
       let result = 'error';

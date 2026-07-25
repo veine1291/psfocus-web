@@ -258,7 +258,12 @@ input:focus, textarea:focus { border-color: var(--accent); }
 
 /* 同步状态条 — 顶栏与 view 之间的细条 */
 .sync-bar {
-  flex: 0 0 auto;
+  /* fixed 悬浮在顶栏下,不参与 flex 布局 — 原来是 #app 的 flex 成员且排在 tabbar 之后,
+     同步时一显示就把底栏拱起 22px(iPhone 17e 实机反馈,Kayu 2026-07-25) */
+  position: fixed;
+  top: calc(var(--safe-top) + var(--topbar-h));
+  left: 0; right: 0;
+  z-index: 9;
   height: 22px;
   display: flex; align-items: center; gap: 6px;
   padding: 0 14px;
@@ -268,6 +273,48 @@ input:focus, textarea:focus { border-color: var(--accent); }
   border-bottom: 1px solid var(--border-soft);
 }
 .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-mute); }
+
+/* ===== 列表卡片里的子任务区(Kayu 2026-07-25)===== */
+.card-subs-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.card-subs-toggle .chev {
+  width: 0; height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform .15s ease;
+}
+.card-subs-toggle .chev.open { transform: rotate(90deg); }
+.card-subs { margin-top: 2px; }
+.card-sub {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 0 7px 1px;
+}
+.card-sub + .card-sub { border-top: 1px solid var(--border-soft); }
+.card-sub-check {
+  flex: 0 0 auto;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-mute);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; line-height: 1;
+  color: transparent;
+}
+.card-sub-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+.card-sub-title {
+  font-size: 14px;
+  color: var(--text-strong);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.card-sub-title.done { color: var(--text-mute); text-decoration: line-through; }
 .sync-bar.is-syncing .sync-dot { background: var(--info); animation: pulse 1.4s ease-in-out infinite; }
 .sync-bar.is-error .sync-dot { background: var(--danger); }
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }

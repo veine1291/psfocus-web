@@ -411,6 +411,8 @@ function loadUI() {
     calSideExpanded: new Set(saved.calSideExpanded || []),
     // 新建任务的清单记忆:非清单上下文(日历滑动新建等)默认沿用上次选的(Kayu 2026-07-24)
     lastCreateProjectId: saved.lastCreateProjectId || null,
+    // 任务列表里展开了子任务区的任务 id(默认折叠,Kayu 2026-07-25)
+    expandedSubtasks: new Set(saved.expandedSubtasks || []),
   };
 }
 function saveUI() {
@@ -423,6 +425,7 @@ function saveUI() {
     calSideOpen: !!ui.calSideOpen,
     calSideExpanded: Array.from(ui.calSideExpanded || []),
     lastCreateProjectId: ui.lastCreateProjectId || null,
+    expandedSubtasks: Array.from(ui.expandedSubtasks || []),
   };
   try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (_) {}
 }
@@ -624,7 +627,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260725-1200';
+const _PSFOCUS_BUILD = '20260725-1220';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11097,6 +11100,41 @@ function openTimelineNodeEditSheet(projId, nodeId) {
   });
 }
 
+// 子任务完成态(列表侧)— 检查事项 + 直接父级是重复任务 → per-occurrence,否则 done
+// 语义与详情 _subDoneNow 一致(那边是闭包,这里全局复刻)
+function _childDoneNowM(child) {
+  if (child && child.checklistItem === true) {
+    const par = (state.tasks || []).find(x => x.id === child.parentTaskId);
+    if (par && _isRecurringTaskM(par)) {
+      const occ = _currentOccurrenceForTaskM(par);
+      if (occ == null) return false;
+      const key = _occDayKeyM(occ);
+      const all = par.subtaskCompletions || {};
+      const m = all[key] || all[occ] || {};
+      return !!m[child.id];
+    }
+  }
+  return !!(child && child.done);
+}
+// 列表里勾子任务 — 与详情 toggle-sub 的 source==='task' 分支同语义
+function toggleChildTaskDone(sid) {
+  const child = state.tasks.find(x => x.id === sid);
+  if (!child) return;
+  const par = state.tasks.find(x => x.id === child.parentTaskId);
+  if (child.checklistItem === true && par && _isRecurringTaskM(par)) {
+    const occ = _currentOccurrenceForTaskM(par);
+    if (occ != null) {
+      _toggleSubtaskForM(child, par, occ);
+      pushState(); renderAll();
+      return;
+    }
+  }
+  child.done = !child.done;
+  child.doneAt = child.done ? Date.now() : null;
+  child.updatedAt = Date.now();
+  if (child.done) _playCompletionSoundM();
+  pushState(); renderAll();
+}
 function taskCardHtml(t) {
   const proj = projectOf(t);
   const projColor = proj?.color || '';
@@ -11104,6 +11142,35 @@ function taskCardHtml(t) {
   const tCls = timeStateClass(t);
   const tags = (t.tags || []).slice(0, 3);
   const animCls = _animateDoneIds.has(t.id) ? ' just-done-anim' : '';
+  // 子任务区(Kayu 2026-07-25):桌面模型子任务(parentTaskId)+ 老 mobile t.subtasks,
+  // 默认折叠成摘要行,点开展示;真任务行可点进详情,检查事项走 per-occurrence
+  const kids = (state.tasks || [])
+    .filter(x => x.parentTaskId === t.id)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+  const legacySubs = Array.isArray(t.subtasks) ? t.subtasks : [];
+  const subTotal = kids.length + legacySubs.length;
+  let subsHtml = '';
+  if (subTotal) {
+    const kidRows = kids.map(c => {
+      const cd = _childDoneNowM(c);
+      return `<div class="card-sub" data-sub-task-id="${esc(c.id)}">
+        <span class="card-sub-check ${cd ? 'checked' : ''}">${cd ? '✓' : ''}</span>
+        <span class="card-sub-title ${cd ? 'done' : ''}">${esc(c.title || '(无标题)')}</span>
+      </div>`;
+    });
+    const legacyRows = legacySubs.map(s => `<div class="card-sub" data-sub-legacy-id="${esc(s.id)}">
+        <span class="card-sub-check ${s.done ? 'checked' : ''}">${s.done ? '✓' : ''}</span>
+        <span class="card-sub-title ${s.done ? 'done' : ''}">${esc(s.title || '')}</span>
+      </div>`);
+    const doneCount = kids.filter(c => _childDoneNowM(c)).length + legacySubs.filter(s => s.done).length;
+    const expanded = ui.expandedSubtasks.has(t.id);
+    subsHtml = `
+      <div class="card-subs-toggle" data-action="card-subs-toggle">
+        <span class="chev ${expanded ? 'open' : ''}"></span>
+        <span>${doneCount}/${subTotal} 子任务</span>
+      </div>
+      ${expanded ? `<div class="card-subs">${kidRows.join('')}${legacyRows.join('')}</div>` : ''}`;
+  }
   return `
     <div class="card ${t.done ? 'completed' : ''}${animCls}" data-task-id="${esc(t.id)}">
       <div class="card-checkbox ${t.done ? 'checked' : ''}"><span class="ico-check"></span></div>
@@ -11116,6 +11183,7 @@ function taskCardHtml(t) {
           ${(timeStr && tags.length) ? `<span class="dot">·</span>` : ''}
           ${tags.map(tg => `<span class="tag-chip">${esc(tg)}</span>`).join('')}
         </div>` : ''}
+        ${subsHtml}
       </div>
     </div>`;
 }
@@ -11171,6 +11239,37 @@ function bindTaskCards(view) {
       toggleTaskDone(id);
     });
     card.addEventListener('click', () => openTaskDetail(id, { mode: 'p1' }));
+    // 子任务区:摘要行展开/折叠;真任务行勾选/点进详情;legacy 行只能勾选
+    const subsToggle = card.querySelector('[data-action="card-subs-toggle"]');
+    if (subsToggle) subsToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (ui.expandedSubtasks.has(id)) ui.expandedSubtasks.delete(id);
+      else ui.expandedSubtasks.add(id);
+      saveUI(); renderAll();
+    });
+    card.querySelectorAll('.card-sub[data-sub-task-id]').forEach(row => {
+      const sid = row.dataset.subTaskId;
+      row.querySelector('.card-sub-check').addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleChildTaskDone(sid);
+      });
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openTaskDetail(sid, { mode: 'p1' });
+      });
+    });
+    card.querySelectorAll('.card-sub[data-sub-legacy-id]').forEach(row => {
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const t = state.tasks.find(x => x.id === id);
+        const s = t && (t.subtasks || []).find(x => x.id === row.dataset.subLegacyId);
+        if (!s) return;
+        s.done = !s.done;
+        s.doneAt = s.done ? Date.now() : null;
+        if (s.done) _playCompletionSoundM();
+        pushState(); renderAll();
+      });
+    });
   });
   view.querySelectorAll('.card[data-event-id]').forEach(card => {
     card.addEventListener('click', () => openEventDetail(card.dataset.eventId));
@@ -17800,8 +17899,11 @@ function openCreateTaskSheet(opts) {
   // 默认清单:清单上下文优先;否则沿用上次创建任务时选的(日历滑动新建等场景,Kayu 2026-07-24)
   const _lastPid = ui.lastCreateProjectId;
   const _lastPidValid = _lastPid && (state.projects || []).some(p => p.id === _lastPid && !p.archived);   // 归档清单不沿用
+  // 上下文优先仅限「任务 tab 里正开着某清单」;从日历等其它 tab 进来时,
+  // ui.selectedKind 残留的清单不算上下文,一律沿用上次选择(Kayu 2026-07-25 反馈)
+  const _inListContext = ui.tab === 'tasks' && cl.kind === 'project';
   let pickedProjectId = _r ? _r.pickedProjectId
-    : (cl.kind === 'project' ? cl.project?.id : (_lastPidValid ? _lastPid : null));
+    : (_inListContext ? cl.project?.id : (_lastPidValid ? _lastPid : null));
 
   // 滴答清单风:新建任务默认建立在今天 (allDay) — 用户不点日期 pill 也有一个默认值。
   // opts.startTs/startDay (从日历视图拖拽进来) 仍然优先, _restore 用回存的 sched

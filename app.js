@@ -630,7 +630,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260725-1530';
+const _PSFOCUS_BUILD = '20260725-1545';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1928,6 +1928,10 @@ function renderAll() {
 function renderTabBar() {
   const bar = document.querySelector('.tabbar');
   if (!bar) return;
+  // 只有 tab 集合变化才重建 DOM — 每次重建会掐掉 active 高亮的 CSS 过渡动画(Kayu 2026-07-25)
+  const _sig = getVisibleMobileTabs().join(',');
+  if (bar.dataset.tabsSig === _sig) return;
+  bar.dataset.tabsSig = _sig;
   bar.innerHTML = getVisibleMobileTabs().map(id => {
     const t = TAB_DEFS[id];
     return `<button class="tab" data-tab="${id}">
@@ -1968,6 +1972,8 @@ function renderTopbar() {
     leftBtn.innerHTML = `<span class="ico-list"></span>`;
     leftBtn.setAttribute('aria-label', '清单');
     leftBtn.classList.remove('hidden');
+    // 右上按钮图标要显式重置 — 从摘要(搜索icon)切回来会残留 🔍
+    $('topbar-right-btn').innerHTML = `<span class="ico-more"></span>`;
     $('topbar-right-btn').classList.remove('hidden');
   } else if (ui.tab === 'calendar') {
     const c = new Date(ui.calCursor);

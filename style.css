@@ -293,15 +293,15 @@ input:focus, textarea:focus { border-color: var(--accent); }
   to   { opacity: 1; transform: none; }
 }
 @keyframes psTabIn {
-  from { opacity: 0.3; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: none; }
 }
 .sheet:not(.hidden) .sheet-body { animation: psSheetUp .3s cubic-bezier(.32,.72,.33,1); }
 .sheet:not(.hidden) .sheet-mask { animation: psFadeIn .22s ease; }
 .popover:not(.hidden) .popover-body { animation: psPopIn .16s ease; }
 .drawer:not(.hidden) .drawer-panel { animation: psFadeIn .18s ease; }
-.view.tab-anim { animation: psTabIn .18s ease; }
-.tab { transition: background .18s ease, color .18s ease, transform .12s ease; }
+.view.tab-anim { animation: psTabIn .26s cubic-bezier(.2, .7, .3, 1); }
+.tab { transition: background .22s cubic-bezier(.2, .7, .3, 1), color .22s ease, transform .12s ease; }
 .tab:active { transform: scale(0.9); }
 .fab { transition: transform .15s ease, box-shadow .15s ease; }
 .fab:active { transform: scale(0.92); }
@@ -331,21 +331,21 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .card { position: relative; }
 .card-expander {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px;
-  color: var(--text-mute);
+  width: 34px; height: 34px;
+  color: var(--text-faint);   /* 滴答同款浅灰 */
   flex: 0 0 auto;
 }
 .card-expander::before {
   /* 线条 chevron(滴答式),不用实心三角 */
   content: '';
-  width: 9px; height: 9px;
-  border-right: 1.6px solid currentColor;
-  border-bottom: 1.6px solid currentColor;
-  border-radius: 1px;
+  width: 11px; height: 11px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  border-radius: 1.5px;
   transition: transform .18s ease;
   transform: rotate(-45deg) translate(-1px, 1px);   /* 收起 = › */
 }
-.card-expander.open::before { transform: rotate(45deg) translate(-2px, -2px); }  /* 展开 = ˅ */
+.card-expander.open::before { transform: rotate(45deg) translate(-2px, -3px); }  /* 展开 = ˅ */
 .card > .card-expander { position: absolute; right: 6px; top: 10px; }
 .card-subs { margin-top: 6px; }
 .card-sub {

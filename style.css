@@ -258,19 +258,24 @@ input:focus, textarea:focus { border-color: var(--accent); }
 
 /* 同步状态条 — 顶栏与 view 之间的细条 */
 .sync-bar {
-  /* fixed 悬浮在顶栏下,不参与 flex 布局 — 原来是 #app 的 flex 成员且排在 tabbar 之后,
-     同步时一显示就把底栏拱起 22px(iPhone 17e 实机反馈,Kayu 2026-07-25) */
+  /* 居中悬浮小胶囊(2026-07-25 三修:通栏半透明条会和大标题/内容穿插在一起) */
   position: fixed;
-  top: calc(var(--safe-top) + var(--topbar-h));
-  left: 0; right: 0;
+  top: calc(var(--safe-top) + var(--topbar-h) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 9;
-  height: 22px;
+  height: 28px;
   display: flex; align-items: center; gap: 6px;
   padding: 0 14px;
   font-size: 11px;
   color: var(--text-dim);
-  background: var(--bg-section);
-  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10);
+  max-width: 82vw;
+  white-space: nowrap; overflow: hidden;
+  animation: psFadeIn .18s ease;
 }
 .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-mute); }
 
@@ -369,7 +374,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
   font-size: 16px;
   color: var(--text-strong);
   line-height: 1.3;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  word-wrap: break-word;   /* 自动换行,不再截断(Kayu 2026-07-25 反馈) */
 }
 .card-sub-title.done { color: var(--text-mute); text-decoration: line-through; }
 .card-sub-meta { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
@@ -7727,8 +7732,10 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   border-color: var(--glass-border);
 }
 .skin-glass .sync-bar {
-  background: transparent;
-  backdrop-filter: none; -webkit-backdrop-filter: none;
+  background: var(--glass-tint-strong);
+  backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  border-color: var(--glass-border);
 }
 /* —— 底部 sheet —— */
 .skin-glass .sheet-body {

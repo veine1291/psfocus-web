@@ -413,6 +413,8 @@ function loadUI() {
     lastCreateProjectId: saved.lastCreateProjectId || null,
     // 任务列表里展开了子任务区的任务 id(默认折叠,Kayu 2026-07-25)
     expandedSubtasks: new Set(saved.expandedSubtasks || []),
+    // 非项目列表的「隐藏已完成」开关(项目清单有各自的 p.hideCompleted)
+    hideCompletedSmart: !!saved.hideCompletedSmart,
   };
 }
 function saveUI() {
@@ -426,6 +428,7 @@ function saveUI() {
     calSideExpanded: Array.from(ui.calSideExpanded || []),
     lastCreateProjectId: ui.lastCreateProjectId || null,
     expandedSubtasks: Array.from(ui.expandedSubtasks || []),
+    hideCompletedSmart: !!ui.hideCompletedSmart,
   };
   try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (_) {}
 }
@@ -627,7 +630,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260725-1500';
+const _PSFOCUS_BUILD = '20260725-1520';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -8353,7 +8356,7 @@ function renderListView(view, cl) {
   const project = cl.project;
   // 项目视图走专门的渲染器(带累计专注 + 可折叠区 + 详情)
   if (project) return renderProjectView(view, cl);
-  const hideCompleted = false;
+  const hideCompleted = !!ui.hideCompletedSmart;
   let tasks = cl.tasks.slice();
   tasks.sort((a, b) => {
     if ((a.done?1:0) !== (b.done?1:0)) return (a.done?1:0) - (b.done?1:0);
@@ -13145,6 +13148,14 @@ function openEditTagSheet(tagName) {
 function openListMoreMenu() {
   const cl = getCurrentList();
   const items = [];
+  // 隐藏已完成 — 项目清单用 p.hideCompleted(云同步),其它列表(智能清单等)用
+  // ui.hideCompletedSmart(本机偏好,Kayu 2026-07-25 反馈:主界面要跟随此开关)
+  if (cl.kind !== 'project') {
+    items.push({ toggle: true, label: '隐藏已完成', icon: 'ico-eye',
+      stateText: ui.hideCompletedSmart ? '已开' : '',
+      action: () => { ui.hideCompletedSmart = !ui.hideCompletedSmart; saveUI(); closePopover(); renderAll(); } });
+    items.push({ divider: true });
+  }
   if (cl.kind === 'smart-list' && cl.smartList) {
     // 智能清单 ⋯ 菜单 — 对齐桌面端与普通清单的「编辑 / 删除」结构
     const sl = cl.smartList;

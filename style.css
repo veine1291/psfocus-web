@@ -274,31 +274,36 @@ input:focus, textarea:focus { border-color: var(--accent); }
 }
 .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-mute); }
 
-/* ===== 列表卡片里的子任务区(Kayu 2026-07-25)===== */
-.card-subs-toggle {
-  display: inline-flex; align-items: center; gap: 5px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--text-dim);
+/* ===== 列表卡片里的子任务树(滴答式,Kayu 2026-07-25)===== */
+.card { position: relative; }
+.card-expander {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  color: var(--text-mute);
+  flex: 0 0 auto;
 }
-.card-subs-toggle .chev {
+.card-expander::before {
+  content: '';
   width: 0; height: 0;
-  border-left: 5px solid currentColor;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
+  border-top: 6px solid currentColor;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
   transition: transform .15s ease;
+  transform: rotate(-90deg);           /* 收起 = 指右 */
 }
-.card-subs-toggle .chev.open { transform: rotate(90deg); }
-.card-subs { margin-top: 2px; }
+.card-expander.open::before { transform: rotate(0deg); }  /* 展开 = 指下 */
+.card > .card-expander { position: absolute; right: 6px; top: 10px; }
+.card-subs { margin-top: 4px; }
 .card-sub {
   display: flex; align-items: center; gap: 9px;
   padding: 7px 0 7px 1px;
 }
 .card-sub + .card-sub { border-top: 1px solid var(--border-soft); }
+.card-sub .card-expander { margin-left: auto; width: 26px; height: 26px; }
 .card-sub-check {
   flex: 0 0 auto;
   width: 18px; height: 18px;
-  border-radius: 50%;
+  border-radius: 6px;
   border: 1.5px solid var(--text-mute);
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 11px; line-height: 1;
@@ -309,12 +314,15 @@ input:focus, textarea:focus { border-color: var(--accent); }
   border-color: var(--accent);
   color: var(--text-on-accent);
 }
+.card-sub-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .card-sub-title {
   font-size: 14px;
   color: var(--text-strong);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .card-sub-title.done { color: var(--text-mute); text-decoration: line-through; }
+.card-sub-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
+.card-subcount { font-size: 11px; color: var(--text-dim); }
 .sync-bar.is-syncing .sync-dot { background: var(--info); animation: pulse 1.4s ease-in-out infinite; }
 .sync-bar.is-error .sync-dot { background: var(--danger); }
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
@@ -325,7 +333,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
   overflow-y: auto;
   overflow-x: hidden;            /* 月视图项目 ribbon 可能因负 margin 略溢出,这里兜底防止横向滚动 */
   -webkit-overflow-scrolling: touch;
-  padding: 0 0 12px 0;
+  /* 底部留出悬浮 touchbar 的高度,最后一条内容不会永远压在胶囊下面 */
+  padding: 0 0 calc(var(--tabbar-h) + var(--safe-bottom) + 26px) 0;
   position: relative;
   overscroll-behavior-y: contain; /* 阻止 native pull-to-reload,让我们的下拉刷新接管 */
 }
@@ -386,27 +395,35 @@ html, body { overscroll-behavior-y: contain; }
 }
 .fab:active { transform: scale(0.96); }
 
+/* 悬浮胶囊 touchbar(滴答清单式,Kayu 2026-07-25)— 不占布局空间,内容从底下穿过 */
 .tabbar {
-  flex: 0 0 auto;
-  height: calc(var(--tabbar-h) + var(--safe-bottom));
-  padding: 0 0 var(--safe-bottom) 0;
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--safe-bottom) + 12px);
   display: flex;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border-soft);
-  position: relative;   /* 同 topbar:确保盖住下拉时下移的 #view 内容 */
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  background: color-mix(in srgb, var(--bg-panel) 84%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
   z-index: 10;
 }
 .tab {
-  flex: 1 1 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 3px;
+  flex: 0 0 auto;
+  width: 46px; height: 46px;
+  display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-mute);
-  padding: 8px 4px 6px;
+  border-radius: 999px;
+  padding: 0;
 }
 .tab .tab-icon { width: 22px; height: 22px; font-size: 22px; }
-.tab .tab-label { font-size: 11px; }
-.tab.active { color: var(--accent); }
-.tab.active .tab-label { font-weight: 500; }
+.tab .tab-label { display: none; }   /* 胶囊栏只放图标 */
+.tab.active { color: var(--bg-panel); background: var(--text-strong); }
 
 /* =========================================================
    通用组件
@@ -460,7 +477,7 @@ html, body { overscroll-behavior-y: contain; }
 .card-checkbox {
   flex: 0 0 auto;
   width: 22px; height: 22px;
-  border-radius: 50%;
+  border-radius: 7px;   /* 方圆勾选框,对齐滴答清单 */
   border: 1.5px solid var(--text-mute);
   display: inline-flex; align-items: center; justify-content: center;
   margin-top: 1px;
@@ -7639,9 +7656,10 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   border-bottom-color: var(--glass-border);
 }
 .skin-glass .tabbar {
-  background: transparent;
-  backdrop-filter: none; -webkit-backdrop-filter: none;
-  border-top-color: var(--glass-border);
+  background: var(--glass-tint-strong);
+  backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-px, 24px)) saturate(180%);
+  border-color: var(--glass-border);
 }
 .skin-glass .sync-bar {
   background: transparent;

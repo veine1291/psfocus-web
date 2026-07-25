@@ -627,7 +627,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260725-1220';
+const _PSFOCUS_BUILD = '20260725-1335';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11142,49 +11142,64 @@ function taskCardHtml(t) {
   const tCls = timeStateClass(t);
   const tags = (t.tags || []).slice(0, 3);
   const animCls = _animateDoneIds.has(t.id) ? ' just-done-anim' : '';
-  // 子任务区(Kayu 2026-07-25):桌面模型子任务(parentTaskId)+ 老 mobile t.subtasks,
-  // 默认折叠成摘要行,点开展示;真任务行可点进详情,检查事项走 per-occurrence
-  const kids = (state.tasks || [])
-    .filter(x => x.parentTaskId === t.id)
+  // 子任务树(滴答式,Kayu 2026-07-25):多级递归缩进、每级独立折叠箭头、≡ n/m 徽标;
+  // 桌面模型子任务(parentTaskId)可勾选可点进详情,检查事项走 per-occurrence;
+  // 老 mobile t.subtasks 平铺行只能勾选
+  const _kidsOfM = (pid) => (state.tasks || [])
+    .filter(x => x.parentTaskId === pid)
     .sort((a, b) => (a.order || 0) - (b.order || 0));
+  const kids = _kidsOfM(t.id);
   const legacySubs = Array.isArray(t.subtasks) ? t.subtasks : [];
   const subTotal = kids.length + legacySubs.length;
+  const subDone = kids.filter(c => _childDoneNowM(c)).length + legacySubs.filter(s => s.done).length;
+  const expanded = subTotal && ui.expandedSubtasks.has(t.id);
   let subsHtml = '';
-  if (subTotal) {
-    const kidRows = kids.map(c => {
+  if (expanded) {
+    let rows = '';
+    const walk = (c, depth) => {
+      const g = _kidsOfM(c.id);
       const cd = _childDoneNowM(c);
-      return `<div class="card-sub" data-sub-task-id="${esc(c.id)}">
+      const cOpen = ui.expandedSubtasks.has(c.id);
+      const cTime = fmtTaskTime(c);
+      const metaBits = [];
+      if (g.length) metaBits.push(`<span class="card-subcount">≡ ${g.filter(x => _childDoneNowM(x)).length}/${g.length}</span>`);
+      if (cTime) metaBits.push(`<span class="meta-due ${timeStateClass(c)}">${esc(cTime)}</span>`);
+      rows += `<div class="card-sub" data-sub-task-id="${esc(c.id)}"${depth ? ` style="margin-left:${depth * 22}px"` : ''}>
         <span class="card-sub-check ${cd ? 'checked' : ''}">${cd ? '✓' : ''}</span>
-        <span class="card-sub-title ${cd ? 'done' : ''}">${esc(c.title || '(无标题)')}</span>
+        <span class="card-sub-body">
+          <span class="card-sub-title ${cd ? 'done' : ''}">${esc(c.title || '(无标题)')}</span>
+          ${metaBits.length ? `<span class="card-sub-meta">${metaBits.join('')}</span>` : ''}
+        </span>
+        ${g.length ? `<button class="card-expander ${cOpen ? 'open' : ''}" data-expander-id="${esc(c.id)}"></button>` : ''}
+      </div>`;
+      if (g.length && cOpen) g.forEach(k => walk(k, depth + 1));
+    };
+    kids.forEach(k => walk(k, 0));
+    legacySubs.forEach(s => {
+      rows += `<div class="card-sub" data-sub-legacy-id="${esc(s.id)}">
+        <span class="card-sub-check ${s.done ? 'checked' : ''}">${s.done ? '✓' : ''}</span>
+        <span class="card-sub-body"><span class="card-sub-title ${s.done ? 'done' : ''}">${esc(s.title || '')}</span></span>
       </div>`;
     });
-    const legacyRows = legacySubs.map(s => `<div class="card-sub" data-sub-legacy-id="${esc(s.id)}">
-        <span class="card-sub-check ${s.done ? 'checked' : ''}">${s.done ? '✓' : ''}</span>
-        <span class="card-sub-title ${s.done ? 'done' : ''}">${esc(s.title || '')}</span>
-      </div>`);
-    const doneCount = kids.filter(c => _childDoneNowM(c)).length + legacySubs.filter(s => s.done).length;
-    const expanded = ui.expandedSubtasks.has(t.id);
-    subsHtml = `
-      <div class="card-subs-toggle" data-action="card-subs-toggle">
-        <span class="chev ${expanded ? 'open' : ''}"></span>
-        <span>${doneCount}/${subTotal} 子任务</span>
-      </div>
-      ${expanded ? `<div class="card-subs">${kidRows.join('')}${legacyRows.join('')}</div>` : ''}`;
+    subsHtml = `<div class="card-subs">${rows}</div>`;
   }
   return `
     <div class="card ${t.done ? 'completed' : ''}${animCls}" data-task-id="${esc(t.id)}">
       <div class="card-checkbox ${t.done ? 'checked' : ''}"><span class="ico-check"></span></div>
       <div class="card-body">
         <div class="card-title">${esc(t.title || '(无标题)')}</div>
-        ${(timeStr || proj || tags.length) ? `<div class="card-meta">
+        ${(timeStr || proj || tags.length || subTotal) ? `<div class="card-meta">
           ${proj ? `${projColor ? `<span class="proj-color" style="background:${esc(projColor)}"></span>`:''}<span>${esc(proj.name)}</span>` : ''}
           ${(proj && (timeStr || tags.length)) ? `<span class="dot">·</span>` : ''}
           ${timeStr ? `<span class="meta-due ${tCls}">${esc(timeStr)}</span>` : ''}
           ${(timeStr && tags.length) ? `<span class="dot">·</span>` : ''}
           ${tags.map(tg => `<span class="tag-chip">${esc(tg)}</span>`).join('')}
+          ${(subTotal && (proj || timeStr || tags.length)) ? `<span class="dot">·</span>` : ''}
+          ${subTotal ? `<span class="card-subcount">≡ ${subDone}/${subTotal}</span>` : ''}
         </div>` : ''}
         ${subsHtml}
       </div>
+      ${subTotal ? `<button class="card-expander ${expanded ? 'open' : ''}" data-expander-id="${esc(t.id)}"></button>` : ''}
     </div>`;
 }
 
@@ -11239,13 +11254,15 @@ function bindTaskCards(view) {
       toggleTaskDone(id);
     });
     card.addEventListener('click', () => openTaskDetail(id, { mode: 'p1' }));
-    // 子任务区:摘要行展开/折叠;真任务行勾选/点进详情;legacy 行只能勾选
-    const subsToggle = card.querySelector('[data-action="card-subs-toggle"]');
-    if (subsToggle) subsToggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (ui.expandedSubtasks.has(id)) ui.expandedSubtasks.delete(id);
-      else ui.expandedSubtasks.add(id);
-      saveUI(); renderAll();
+    // 子任务树:折叠箭头(卡片级 + 任意子级共用);真任务行勾选/点进详情;legacy 行只能勾选
+    card.querySelectorAll('[data-expander-id]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const eid = btn.dataset.expanderId;
+        if (ui.expandedSubtasks.has(eid)) ui.expandedSubtasks.delete(eid);
+        else ui.expandedSubtasks.add(eid);
+        saveUI(); renderAll();
+      });
     });
     card.querySelectorAll('.card-sub[data-sub-task-id]').forEach(row => {
       const sid = row.dataset.subTaskId;

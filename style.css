@@ -231,7 +231,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
   align-items: center;
   gap: 8px;
   background: var(--bg-page);
-  border-bottom: 1px solid var(--border-soft);
+  /* 滴答式:顶栏无分割线,与页面同色连成一体 */
   /* position:relative 保证 z-index 在所有 WebKit 下生效 — 真机 iOS 26 上
      纯 flex-item z-index 挡不住下拉刷新时被 transform 拽下来的 #view(Kayu 2026-07-24) */
   position: relative;
@@ -273,6 +273,23 @@ input:focus, textarea:focus { border-color: var(--accent); }
   border-bottom: 1px solid var(--border-soft);
 }
 .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-mute); }
+
+/* ===== 滴答式大标题(任务 tab,topbar 只留按钮)+ 全高 tab 的底部空块修正 ===== */
+.view-bigtitle { padding: 4px 18px 10px; }
+.view-bigtitle-text {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--text-strong);
+  line-height: 1.2;
+  display: flex; align-items: center; gap: 8px;
+}
+.view-bigtitle-sub { margin-top: 3px; font-size: 12px; color: var(--text-faint); }
+/* 日历/摘要根容器自己管高度,.view 的胶囊 clearance padding 会在底部剩出一条死区 */
+.view[data-last-tab="calendar"],
+.view[data-last-tab="summary"] { padding-bottom: 0; }
+/* 各自的内部滚动内容补 clearance,最后一条能滚到胶囊上方 */
+.view[data-last-tab="calendar"] .cal-week-body { padding-bottom: calc(var(--safe-bottom) + 84px); }
+.sum-list { padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 20px); }
 
 /* ===== 列表卡片里的子任务树(滴答式,Kayu 2026-07-25)===== */
 .card { position: relative; }
@@ -493,10 +510,10 @@ html, body { overscroll-behavior-y: contain; }
 
 .card-body { flex: 1 1 0; min-width: 0; }
 .card-title {
-  font-size: 15px;
+  font-size: 17px;             /* 滴答级字号(Kayu 2026-07-25) */
   color: var(--text);
   word-wrap: break-word;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 .card-meta {
   display: flex; flex-wrap: wrap; align-items: center;
@@ -2764,7 +2781,8 @@ body.sum-editor-open { overflow: hidden; }
   --cal-hours: 24;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--topbar-h) - var(--tabbar-h) - var(--safe-top) - var(--safe-bottom) - 22px);
+  /* touchbar 悬浮后不再预留底栏高度,时间轴直达屏底,内容从胶囊后穿过(Kayu 2026-07-25) */
+  height: calc(100vh - var(--topbar-h) - var(--safe-top) - 10px);
   overflow: hidden;
   background: var(--bg-panel);  /* 跟桌面 dash-content 同色,比 bg-page 亮 */
 }

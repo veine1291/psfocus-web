@@ -627,7 +627,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260725-1335';
+const _PSFOCUS_BUILD = '20260725-1400';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1959,15 +1959,9 @@ function renderTopbar() {
   // 第二个右上按钮默认隐藏 — 只有项目 tab 用(视图切换)
   $('topbar-right-btn2').classList.add('hidden');
   if (ui.tab === 'tasks') {
-    const cl = getCurrentList();
-    const titleEl = $('topbar-title');
-    const customIco = (cl.project && cl.project.icon)
-      ? renderCustomIconHtml(cl.project.icon, 'topbar-title-ico', cl.project.color || '')
-      : (cl.folder && cl.folder.icon)
-        ? renderCustomIconHtml(cl.folder.icon, 'topbar-title-ico', '')
-        : null;
-    titleEl.innerHTML = (customIco || '') + esc(cl.title);
-    $('topbar-subtitle').textContent = cl.tasks.length ? `${cl.tasks.filter(t=>!t.done).length} 待办 · ${cl.tasks.filter(t=>t.done).length} 已完成` : '';
+    // 滴答式:任务 tab 的标题/计数移入内容区大标题(_insertBigTitleM),topbar 只留两侧按钮
+    $('topbar-title').innerHTML = '';
+    $('topbar-subtitle').textContent = '';
     leftBtn.innerHTML = `<span class="ico-list"></span>`;
     leftBtn.setAttribute('aria-label', '清单');
     leftBtn.classList.remove('hidden');
@@ -2099,6 +2093,23 @@ function renderTopbar() {
     }
   }
 }
+// 滴答式大标题 — 任务 tab 的清单名 + 计数放进内容区顶部(topbar 只留按钮)
+function _insertBigTitleM(view) {
+  if (!view) return;
+  const cl = getCurrentList();
+  const ico = (cl.project && cl.project.icon)
+    ? renderCustomIconHtml(cl.project.icon, 'topbar-title-ico', cl.project.color || '')
+    : (cl.folder && cl.folder.icon)
+      ? renderCustomIconHtml(cl.folder.icon, 'topbar-title-ico', '')
+      : '';
+  const undone = cl.tasks.filter(t => !t.done).length;
+  const done = cl.tasks.length - undone;
+  view.insertAdjacentHTML('afterbegin', `
+    <div class="view-bigtitle">
+      <div class="view-bigtitle-text">${ico || ''}${esc(cl.title)}</div>
+      ${cl.tasks.length ? `<div class="view-bigtitle-sub">${undone} 待办 · ${done} 已完成</div>` : ''}
+    </div>`);
+}
 function renderTab(tab) {
   const view = elView();
   // 切 tab 时清掉 view 上可能残留的 transform / scrollTop(防下拉刷新等手势之后切 tab,影响内部布局)
@@ -2124,7 +2135,7 @@ function renderTab(tab) {
   // 日历任务清单按钮 — 仅日历 tab 显示;切走时关掉抽屉
   if (typeof _ensureCalSideToggleBtn === 'function') _ensureCalSideToggleBtn();
   if (tab !== 'calendar' && ui.calSideOpen) closeCalSideDrawer();
-  if (tab === 'tasks') return renderTasksTab(view);
+  if (tab === 'tasks') { renderTasksTab(view); _insertBigTitleM(view); return; }
   if (tab === 'works') return renderWorksTab(view);
   if (tab === 'calendar') return renderCalendarTab(view);
   if (tab === 'summary') return renderSummaryTab(view);

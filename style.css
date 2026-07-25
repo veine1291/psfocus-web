@@ -2816,8 +2816,9 @@ body.sum-editor-open { overflow: hidden; }
   --cal-hours: 24;
   display: flex;
   flex-direction: column;
-  /* touchbar 悬浮后不再预留底栏高度,时间轴直达屏底,内容从胶囊后穿过(Kayu 2026-07-25) */
-  height: calc(100vh - var(--topbar-h) - var(--safe-top) - 10px);
+  /* 时间轴在胶囊上方截止:底部留一条胶囊高度的灰底背景带(胶囊 56 + 底距 10 + 间隙),
+     格子不被遮挡、留白与灰底融为一体(2026-07-25 反馈第三轮) */
+  height: calc(100vh - var(--topbar-h) - var(--safe-top) - 84px);
   overflow: hidden;
   /* 滴答式分层:时间列/日期条属于灰底背景,只有日内容列是白色面板 */
   background: transparent;

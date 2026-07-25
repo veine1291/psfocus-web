@@ -385,7 +385,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
   overflow-x: hidden;            /* 月视图项目 ribbon 可能因负 margin 略溢出,这里兜底防止横向滚动 */
   -webkit-overflow-scrolling: touch;
   /* 底部留出悬浮 touchbar 的高度,最后一条内容不会永远压在胶囊下面 */
-  padding: 0 0 calc(var(--tabbar-h) + var(--safe-bottom) + 26px) 0;
+  padding: 0 0 calc(var(--tabbar-h) + 30px) 0;
   position: relative;
   overscroll-behavior-y: contain; /* 阻止 native pull-to-reload,让我们的下拉刷新接管 */
 }
@@ -434,7 +434,7 @@ html, body { overscroll-behavior-y: contain; }
 .fab {
   position: fixed;
   right: 16px;
-  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px);
+  bottom: 82px;   /* 胶囊(bottom 10 + 高约 56)上方 16px */
   width: 56px; height: 56px;
   border-radius: var(--radius-pill);
   background: var(--accent);
@@ -451,7 +451,8 @@ html, body { overscroll-behavior-y: contain; }
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--safe-bottom) + 12px);
+  /* 滴答式:胶囊沉到底部安全区(与 Home 指示条区域重合),不占内容视野(2026-07-25 反馈) */
+  bottom: 10px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -2469,7 +2470,7 @@ body.sum-editor-open { overflow: hidden; }
    ========================================================= */
 .toast {
   position: fixed;
-  left: 50%; bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px);
+  left: 50%; bottom: 82px;
   transform: translateX(-50%);
   background: var(--text-strong);
   color: #fff;

@@ -624,7 +624,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260724-1125';
+const _PSFOCUS_BUILD = '20260725-1200';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12356,7 +12356,13 @@ function showSheet(html, onMountOrOpts) {
   if (onMount) onMount(body);
   if (!noSwipeClose) bindSheetSwipeClose(body);
 }
+// 日历拖选留屏占位块(2026-07-25 #2)— sheet 关闭时统一移除
+function _calRemoveDragPlaceholderM() {
+  const el = document.getElementById('cal-drag-placeholder-m');
+  if (el) el.remove();
+}
 function closeSheet() {
+  _calRemoveDragPlaceholderM();
   const body = $('sheet-body');
   body.style.transform = '';
   body.style.transition = '';
@@ -15248,9 +15254,12 @@ function bindCalGridDragCreate(host) {
       }
       return;
     }
-    // passive: true,无法 preventDefault — 接受 native scroll 同时跑(让用户滚 cal 顺畅);overlay 仍跟手画
+    // 长按激活后锁定原生滚动(2026-07-25 #3,滴答式):划范围时页面不再跟着滚;
+    // 长按前的移动仍是普通滚动(上面 MOVE_CANCEL_PX 分支已取消长按)
+    if (e.cancelable) e.preventDefault();
     endMin = pointToMinutes(startCol, t.clientY);
     applyOverlay();
+    _calEdgeAutoScroll(bodyEl, t.clientY);
   }
   function onTouchEnd() {
     clearTimeout(longPressTimer);
@@ -15261,7 +15270,21 @@ function bindCalGridDragCreate(host) {
         // day view 的 col 没 data-day-ms,fallback 用 ui.calCursor 当天
         return startOfDay(new Date(ui.calCursor)).getTime();
       })();
-      clearOverlay();
+      // 划出的范围转成 fixed 占位块留在屏上(2026-07-25 #2,对齐桌面):
+      // 填新建 sheet 时仍能看到安排的时间段;closeSheet 统一移除
+      if (overlay) {
+        const r = overlay.getBoundingClientRect();
+        _calRemoveDragPlaceholderM();
+        document.body.appendChild(overlay);
+        overlay.id = 'cal-drag-placeholder-m';
+        overlay.style.position = 'fixed';
+        overlay.style.left   = r.left + 'px';
+        overlay.style.top    = r.top  + 'px';
+        overlay.style.width  = r.width  + 'px';
+        overlay.style.height = r.height + 'px';
+        overlay.style.zIndex = '40';
+        overlay = null;
+      }
       const sCol = startCol;
       startCol = null; dragging = false;
       const startTs = dayMs + lo * 60000;
@@ -15281,10 +15304,21 @@ function bindCalGridDragCreate(host) {
     _calDragCreating = false;
   }
   host.addEventListener('touchstart', onTouchStart, { passive: true });
-  host.addEventListener('touchmove',  onTouchMove,  { passive: true });
+  // move 必须 non-passive 才能在长按激活后 preventDefault 锁滚(未激活时不 prevent,滚动照常)
+  host.addEventListener('touchmove',  onTouchMove,  { passive: false });
   host.addEventListener('touchend',   onTouchEnd,   { passive: true });
   host.addEventListener('touchcancel',onTouchCancel,{ passive: true });
 }
+
+// 拖拽接近时间轴上下沿 → 自动滚动(滴答式边缘滚屏;创建划选与块拖移共用)
+function _calEdgeAutoScroll(bodyEl, clientY) {
+  if (!bodyEl) return;
+  const r = bodyEl.getBoundingClientRect();
+  const EDGE = 44, STEP = 14;
+  if (clientY < r.top + EDGE) bodyEl.scrollTop -= STEP;
+  else if (clientY > r.bottom - EDGE) bodyEl.scrollTop += STEP;
+}
+
 
 // 双指捏合缩放时间轴(mobile-only)— 直接改 host 上的 --cal-hour-px,
 // 块/线/标签都用此变量算位置,自动 reflow,无需重渲染
@@ -15666,9 +15700,16 @@ function bindCalBlockEdit(view) {
         e.stopPropagation();
         return;
       }
-      // 未编辑:启动长按 timer
+      // 未编辑:启动长按 timer。长按触发后【同一根手指】直接进入拖动(滴答式,2026-07-25 #3)——
+      // 不用抬手再按第二次;dragMode 就位后 touchmove 会 preventDefault 锁页面滚动
       if (pressTimer) clearTimeout(pressTimer);
-      pressTimer = setTimeout(() => { pressTimer = null; enterEditMode(); }, LONG_PRESS_MS);
+      pressTimer = setTimeout(() => {
+        pressTimer = null;
+        enterEditMode();
+        dragMode = 'move';
+        const cur = readVars();
+        startTop = cur.top; startH = cur.h; startY = pressY;
+      }, LONG_PRESS_MS);
     }, { passive: true });
 
     el.addEventListener('touchmove', (e) => {
@@ -15679,7 +15720,9 @@ function bindCalBlockEdit(view) {
         touchMoved = true;
       }
       if (_calBlockEditing && _calBlockEditing.el === el && dragMode) {
-        // passive: true 时无法 preventDefault — 接受 native scroll 同时跑
+        // 编辑态拖动/拉伸中锁定页面滚动(2026-07-25 #3,滴答式;listener 已改 non-passive)——
+        // 之前 passive:true 没法 preventDefault,拖块时日历跟着滚 = 用户报的「误触划动」
+        if (e.cancelable) e.preventDefault();
         const dy = t.clientY - startY;
         const dMin = (dy / HOUR_PX()) * 60;
         if (dragMode === 'move') {
@@ -15718,7 +15761,7 @@ function bindCalBlockEdit(view) {
         }
         autoScroll(t.clientY);
       }
-    }, { passive: true });
+    }, { passive: false });   // non-passive:编辑态拖动才能 preventDefault 锁滚(未编辑时不 prevent,滚动照常)
 
     el.addEventListener('touchend', () => {
       // 还没进入 edit 模式 — 检查 fallback:duration 够长但 timer 还没跑就抬手 → 视为长按
@@ -17756,7 +17799,7 @@ function openCreateTaskSheet(opts) {
   const cl = getCurrentList();
   // 默认清单:清单上下文优先;否则沿用上次创建任务时选的(日历滑动新建等场景,Kayu 2026-07-24)
   const _lastPid = ui.lastCreateProjectId;
-  const _lastPidValid = _lastPid && (state.projects || []).some(p => p.id === _lastPid);
+  const _lastPidValid = _lastPid && (state.projects || []).some(p => p.id === _lastPid && !p.archived);   // 归档清单不沿用
   let pickedProjectId = _r ? _r.pickedProjectId
     : (cl.kind === 'project' ? cl.project?.id : (_lastPidValid ? _lastPid : null));
 
@@ -17852,7 +17895,7 @@ function openCreateTaskSheet(opts) {
   showSheet(`
     <div class="sheet-handle"></div>
     <div class="qe-content">
-      <input type="text" class="qe-title" id="qe-title" placeholder="准备做什么?">
+      <textarea rows="1" class="qe-title" id="qe-title" placeholder="准备做什么?"></textarea>
       <textarea class="qe-note" id="qe-note" rows="2" placeholder="描述"></textarea>
       <div id="qe-img-list" class="qe-img-list"></div>
       <div id="qe-sub-wrap" class="qe-sub-wrap"></div>
@@ -18027,6 +18070,8 @@ function openCreateTaskSheet(opts) {
       ev.stopPropagation();
       openProjectPicker(pickedProjectId, ev.currentTarget, (newPid) => {
         pickedProjectId = newPid;
+        ui.lastCreateProjectId = newPid || null;   // 选择即记 → 下次日历新建默认它
+        saveUI();
         _updateFolderPill();
       });
     };
@@ -18145,10 +18190,19 @@ function openCreateTaskSheet(opts) {
       renderAll();
     };
     body.querySelector('[data-action="save"]').onclick = () => save();
-    // Ctrl/Cmd+Enter 提交 (手机外接键盘场景)。回车单独按则允许换行 — title 是 input 没换行问题
+    // 标题已是 textarea(2026-07-25 自动换行):Enter=保存(标题是单逻辑行,视觉换行交给自动 wrap),
+    // Shift+Enter 留给手动换行;IME 组词中的 Enter 不劫持
     titleEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); save(); }
     });
+    // 单行起步自适应长高(组词中不动布局 — IME 铁律⑤)
+    const _qeTitleAutosize = () => {
+      titleEl.style.height = 'auto';
+      titleEl.style.height = Math.min(titleEl.scrollHeight, 120) + 'px';
+    };
+    titleEl.addEventListener('input', (e) => { if (!e.isComposing) _qeTitleAutosize(); });
+    titleEl.addEventListener('compositionend', _qeTitleAutosize);
+    _qeTitleAutosize();
   });
 }
 

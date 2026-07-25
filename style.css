@@ -1267,6 +1267,13 @@ body.sum-editor-open { overflow: hidden; }
   font-family: inherit;
   -webkit-appearance: none;
   appearance: none;
+  /* textarea 化(2026-07-25 标题自动换行):单行起步,超一行自动长高 */
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+  min-height: 1.4em;
+  display: block;
+  word-break: break-word;
 }
 .qe-title::placeholder { color: var(--text-faint); font-weight: 400; }
 .qe-note {

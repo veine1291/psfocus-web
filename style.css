@@ -318,8 +318,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 /* 日历/摘要根容器自己管高度,.view 的胶囊 clearance padding 会在底部剩出一条死区 */
 .view[data-last-tab="calendar"],
 .view[data-last-tab="summary"] { padding-bottom: 0; }
-/* 各自的内部滚动内容补 clearance,最后一条能滚到胶囊上方 */
-.view[data-last-tab="calendar"] .cal-week-body { padding-bottom: calc(var(--safe-bottom) + 84px); }
+/* 摘要内部滚动内容补 clearance,最后一条能滚到胶囊上方;
+   日历不留 — 滴答式:时间网格直接从胶囊后穿过,留了反而是一条灰带(2026-07-25 反馈) */
 .sum-list { padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 20px); }
 
 /* ===== 列表卡片里的子任务树(滴答式,Kayu 2026-07-25)===== */

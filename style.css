@@ -310,6 +310,21 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .btn-primary, .topbar-btn { transition: transform .12s ease, background .15s ease; }
 .topbar-btn:active { transform: scale(0.92); }
 
+/* 详情抽屉:更多按钮固定到右上角(Kayu 2026-07-26) */
+.td-top .td-more { margin-left: auto; }
+
+/* 「已完成」分区折叠头 */
+.done-sec-toggle { display: flex; align-items: center; justify-content: space-between; }
+
+/* 长按拖拽排序 */
+.card.drag-lift {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  opacity: 0.96;
+  z-index: 6;
+  transition: none;
+}
+.card.drag-onto { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 /* ===== 滴答式大标题(任务 tab,topbar 只留按钮)+ 全高 tab 的底部空块修正 ===== */
 .view-bigtitle { padding: 4px 18px 10px; }
 .view-bigtitle-text {

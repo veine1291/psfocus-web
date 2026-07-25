@@ -415,6 +415,8 @@ function loadUI() {
     expandedSubtasks: new Set(saved.expandedSubtasks || []),
     // 非项目列表的「隐藏已完成」开关(项目清单有各自的 p.hideCompleted)
     hideCompletedSmart: !!saved.hideCompletedSmart,
+    // 「已完成」分区展开态(默认折叠,Kayu 2026-07-26)
+    expandedDoneSections: new Set(saved.expandedDoneSections || []),
   };
 }
 function saveUI() {
@@ -429,6 +431,7 @@ function saveUI() {
     lastCreateProjectId: ui.lastCreateProjectId || null,
     expandedSubtasks: Array.from(ui.expandedSubtasks || []),
     hideCompletedSmart: !!ui.hideCompletedSmart,
+    expandedDoneSections: Array.from(ui.expandedDoneSections || []),
   };
   try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (_) {}
 }
@@ -630,7 +633,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260725-1545';
+const _PSFOCUS_BUILD = '20260726-0930';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -8391,8 +8394,7 @@ function renderListView(view, cl) {
       html += `<div class="card-list">${slProjects.map(projectCardHtml).join('')}</div>`;
     }
     if (done.length && !hideCompleted) {
-      html += `<div class="section-title">已完成 (${done.length})</div>`;
-      html += `<div class="card-list">${done.map(taskCardHtml).join('')}</div>`;
+      html += _doneSectionHtml(done, 'done:' + (ui.selectedKind || '') + ':' + (ui.selectedId || ''));
     }
   }
   view.innerHTML = html;
@@ -8465,7 +8467,8 @@ function renderProjectView(view, cl) {
   const p = cl.project;
   const pid = p.id;
   const isProj = (p.kind || 'project') === 'project';   // false = 任务清单
-  const hideCompleted = !!p.hideCompleted;
+  // 全局「隐藏已完成」开关同样约束项目清单(Kayu 2026-07-26)
+  const hideCompleted = !!p.hideCompleted || !!ui.hideCompletedSmart;
 
   let tasks = cl.tasks.slice();
   tasks.sort((a, b) => {
@@ -8475,7 +8478,15 @@ function renderProjectView(view, cl) {
     if (ta !== tb) return ta - tb;
     return (b.createdAt || 0) - (a.createdAt || 0);
   });
-  const undone = tasks.filter(t => !t.done);
+  // 未完成区:手动 order 优先(长按拖拽排序写这里),order 相同回落时间序
+  const undone = tasks.filter(t => !t.done).sort((a, b) => {
+    const oa = a.order || 100, ob = b.order || 100;
+    if (oa !== ob) return oa - ob;
+    const ta = a.dueAt || a.start || Infinity;
+    const tb = b.dueAt || b.start || Infinity;
+    if (ta !== tb) return ta - tb;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
   const done = tasks.filter(t => t.done);
 
   // 任务区 body
@@ -8485,8 +8496,7 @@ function renderProjectView(view, cl) {
   } else {
     if (undone.length) taskBody += `<div class="card-list">${undone.map(taskCardHtml).join('')}</div>`;
     if (done.length && !hideCompleted) {
-      taskBody += `<div class="section-title">已完成 (${done.length})</div>`;
-      taskBody += `<div class="card-list">${done.map(taskCardHtml).join('')}</div>`;
+      taskBody += _doneSectionHtml(done, 'done:project:' + pid);
     }
   }
 
@@ -11160,6 +11170,16 @@ function toggleChildTaskDone(sid) {
   if (child.done) _playCompletionSoundM();
   pushState(); renderAll();
 }
+// 「已完成」分区 — 可折叠(默认折叠,滴答式;Kayu 2026-07-26)
+function _doneSectionHtml(done, key) {
+  const open = ui.expandedDoneSections.has(key);
+  let h = `<div class="section-title done-sec-toggle" data-done-key="${esc(key)}">
+    <span>已完成 (${done.length})</span>
+    <button class="card-expander ${open ? 'open' : ''}"></button>
+  </div>`;
+  if (open) h += `<div class="card-list">${done.map(taskCardHtml).join('')}</div>`;
+  return h;
+}
 function taskCardHtml(t) {
   const proj = projectOf(t);
   const projColor = proj?.color || '';
@@ -11180,8 +11200,10 @@ function taskCardHtml(t) {
   const expanded = subTotal && ui.expandedSubtasks.has(t.id);
   let subsHtml = '';
   if (expanded) {
+    const _hideDone = !!ui.hideCompletedSmart;
     let rows = '';
     const walk = (c, depth) => {
+      if (_hideDone && _childDoneNowM(c)) return;   // 隐藏已完成:整棵剪掉
       const g = _kidsOfM(c.id);
       const cd = _childDoneNowM(c);
       const cOpen = ui.expandedSubtasks.has(c.id);
@@ -11201,6 +11223,7 @@ function taskCardHtml(t) {
     };
     kids.forEach(k => walk(k, 0));
     legacySubs.forEach(s => {
+      if (_hideDone && s.done) return;
       rows += `<div class="card-sub" data-sub-legacy-id="${esc(s.id)}">
         <span class="card-sub-check ${s.done ? 'checked' : ''}">${s.done ? '✓' : ''}</span>
         <span class="card-sub-body"><span class="card-sub-title ${s.done ? 'done' : ''}">${esc(s.title || '')}</span></span>
@@ -11322,6 +11345,114 @@ function bindTaskCards(view) {
       saveUI(); renderAll();
     });
   });
+  // 「已完成」分区折叠开关
+  view.querySelectorAll('.done-sec-toggle').forEach(el => {
+    el.addEventListener('click', () => {
+      const k = el.dataset.doneKey;
+      if (ui.expandedDoneSections.has(k)) ui.expandedDoneSections.delete(k);
+      else ui.expandedDoneSections.add(k);
+      saveUI(); renderAll();
+    });
+  });
+  // 长按拖拽排序 / 拖到卡片上变子任务(项目/任务清单内,Kayu 2026-07-26)
+  bindTaskDragSort(view);
+}
+
+// 长按 380ms 抬起卡片 → 上下拖动重排(写 order)/ 横向偏移 44px 悬到别的卡上 → 变它的子任务。
+// 只在项目/任务清单启用:智能清单按时间排序,手动顺序无处落地。
+function bindTaskDragSort(view) {
+  const cl = getCurrentList();
+  if (cl.kind !== 'project') return;
+  const list = view.querySelector('.card-list');   // 第一个 card-list = 未完成区
+  if (!list) return;
+  let timer = null, dragEl = null, startX = 0, startY = 0, baseY = 0, ontoEl = null, moved = false;
+  const cards = () => Array.from(list.children).filter(el => el.classList && el.classList.contains('card'));
+  const clear = () => {
+    clearTimeout(timer); timer = null;
+    if (dragEl) { dragEl.classList.remove('drag-lift'); dragEl.style.transform = ''; }
+    if (ontoEl) ontoEl.classList.remove('drag-onto');
+    dragEl = null; ontoEl = null;
+  };
+  list.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    const card = e.target.closest && e.target.closest('.card[data-task-id]');
+    if (!card || card.parentElement !== list) return;
+    if (e.target.closest('.card-checkbox, .card-expander, .card-sub')) return;
+    const t = e.touches[0];
+    startX = t.clientX; startY = baseY = t.clientY; moved = false;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      dragEl = card;
+      card.classList.add('drag-lift');
+      try { navigator.vibrate && navigator.vibrate(12); } catch (_) {}
+    }, 380);
+  }, { passive: true });
+  list.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    if (!dragEl) {
+      // 长按成立前明显移动 = 用户在滚列表,取消
+      if (Math.hypot(t.clientX - startX, t.clientY - startY) > 9) { clearTimeout(timer); timer = null; }
+      return;
+    }
+    if (e.cancelable) e.preventDefault();   // 拖拽中锁页面滚动
+    moved = true;
+    dragEl.style.transform = `translateY(${t.clientY - baseY}px) scale(1.02)`;
+    const sibs = cards().filter(c => c !== dragEl);
+    // onto 判定:横向拖出 44px 且指针落在某兄弟卡片中带
+    let hit = null;
+    for (const s of sibs) {
+      const r = s.getBoundingClientRect();
+      if (t.clientY > r.top + r.height * 0.25 && t.clientY < r.bottom - r.height * 0.25) { hit = s; break; }
+    }
+    const ontoIntent = hit && (t.clientX - startX) > 44;
+    if (ontoEl && ontoEl !== hit) { ontoEl.classList.remove('drag-onto'); ontoEl = null; }
+    if (ontoIntent) {
+      ontoEl = hit; hit.classList.add('drag-onto');
+      return;
+    }
+    if (ontoEl) { ontoEl.classList.remove('drag-onto'); ontoEl = null; }
+    // 排序:越过相邻卡片中点就交换 DOM 位置(监听器随节点走,不丢)
+    for (const s of sibs) {
+      const r = s.getBoundingClientRect();
+      const before = !!(dragEl.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_PRECEDING);
+      if (before && t.clientY < r.top + r.height / 2) {
+        list.insertBefore(dragEl, s); dragEl.style.transform = ''; baseY = t.clientY; break;
+      }
+      if (!before && t.clientY > r.top + r.height / 2) {
+        list.insertBefore(dragEl, s.nextSibling); dragEl.style.transform = ''; baseY = t.clientY; break;
+      }
+    }
+  }, { passive: false });
+  const end = () => {
+    clearTimeout(timer); timer = null;
+    if (!dragEl) return;
+    const el = dragEl, onto = ontoEl, didMove = moved;
+    clear();
+    if (!didMove) return;
+    const id = el.dataset.taskId;
+    const t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    if (onto && onto.dataset.taskId && onto.dataset.taskId !== id) {
+      // 变子任务(更改所属)
+      const newPid = onto.dataset.taskId;
+      t.parentTaskId = newPid;
+      const maxOrder = state.tasks.filter(x => x.parentTaskId === newPid).reduce((m, x) => Math.max(m, x.order || 0), 0);
+      t.order = maxOrder + 100;
+      t.updatedAt = Date.now();
+      ui.expandedSubtasks.add(newPid); saveUI();
+      showToast('已设为子任务');
+    } else {
+      // 重排:按当前 DOM 顺序重写 order
+      cards().forEach((c, i) => {
+        const tt = state.tasks.find(x => x.id === c.dataset.taskId);
+        const no = (i + 1) * 100;
+        if (tt && tt.order !== no) { tt.order = no; tt.updatedAt = Date.now(); }
+      });
+    }
+    pushState(); renderAll();
+  };
+  list.addEventListener('touchend', end);
+  list.addEventListener('touchcancel', () => clear());
 }
 
 // 完成动画:勾选时把 task id 加进 Set,renderAll 后渲染时给对应行加 .just-done-anim class
@@ -11744,8 +11875,10 @@ function _openTaskDetailInner(id, opts) {
       <button class="dp-sub-del" data-action="del-sub" title="删除">×</button>
     </li>`;
   // 多级嵌套(2026-07-12):每行后递归渲染它的子树,depth 递进缩进
+  const _hideDoneSubs = !!ui.hideCompletedSmart;   // 全局「隐藏已完成」也约束详情里的子任务(Kayu 2026-07-26)
   const _renderSubTree = (c, depth) => {
     if (depth > 40) return '';   // 深度守卫:normalize 前的瞬时环不至于爆栈白屏
+    if (_hideDoneSubs && _subDoneNow(c)) return '';
     let h = _renderSubRow({
       source: 'task', id: c.id, title: c.title,
       checklistItem: c.checklistItem === true,
@@ -11758,10 +11891,12 @@ function _openTaskDetailInner(id, opts) {
   const _doneSort = (a, b) => (_subDoneNow(a) ? 1 : 0) - (_subDoneNow(b) ? 1 : 0);
   const normalKids = childTasks.filter(c => c.checklistItem !== true).sort(_doneSort);
   const checklistKids = childTasks.filter(c => c.checklistItem === true).sort(_doneSort);
-  const legacyRows = legacySubs.map(s => ({
-    source: 'legacy', id: s.id, title: s.title,
-    checklistItem: false, done: !!s.done, depth: 0,
-  }));
+  const legacyRows = legacySubs
+    .filter(s => !(_hideDoneSubs && s.done))
+    .map(s => ({
+      source: 'legacy', id: s.id, title: s.title,
+      checklistItem: false, done: !!s.done, depth: 0,
+    }));
   let subsInner = normalKids.map(c => _renderSubTree(c, 0)).join('')
     + legacyRows.map(_renderSubRow).join('');
   if (checklistKids.length) {
@@ -16114,6 +16249,10 @@ function renderNowLineHtml() {
 }
 
 function bindCalendarGestures(el) {
+  // el = #view,跨渲染持久 — 每次 renderCalendarTab 都绑一次会无限累积,
+  // 一次横滑触发 N 个监听 → 跳 N 天(iPhone 实机「滑一下跳好几天」的根源,Kayu 2026-07-26)
+  if (el._calGesturesBound) return;
+  el._calGesturesBound = true;
   let sx = 0, sy = 0, t0 = 0, swiping = false;
   el.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
@@ -16121,7 +16260,9 @@ function bindCalendarGestures(el) {
   }, { passive: true });
   el.addEventListener('touchend', (e) => {
     if (!swiping) return; swiping = false;
+    if (ui.tab !== 'calendar') return;  // #view 是全 tab 共用的,别在任务页横滑时偷偷翻日历
     if (_calDragCreating) return; // 拖拽创建优先,跳过 swipe 翻月
+    if (typeof _calBlockEditing !== 'undefined' && _calBlockEditing) return; // 块编辑拖动中不翻页
     // 月视图是连续滚动流(13 个月一锅渲染),不接收左右翻月手势 — 跟垂直滚动冲突 + 不必要
     if (ui.calMode === 'month') return;
     const dx = (e.changedTouches[0].clientX - sx);

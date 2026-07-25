@@ -627,7 +627,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260725-1400';
+const _PSFOCUS_BUILD = '20260725-1430';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2123,6 +2123,11 @@ function renderTab(tab) {
       view.style.transition = '';
       view.scrollTop = 0;
       view.dataset.lastTab = tab;
+      // 切 tab 的轻量入场动画(只在真切 tab 时,同 tab re-render 不闪)
+      view.classList.remove('tab-anim');
+      void view.offsetWidth;
+      view.classList.add('tab-anim');
+      setTimeout(() => view.classList.remove('tab-anim'), 250);
     }
   }
   // 重置 pull-refresh indicator(防上次切走时还有 transform 残留)
@@ -15259,7 +15264,7 @@ function calHourLinesHtml(hours) {
 function calHourLabelsHtml(hours) {
   let html = '';
   for (let h = 0; h < hours; h++) {
-    html += `<div class="cal-hour-label" style="--hour-idx:${h};">${pad(h)}:00</div>`;
+    html += `<div class="cal-hour-label" style="--hour-idx:${h};">${h}</div>`;   // 滴答式:只显示小时数
   }
   return html;
 }

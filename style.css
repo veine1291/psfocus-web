@@ -313,6 +313,17 @@ input:focus, textarea:focus { border-color: var(--accent); }
 /* 详情抽屉:更多按钮固定到右上角(Kayu 2026-07-26) */
 .td-top .td-more { margin-left: auto; }
 
+/* 任务详情:隐藏顶端拉伸把手(下拉关闭/上拉增高手势识别的是抽屉顶部 60px 区域,
+   不依赖这个元素,藏了不影响手势);顶距/标题按滴答复刻(Kayu 2026-07-26) */
+.td-detail-wrap .sheet-handle { display: none; }
+.td-detail-wrap .td-detail { padding-top: 20px; }
+.td-detail-wrap .td-title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.32;
+  padding-top: 12px;
+}
+
 /* 「已完成」分区折叠头 */
 .done-sec-toggle { display: flex; align-items: center; justify-content: space-between; }
 

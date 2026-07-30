@@ -635,7 +635,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260726-1020';
+const _PSFOCUS_BUILD = '20260726-1045';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2004,7 +2004,9 @@ function renderTopbar() {
       ui.calSelectedDay = null;
       saveUI(); renderAll();
     };
-    $('topbar-subtitle').textContent = ui.calMode === 'month' ? '月' : (ui.calMode === 'week' ? '周' : '日');
+    // 日视图副标题显示星期几(原来只是重复视图名「日」,没信息量;Kayu 2026-07-26)
+    $('topbar-subtitle').textContent = ui.calMode === 'month' ? '月'
+      : (ui.calMode === 'week' ? '周' : ['周日','周一','周二','周三','周四','周五','周六'][c.getDay()]);
     // 日历 tab: 左按钮 = 视图切换(显示当前视图字)
     const label = ui.calMode === 'month' ? '月' : (ui.calMode === 'week' ? '周' : '日');
     leftBtn.innerHTML = `<span class="cal-view-switch-pill"><span class="cal-view-switch-label">${esc(label)}</span><span class="ico-chevron-down"></span></span>`;
@@ -11956,6 +11958,7 @@ function _openTaskDetailInner(id, opts) {
   // - 底部图标条: 附件 + 收起
   // 兼容性:保留所有 dp-* 类名以便 bindTaskDetailEvents 不动
   body.dataset.taskId = t.id;   // 给 _flushTaskDetailInputs 认领「当前 DOM 属于哪个任务」
+  body.classList.add('td-detail-wrap');   // 让 CSS 藏掉这个抽屉的把手(手势区域不受影响)
   body.innerHTML = `
     <div class="sheet-handle"></div>
     <div class="dp-detail td-detail">
@@ -12633,6 +12636,7 @@ function openTagEditor(id) {
 // - noMaskClose: 点 mask 不关 sheet (iOS native picker 关闭瞬间合成 click 容易落在 mask 上误关)
 function showSheet(html, onMountOrOpts) {
   const sheet = $('sheet'), body = $('sheet-body');
+  body.classList.remove('td-detail-wrap');   // 别把任务详情的「藏把手」样式带给别的抽屉
   body.innerHTML = html;
   body.style.transform = '';
   body.style.transition = '';

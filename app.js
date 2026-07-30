@@ -478,7 +478,8 @@ function applyAllAppearance() {
 }
 // 毛玻璃皮肤(跟桌面共用同一份 state.settings.uiSkin / glassBg)
 function applySkin() {
-  const s = (state && state.settings && state.settings.uiSkin) || 'flat';
+  // 默认皮肤改成毛玻璃 —— 与 Kayu 在用的配置一致(2026-07-26)
+  const s = (state && state.settings && state.settings.uiSkin) || 'glass';
   document.body.classList.toggle('skin-glass', s === 'glass');
   const body = document.body;
   body.style.removeProperty('background');
@@ -494,9 +495,12 @@ function applySkin() {
     body.style.background = g.solidColor;
   } else if (g.type === 'gradient' && g.gradient) {
     const a = g.gradient.angle != null ? +g.gradient.angle : 135;
-    const from = g.gradient.from || '#e8eef5';
-    const to   = g.gradient.to   || '#d6dde7';
+    const from = g.gradient.from || '#e6e6e6';
+    const to   = g.gradient.to   || '#edecf3';
     body.style.background = `linear-gradient(${a}deg, ${from}, ${to})`;
+  } else if (!g.type) {
+    // 没配过玻璃背景 → 用默认渐变(同 Kayu 在用的浅灰紫)
+    body.style.background = 'linear-gradient(135deg, #e6e6e6, #edecf3)';
   } else if (g.type === 'image' && g.imageDataUrl) {
     body.style.background = `url("${g.imageDataUrl}") center/cover no-repeat fixed`;
   }
@@ -553,6 +557,17 @@ function _clearCreds() { try { localStorage.removeItem(CREDS_KEY); } catch (_) {
 // 不再用永久 flag(老代码 bug:首次重登后再次掉线就不再重试,用户被甩到登录页要手动输密码)。
 let _autoReloginInFlight = false;
 let _autoReloginCooldownUntil = 0;
+// 启动遮罩(index.html 的 #boot-cover)— 盖住自动重登空窗
+let _bootCoverFallbackTimer = null;
+function _hideBootCover() {
+  clearTimeout(_bootCoverFallbackTimer);
+  const c = $('boot-cover');
+  if (c) c.classList.add('hidden');
+}
+function _showAuthScreen() {
+  _hideBootCover();
+  $('auth-screen').classList.remove('hidden');
+}
 function _scheduleAutoRelogin() {
   if (_autoReloginInFlight) return;
   if (Date.now() < _autoReloginCooldownUntil) return;
@@ -560,7 +575,7 @@ function _scheduleAutoRelogin() {
   setTimeout(async () => {
     if (uid) { _autoReloginInFlight = false; return; }   // 期间已经登上了
     const creds = _loadCreds();
-    if (!creds) { _autoReloginInFlight = false; return; }
+    if (!creds) { _autoReloginInFlight = false; _showAuthScreen(); return; }
     const msg = $('auth-msg');
     if (msg) msg.textContent = '自动重新登录…';
     try {
@@ -572,16 +587,18 @@ function _scheduleAutoRelogin() {
       const code = (e && (e.code || '')) + ''; const m = (e && (e.message || '')) + '';
       if (/USER_PASSWORD_INVALID|USER_NOT_FOUND|password.*incorrect|wrong.*password|user.*not.*exist/i.test(code + m)) {
         _clearCreds();
+        _showAuthScreen();
         if (msg) msg.textContent = '凭证失效,请重新登录';
       } else {
         // 网络/服务暂时不可达 → 30s 后允许再试
         _autoReloginCooldownUntil = Date.now() + 30000;
+        _showAuthScreen();
         if (msg) msg.textContent = '自动登录失败,30 秒后再试';
       }
     } finally {
       _autoReloginInFlight = false;
     }
-  }, 1500);
+  }, 250);   // 原 1500ms —— 启动期这段等待正是「闪一下登录页」的窗口
 }
 
 function setupAuth() {
@@ -590,6 +607,7 @@ function setupAuth() {
       const u = loginState.user || loginState;
       uid = u.username || u.email || u.uid || u.userId || '';
       $('auth-screen').classList.add('hidden');
+      _hideBootCover();
       $('app').classList.remove('hidden');
       bindCloud();
     } else {
@@ -597,7 +615,15 @@ function setupAuth() {
       stopWatch();
       state = null;
       $('app').classList.add('hidden');
-      $('auth-screen').classList.remove('hidden');
+      // 有存档凭证 → 先别露登录页,让启动遮罩盖住自动重登的空窗(Kayu 2026-07-26);
+      // 重登失败(或本来就没凭证)时 _showAuthScreen() 才把它放出来
+      if (_loadCreds()) {
+        // 兜底:8s 还没登上就显示登录页,别让用户对着遮罩干等
+        clearTimeout(_bootCoverFallbackTimer);
+        _bootCoverFallbackTimer = setTimeout(() => { if (!uid) _showAuthScreen(); }, 8000);
+      } else {
+        _showAuthScreen();
+      }
       // 没登上 → 试一次自动重登(只在启动期触发一次)
       _scheduleAutoRelogin();
     }
@@ -635,7 +661,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260726-1045';
+const _PSFOCUS_BUILD = '20260726-1120';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 

@@ -25,11 +25,13 @@
   --text-mute:      #B7BCC4;
   --text-on-accent: #FFFFFF;
 
-  /* —— 主色(JS 会按 settings.accentColor 覆盖) —— */
-  --accent:         #4cc26a;
-  --accent-soft:    rgba(76, 194, 106, 0.10);
-  --accent-glow:    rgba(76, 194, 106, 0.22);
-  --accent-text:    #2a8d3f;
+  /* —— 主色(JS 会按 settings.accentColor 覆盖)——
+     默认换成 Kayu 在用的灰粉,原来的荧光绿太扎眼(2026-07-26) */
+  --accent:         #d5c9c9;
+  --accent-soft:    rgba(213, 201, 201, 0.22);
+  --accent-glow:    rgba(213, 201, 201, 0.30);
+  --accent-text:    #756767;
+  --accent-contrast: #d1dad9;
 
   /* —— 语义色 —— */
   --warning:        #F59E0B;
@@ -170,6 +172,28 @@ input:focus, textarea:focus { border-color: var(--accent); }
 /* =========================================================
    登录屏
    ========================================================= */
+/* 启动遮罩 — 与启动图同底色,自动重登期间不闪登录页 */
+.boot-cover {
+  position: fixed; inset: 0;
+  z-index: 200;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 16px;
+  background: var(--bg-page);
+}
+.boot-cover-logo {
+  font-size: 22px; font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-strong);
+  opacity: 0.85;
+}
+.boot-cover-dot {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--text-mute);
+  border-right-color: transparent;
+  animation: pull-spin .8s linear infinite;
+}
 .auth-screen {
   position: fixed; inset: 0;
   display: flex; align-items: center; justify-content: center;

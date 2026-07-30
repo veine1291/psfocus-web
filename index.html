@@ -27,8 +27,14 @@
   </div>
 </div>
 
-<!-- 登录页 -->
-<div id="auth-screen" class="auth-screen">
+<!-- 启动遮罩 — 盖住「自动重登期间」的空窗,避免闪一下登录页(2026-07-26) -->
+<div id="boot-cover" class="boot-cover">
+  <div class="boot-cover-logo">PS Focus</div>
+  <div class="boot-cover-dot"></div>
+</div>
+
+<!-- 登录页(默认隐藏:有凭证时自动重登,登不上才显示) -->
+<div id="auth-screen" class="auth-screen hidden">
   <div class="auth-card">
     <div class="auth-logo">PS Focus</div>
     <div class="auth-sub">登录以同步桌面端数据</div>

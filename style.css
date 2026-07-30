@@ -1180,6 +1180,18 @@ body.sum-editor-open { overflow: hidden; }
   flex: 0 0 auto;
 }
 .td-add-sched-icon:active { background: var(--bg-hover); }
+/* 无时间态:文字提示胶囊;有时间态:纯加号 */
+.td-add-sched-icon.is-empty {
+  gap: 6px;
+  font-size: 13px;
+  padding: 5px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+}
+.td-add-sched-icon.is-empty .ico-calendar { width: 14px; height: 14px; }
+.td-add-sched-icon.is-plus { padding: 4px 6px; }
+.td-add-sched-icon.is-plus .ico-plus { width: 15px; height: 15px; }
 .td-add-sched-icon .ico-plus,
 .td-add-sched-icon .ico-clock {
   width: 13px; height: 13px;
@@ -1276,9 +1288,9 @@ body.sum-editor-open { overflow: hidden; }
   flex-wrap: wrap;
 }
 .td-check {
-  /* 跟主界面 .card-checkbox 同尺寸 (22px) + 同 border (1.5px) — Kayu 2026-05-28 */
-  width: 22px; height: 22px;
-  border-radius: 50%;
+  /* 与主界面 .card-checkbox 完全一致:18px 方圆(Kayu 2026-07-26) */
+  width: 18px; height: 18px;
+  border-radius: 6px;
   border: 1.5px solid var(--text-mute);
   background: transparent;
   color: transparent;
@@ -1938,9 +1950,9 @@ body.sum-editor-open { overflow: hidden; }
   padding: 4px 0 8px;
 }
 .dp-check {
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  border: 2px solid var(--text-dim);
+  width: 18px; height: 18px;
+  border-radius: 6px;
+  border: 1.5px solid var(--text-mute);
   background: transparent;
   color: var(--text-on-accent);
   flex-shrink: 0;
@@ -2222,8 +2234,8 @@ body.sum-editor-open { overflow: hidden; }
 }
 .dp-sub-check {
   width: 18px; height: 18px;
-  border-radius: 50%;
-  border: 1.5px solid var(--text-dim);
+  border-radius: 6px;   /* 与主视图 .card-checkbox 一致(Kayu 2026-07-26) */
+  border: 1.5px solid var(--text-mute);
   background: transparent;
   color: var(--text-on-accent);
   font-size: 11px;
@@ -3027,7 +3039,7 @@ body.sum-editor-open { overflow: hidden; }
 .cal-task-check {
   width: 12px; height: 12px;
   border: 1.5px solid currentColor;
-  border-radius: 50%;
+  border-radius: 4px;   /* 方圆,与列表/详情一致 */
   flex-shrink: 0;
   cursor: pointer;
   position: relative;

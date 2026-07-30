@@ -403,8 +403,10 @@ function loadUI() {
     selectedId: saved.selectedId || 'all',
     settingsPage: null,
     calMode: saved.calMode || 'month',
-    calCursor: saved.calCursor || Date.now(),
-    calSelectedDay: saved.calSelectedDay || startOfDay(new Date()).getTime(),
+    // 日历游标不从 localStorage 恢复 —— 冷启动进日历必须落在今天,而不是上次翻到的某天
+    // (切 tab 进日历时 renderTabBar 里也会重置一次;Kayu 2026-07-26)
+    calCursor: Date.now(),
+    calSelectedDay: startOfDay(new Date()).getTime(),
     collapsedFolders: new Set(saved.collapsedFolders || []),
     collapsedSections: new Set(saved.collapsedSections || []),
     calSideOpen: !!saved.calSideOpen,
@@ -633,7 +635,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260726-0945';
+const _PSFOCUS_BUILD = '20260726-1020';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11978,10 +11980,16 @@ function _openTaskDetailInner(id, opts) {
         <button class="td-check dp-check ${checked ? 'done' : ''}" data-action="toggle-done" title="${checked ? '标记未完成' : '标记完成'}">${checked ? '✓' : ''}</button>
         <div class="td-scheds">
           ${schedHtml}
-          <button class="td-add-sched-icon" data-action="dp-add-schedule" title="${schedules.length ? '加一个时间' : '加日期'}">
-            <span class="ico-plus"></span>
-            <span class="ico-clock"></span>
-          </button>
+          ${schedules.length
+            // 已有时间 → 只留一个加号(继续加时间段)
+            ? `<button class="td-add-sched-icon is-plus" data-action="dp-add-schedule" title="加一个时间">
+                 <span class="ico-plus"></span>
+               </button>`
+            // 没有时间 → 文字提示,别让用户猜两个小图标什么意思(Kayu 2026-07-26)
+            : `<button class="td-add-sched-icon is-empty" data-action="dp-add-schedule" title="加日期与时间">
+                 <span class="ico-calendar"></span>
+                 <span>日期 & 时间</span>
+               </button>`}
         </div>
       </div>
 

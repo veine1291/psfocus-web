@@ -633,7 +633,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260726-0930';
+const _PSFOCUS_BUILD = '20260726-0945';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -11170,6 +11170,16 @@ function toggleChildTaskDone(sid) {
   if (child.done) _playCompletionSoundM();
   pushState(); renderAll();
 }
+// 当前上下文是否隐藏已完成 —— 项目清单看 p.hideCompleted,其它看全局 ui.hideCompletedSmart,
+// 任一开启即隐藏。子任务树 / 详情抽屉 / 列表分区共用同一判定(Kayu 2026-07-26 二修)
+function _hideDoneNowM() {
+  if (ui.hideCompletedSmart) return true;
+  try {
+    const cl = getCurrentList();
+    if (cl && cl.kind === 'project' && cl.project && cl.project.hideCompleted) return true;
+  } catch (_) {}
+  return false;
+}
 // 「已完成」分区 — 可折叠(默认折叠,滴答式;Kayu 2026-07-26)
 function _doneSectionHtml(done, key) {
   const open = ui.expandedDoneSections.has(key);
@@ -11200,7 +11210,7 @@ function taskCardHtml(t) {
   const expanded = subTotal && ui.expandedSubtasks.has(t.id);
   let subsHtml = '';
   if (expanded) {
-    const _hideDone = !!ui.hideCompletedSmart;
+    const _hideDone = _hideDoneNowM();
     let rows = '';
     const walk = (c, depth) => {
       if (_hideDone && _childDoneNowM(c)) return;   // 隐藏已完成:整棵剪掉
@@ -11875,7 +11885,7 @@ function _openTaskDetailInner(id, opts) {
       <button class="dp-sub-del" data-action="del-sub" title="删除">×</button>
     </li>`;
   // 多级嵌套(2026-07-12):每行后递归渲染它的子树,depth 递进缩进
-  const _hideDoneSubs = !!ui.hideCompletedSmart;   // 全局「隐藏已完成」也约束详情里的子任务(Kayu 2026-07-26)
+  const _hideDoneSubs = _hideDoneNowM();   // 「隐藏已完成」也约束详情里的子任务(Kayu 2026-07-26)
   const _renderSubTree = (c, depth) => {
     if (depth > 40) return '';   // 深度守卫:normalize 前的瞬时环不至于爆栈白屏
     if (_hideDoneSubs && _subDoneNow(c)) return '';

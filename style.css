@@ -3077,7 +3077,8 @@ body.sum-editor-open { overflow: hidden; }
 }
 .cal-task-row {
   display: flex;
-  align-items: center;
+  /* 标题多行时勾选框贴第一行,不居中漂到中间(2026-08-07,与桌面一致) */
+  align-items: flex-start;
   gap: 6px;
 }
 .cal-task-check {
@@ -3085,6 +3086,7 @@ body.sum-editor-open { overflow: hidden; }
   border: 1.5px solid currentColor;
   border-radius: 4px;   /* 方圆,与列表/详情一致 */
   flex-shrink: 0;
+  margin-top: 1.5px;    /* 贴第一行中线(标题多行时,2026-08-07) */
   cursor: pointer;
   position: relative;
   background: transparent;

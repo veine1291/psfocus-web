@@ -3051,9 +3051,12 @@ body.sum-editor-open { overflow: hidden; }
 }
 .cal-block-title {
   font-weight: 500;
-  white-space: nowrap;
+  /* 标题自动换行显示全部(2026-08-07):块高度够就多行铺开,不再单行省略号。
+     矮块(.compact,<45min)在下面单独保持单行 —— 它只有一行的物理空间。 */
+  white-space: normal;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .cal-block-time { font-size: 9px; opacity: 0.7; margin-top: 1px; }
 .cal-block-dur { font-size: 10px; opacity: 0.85; margin-top: 1px; font-variant-numeric: tabular-nums; }
@@ -3066,6 +3069,12 @@ body.sum-editor-open { overflow: hidden; }
   font-size: 11px;
 }
 .cal-block-task.compact { padding: 2px 6px; }
+/* 矮块只有一行空间:保持单行省略,换行会把字裁成半个(2026-08-07,与桌面一致) */
+.cal-block.compact .cal-block-title,
+.cal-block.compact .cal-task-title {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .cal-task-row {
   display: flex;
   align-items: center;
@@ -3093,9 +3102,12 @@ body.sum-editor-open { overflow: hidden; }
 }
 .cal-task-title {
   font-weight: 500;
-  white-space: nowrap;
+  /* 标题自动换行显示全部(2026-08-07):块高度够就多行铺开,不再单行省略号。
+     矮块(.compact,<45min)在下面单独保持单行 —— 它只有一行的物理空间。 */
+  white-space: normal;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   flex: 1;
   min-width: 0;
 }

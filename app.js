@@ -661,7 +661,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260815-2140';
+const _PSFOCUS_BUILD = '20260820-0750';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2574,6 +2574,8 @@ function openSummaryInputSheet() {
     if (ed) {
       ed.addEventListener('paste', _summaryHandlePaste);
       ed.addEventListener('keydown', (e) => {
+        // 行首退格 → 清掉本行块格式,不并进上一行
+        if (_sumHandleBlockFmtBackspace(ed, e)) { _syncEditorToState(ed); return; }
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
           if (actions['summary-submit']) actions['summary-submit']();
@@ -2760,6 +2762,8 @@ function _renderSummaryEditorPage() {
     // Backspace 在 chip 之后 → 解构 chip 成 plain text "#xxx" 让用户改字
     // 空格 → 检查光标前的 plain "#xxx", wrap 回 chip
     ed.addEventListener('keydown', (e) => {
+      // 行首退格 → 清掉本行块格式,不并进上一行(chip 之后的退格不受影响,见 _sumBlockFmtAtLineStart)
+      if (_sumHandleBlockFmtBackspace(ed, e)) { _syncEditorToState(ed); return; }
       if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const sel = window.getSelection();
         if (sel && sel.rangeCount) {
@@ -4900,6 +4904,72 @@ function _caretToEnd(el) {
 }
 
 // 同步 contenteditable 内容 → 对应的 state(主输入 draftNote / 编辑 modalState.value)
+// ===== 行首退格 = 清掉本行的块格式(不并进上一行) =====
+// Kayu 2026-08-20 报:手机上想删掉行首的格式,原生行为是把整行并进上一行 ——
+// 文字跑到上一行去了,格式反而还留着,等于根本清不掉。
+// 改成:光标停在【带块格式的行】的行首按退格,只脱掉这一行的格式(标题/引用/有序无序
+// 列表 → 普通行),再按一次才是正常的并进上一行。
+// 想延续上一行的格式,从那行有格式的文字里回车即可(contenteditable 原生就会延续),
+// 所以「行首退格」这个位置留给清格式更值。
+// 返回 'ul' | 'ol' | 'quote' | 'head';null = 不接管,走原生退格
+function _sumBlockFmtAtLineStart(ed) {
+  if (!ed) return null;
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  if (!r.collapsed) return null;
+  if (!ed.contains(r.startContainer)) return null;
+  let fmt = null, fmtEl = null;
+  let el = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentNode;
+  while (el && el !== ed) {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'li') {
+      const pt = (el.parentNode && el.parentNode.tagName) ? el.parentNode.tagName.toLowerCase() : '';
+      fmt = pt === 'ol' ? 'ol' : 'ul'; fmtEl = el; break;
+    }
+    if (tag === 'blockquote') { fmt = 'quote'; fmtEl = el; break; }
+    if (/^h[1-6]$/.test(tag)) { fmt = 'head'; fmtEl = el; break; }
+    el = el.parentNode;
+  }
+  if (!fmt) return null;
+  // 行首判定 = 从「这一行」的起点到光标之间没有任何文字(chip 也算文字,所以
+  // 光标在行首 chip 之后不算行首,退格照旧解构 chip)。
+  // 引用是 <blockquote><div>每行</div></blockquote>,行 = 里面那层 div,不是 blockquote 本身
+  let lineEl = fmtEl;
+  if (fmt === 'quote') {
+    let p = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentNode;
+    while (p && p !== fmtEl && p.parentNode !== fmtEl) p = p.parentNode;
+    if (p && p !== fmtEl) lineEl = p;
+  }
+  const probe = document.createRange();
+  probe.selectNodeContents(lineEl);
+  try { probe.setEnd(r.startContainer, r.startOffset); } catch (_) { return null; }
+  return probe.toString().length ? null : fmt;
+}
+// 脱掉当前行的块格式。用 execCommand 让浏览器自己处理列表拆分 / 序号重排 / 光标,
+// 比手搓 DOM 稳(实测 Chromium:中间项脱出会把列表正确拆成前段 + 普通行 + 后段)
+function _sumStripBlockFmt(fmt) {
+  try {
+    if (fmt === 'ul') document.execCommand('insertUnorderedList');
+    else if (fmt === 'ol') document.execCommand('insertOrderedList');
+    else if (fmt === 'quote') document.execCommand('outdent');
+    // 列表/引用脱出来是「裸文本 + <br>」直接挂在编辑器根上,再包回 <div>,
+    // 跟 _mdToEditHtml 生成的结构保持一致(标题这一步本身就是脱格式)
+    document.execCommand('formatBlock', false, 'div');
+  } catch (_) {}
+}
+// 退格接管入口:true = 已处理(已 preventDefault 并改好 DOM,调用方只需同步 state)
+function _sumHandleBlockFmtBackspace(ed, e) {
+  if (!ed || !e) return false;
+  if (e.key !== 'Backspace' || e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (e.isComposing || e.keyCode === 229) return false;   // IME 组词中的退格归输入法
+  const fmt = _sumBlockFmtAtLineStart(ed);
+  if (!fmt) return false;
+  e.preventDefault();
+  _sumStripBlockFmt(fmt);
+  return true;
+}
+
 function _syncEditorToState(ed) {
   if (!ed) return;
   const md = _editHtmlToMd(ed);

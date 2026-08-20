@@ -601,6 +601,93 @@ function _scheduleAutoRelogin() {
   }, 250);   // 原 1500ms —— 启动期这段等待正是「闪一下登录页」的窗口
 }
 
+// ===== 启动快照:上次云端 state 在本地存一份,打开时先拿它渲染 =====
+// 起因(Kayu 2026-08-20 报「每次打开都要加载好久」):真机日志实测
+//   bindCloud:pull done in 3807~5840ms / size=3053197B
+// 每次冷启都要干等 4~6 秒下完 3MB 全量 state 才出内容,期间是空屏。
+// 桌面端一直是「先读本地 state.json 秒开 → 再拉云端对齐」,手机端缺的就是这一层。
+//
+// 用 IndexedDB 不用 localStorage:3MB 会顶爆 Safari 的 5MB 配额,而且 localStorage
+// 是同步 API,写 3MB 会卡住主线程。
+//
+// 安全性(对照同步铁律):
+//   · 快照只是「上一次 pull 回来的云端数据」,不是新的真值来源;
+//   · `_initialPullOk` 这道既有闸门保持 false,所以快照期间任何 push 都推不出去;
+//   · 快照期间用户真改了东西 → 标记 _snapDirty,等 pull 落地后走 additive merge
+//     再推联合集(铁律 3 / 铁律 7:挡下的操作必须补做,不许静默丢);
+//   · 套用快照 = 整份替换,立刻 _tombSyncBaselineM 重置墓碑/指纹基线(铁律 12/14)。
+const _SNAP_DB = 'psfocus-snap', _SNAP_STORE = 'kv', _SNAP_KEY = 'state';
+let _bootedFromSnapshot = false;   // 这次启动是靠本地快照出的画面(首次 pull 还没落地)
+let _snapDirty = false;            // 快照期间用户改过 state,pull 回来要 merge 不能整份替换
+let _snapSaveAt = 0;               // 上次写快照时间;3MB 序列化不便宜,节流
+
+function _snapOpen() {
+  return new Promise((res, rej) => {
+    try {
+      const q = indexedDB.open(_SNAP_DB, 1);
+      q.onupgradeneeded = () => { try { q.result.createObjectStore(_SNAP_STORE); } catch (_) {} };
+      q.onsuccess = () => res(q.result);
+      q.onerror = () => rej(q.error);
+    } catch (e) { rej(e); }
+  });
+}
+function _snapLoad() {
+  return _snapOpen().then(db => new Promise((res) => {
+    try {
+      const q = db.transaction(_SNAP_STORE, 'readonly').objectStore(_SNAP_STORE).get(_SNAP_KEY);
+      q.onsuccess = () => res(q.result || null);
+      q.onerror = () => res(null);
+    } catch (_) { res(null); }
+  })).catch(() => null);
+}
+// force=true 用在 pull 刚落地那一次(必存);其余 60s 节流
+function _snapSave(force) {
+  if (!state || !uid || !_initialPullOk) return;
+  const now = Date.now();
+  if (!force && now - _snapSaveAt < 60000) return;
+  _snapSaveAt = now;
+  const write = () => {
+    _snapOpen().then(db => {
+      try {
+        db.transaction(_SNAP_STORE, 'readwrite').objectStore(_SNAP_STORE)
+          .put({ uid: uid, at: now, state: state }, _SNAP_KEY);
+      } catch (_) {}
+    }).catch(() => {});
+  };
+  // 3MB 的结构化克隆别去抢首屏渲染的帧
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(write, { timeout: 3000 });
+  else setTimeout(write, 400);
+}
+function _snapClear() {
+  _snapOpen().then(db => {
+    try { db.transaction(_SNAP_STORE, 'readwrite').objectStore(_SNAP_STORE).delete(_SNAP_KEY); } catch (_) {}
+  }).catch(() => {});
+}
+// 启动即渲染。拿不到快照就静默返回,走原来的「等 pull」路径,不改变任何既有行为。
+async function _bootFromSnapshot() {
+  try {
+    const creds = _loadCreds();
+    if (!creds) return;                       // 没凭证 = 要走登录页,快照没意义
+    const snap = await _snapLoad();
+    if (!snap || !snap.state) return;
+    if (snap.uid && creds.u && snap.uid !== creds.u) { _snapClear(); return; }   // 换账号了
+    if (state || _initialPullOk) return;      // pull 已经抢先落地 → 别倒退
+    state = sanitizeState(snap.state);
+    try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换 → 重置墓碑/指纹基线
+    _bootedFromSnapshot = true;
+    _hideBootCover();
+    $('app').classList.remove('hidden');
+    try { applyAllAppearance(); } catch (_) {}
+    renderAll();
+    setSync('syncing', '同步中…');
+    psLog('LOG', 'boot:from-snapshot at=' + new Date(snap.at || 0).toISOString()
+               + ' tasks=' + ((state.tasks || []).length)
+               + ' projects=' + ((state.projects || []).length));
+  } catch (e) {
+    psLog('ERR', 'boot:from-snapshot fail', e);
+  }
+}
+
 function setupAuth() {
   auth.onLoginStateChanged((loginState) => {
     if (loginState && (loginState.user || loginState.uid)) {
@@ -613,8 +700,13 @@ function setupAuth() {
     } else {
       uid = null;
       stopWatch();
-      state = null;
-      $('app').classList.add('hidden');
+      // 已经用本地快照渲染出内容、凭证也还在(= 正在后台自动重登)→ 别把画面清空退回遮罩,
+      // 让用户接着看上次的数据,重登 + pull 跑完再无缝换成最新(2026-08-20 秒开)
+      const _keepSnapView = _bootedFromSnapshot && !!_loadCreds();
+      if (!_keepSnapView) {
+        state = null;
+        $('app').classList.add('hidden');
+      }
       // 有存档凭证 → 先别露登录页,让启动遮罩盖住自动重登的空窗(Kayu 2026-07-26);
       // 重登失败(或本来就没凭证)时 _showAuthScreen() 才把它放出来
       if (_loadCreds()) {
@@ -622,6 +714,7 @@ function setupAuth() {
         clearTimeout(_bootCoverFallbackTimer);
         _bootCoverFallbackTimer = setTimeout(() => { if (!uid) _showAuthScreen(); }, 8000);
       } else {
+        _snapClear();          // 没凭证 = 真登出 → 清掉本地快照,别把上个账号的数据留在机器上
         _showAuthScreen();
       }
       // 没登上 → 试一次自动重登(只在启动期触发一次)
@@ -661,7 +754,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260820-0750';
+const _PSFOCUS_BUILD = '20260820-0930';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -953,27 +1046,51 @@ async function bindCloud() {
                   'projects=' + ((remote.projects||[]).length),
                   'summaries=' + ((remote.summaries||[]).length),
                   'sessions=' + ((remote.sessions||[]).length));
-      state = sanitizeState(remote);
-    try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换不算本机删除(墓碑差分基线重置)
-      _initialPullOk = true;
-      _lastKnownGoodTaskCount = (state.tasks || []).length;
+      if (_bootedFromSnapshot && _snapDirty) {
+        // 快照渲染期间用户改过东西:整份替换会把这些改动冲掉。
+        // 按铁律 3 走 additive merge(id + updatedAt 并集,尊重双方墓碑),再推联合集。
+        _initialPullOk = true;
+        try { _mergeRemoteAdditive(remote); } catch (e) { psLog('ERR', 'snap merge fail', e); }
+        _lastKnownGoodTaskCount = (state.tasks || []).length;
+        _bootedFromSnapshot = false; _snapDirty = false;
+        pushState();
+      } else {
+        state = sanitizeState(remote);
+        try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换不算本机删除(墓碑差分基线重置)
+        _initialPullOk = true;
+        _lastKnownGoodTaskCount = (state.tasks || []).length;
+        _bootedFromSnapshot = false; _snapDirty = false;
+      }
+      _snapSave(true);   // 这份就是下次冷启的秒开数据
       // 兜底:对比 localStorage 备份,本地有但云端没有的近期 summaries 自动补回
       // 防"跨设备 stale push 覆盖云端"导致用户笔记凭空消失
       try { _restoreSummariesFromBackupLS(); } catch (_) {}
       setSync('synced', '已同步');
     } else {
       psLog('LOG', 'bindCloud:remote empty — new account?');
-      state = emptyState();
-      _initialPullOk = true;
-      _lastKnownGoodTaskCount = 0;
-      setSync('synced', '已同步(空)');
+      if (_bootedFromSnapshot) {
+        // 本地明明有这个账号的快照,云端却回空 —— 多半是服务端出岔子,不是新账号。
+        // 保住画面上的数据,并且【不】放开 _initialPullOk:push 继续锁死,
+        // 绝不能拿空 state 去覆盖云端(2026-06-21 清空事故就是这么来的)
+        psLog('WARN', 'bindCloud:remote empty 但本地有快照 — 保留本地,push 保持锁定');
+        setSync('error', '云端返回空,已保留本地数据(未解锁同步)');
+      } else {
+        state = emptyState();
+        _initialPullOk = true;
+        _lastKnownGoodTaskCount = 0;
+        setSync('synced', '已同步(空)');
+      }
     }
   } catch (e) {
     psLog('ERR', 'bindCloud:pull fail', (e && e.message) || e);
-    state = emptyState();
+    // 已经用本地快照渲染出内容(离线 / 网络抖动)→ 别把它换成空 state 让画面归零,
+    // 让用户接着看上次的数据。_initialPullOk 保持 false,push 依旧锁死,不可能覆盖云端。
+    if (!_bootedFromSnapshot) state = emptyState();
     _initialPullOk = false;
     _lastKnownGoodTaskCount = -1;
-    setSync('error', '加载失败,本地暂用空数据 — 已锁定,不会覆盖云端');
+    setSync('error', _bootedFromSnapshot
+      ? '拉取失败,先看本地缓存 — 已锁定,不会覆盖云端'
+      : '加载失败,本地暂用空数据 — 已锁定,不会覆盖云端');
     console.error('[bindCloud pull]', e);
   }
   _psMemSnapshot('bindCloud after pull');
@@ -1110,6 +1227,7 @@ function _applyRemoteSnapshot(rawState) {
     applyAllAppearance();
     renderAll();
     _psMemSnapshot('applyRemote after render');
+    _snapSave(false);   // 顺带刷新冷启快照(60s 节流)
     psLog('LOG', 'applyRemote:done');
   } catch (e) {
     applyingRemote = false;
@@ -1328,6 +1446,13 @@ function pushState() {
   try { _tombAutoDiffM(state); } catch (_) {}
   // 安全闸:第一次 pull 没成功 → 严禁 push(否则会用空 state 覆盖云端真实数据)
   if (!_initialPullOk) {
+    if (_bootedFromSnapshot) {
+      // 本地快照已经出画面,但首次 pull(3MB,4~6 秒)还在飞。改动先留在内存 state 里,
+      // 等 pull 落地后走 additive merge 推联合集 —— 铁律 7:挡下的操作必须补做,不许静默丢
+      _snapDirty = true;
+      setSync('syncing', '同步中…');
+      return;
+    }
     console.warn('[push blocked] initial pull not ok — refusing to push (data protection)');
     setSync('error', '云端未拉取成功,push 已锁定保护数据');
     return;
@@ -4911,7 +5036,7 @@ function _caretToEnd(el) {
 // 列表 → 普通行),再按一次才是正常的并进上一行。
 // 想延续上一行的格式,从那行有格式的文字里回车即可(contenteditable 原生就会延续),
 // 所以「行首退格」这个位置留给清格式更值。
-// 返回 'ul' | 'ol' | 'quote' | 'head';null = 不接管,走原生退格
+// 返回 { fmt, fmtEl, lineEl };null = 不接管,走原生退格
 function _sumBlockFmtAtLineStart(ed) {
   if (!ed) return null;
   const sel = window.getSelection();
@@ -4934,26 +5059,81 @@ function _sumBlockFmtAtLineStart(ed) {
   if (!fmt) return null;
   // 行首判定 = 从「这一行」的起点到光标之间没有任何文字(chip 也算文字,所以
   // 光标在行首 chip 之后不算行首,退格照旧解构 chip)。
-  // 引用是 <blockquote><div>每行</div></blockquote>,行 = 里面那层 div,不是 blockquote 本身
+  // 引用是 <blockquote><div>每行</div></blockquote>,行 = 里面那层 div,不是 blockquote 本身;
+  // 工具栏现做的引用可能是裸文本直接挂 blockquote,那时行就是 blockquote 自己
   let lineEl = fmtEl;
   if (fmt === 'quote') {
-    let p = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentNode;
+    let p = r.startContainer;
     while (p && p !== fmtEl && p.parentNode !== fmtEl) p = p.parentNode;
-    if (p && p !== fmtEl) lineEl = p;
+    if (p && p !== fmtEl && p.nodeType === 1) lineEl = p;
   }
   const probe = document.createRange();
   probe.selectNodeContents(lineEl);
   try { probe.setEnd(r.startContainer, r.startOffset); } catch (_) { return null; }
-  return probe.toString().length ? null : fmt;
+  if (probe.toString().length) return null;
+  return { fmt: fmt, fmtEl: fmtEl, lineEl: lineEl };
 }
-// 脱掉当前行的块格式。用 execCommand 让浏览器自己处理列表拆分 / 序号重排 / 光标,
-// 比手搓 DOM 稳(实测 Chromium:中间项脱出会把列表正确拆成前段 + 普通行 + 后段)
-function _sumStripBlockFmt(fmt) {
+// 把引用里的当前行拆出来变普通行 —— 手搓 DOM,不用 execCommand('outdent')。
+// 原因(Kayu 2026-08-20 实测):iOS Safari 上 outdent 对 blockquote 不生效,
+// 表现就是「标题/列表都能清格式,唯独引用清不掉」。Chromium 下手搓与 outdent 结果一致。
+// 拆法 = 把 blockquote 切成 [前半段引用] + [这一行的普通 div] + [后半段引用],空段丢掉。
+function _sumUnwrapQuoteLine(bq, lineEl) {
+  if (!bq || !bq.parentNode) return false;
+  const kids = Array.prototype.slice.call(bq.childNodes);
+  let before = [], lineNodes = [], after = [];
+  if (lineEl && lineEl !== bq) {
+    const i = kids.indexOf(lineEl);
+    if (i < 0) return false;
+    before = kids.slice(0, i);
+    lineNodes = Array.prototype.slice.call(lineEl.childNodes);
+    after = kids.slice(i + 1);
+  } else {
+    // 裸文本 / <br> 分行:光标必在第一段(有文字就不会接管),切到第一个顶层 <br>
+    let bi = -1;
+    for (let k = 0; k < kids.length; k++) {
+      const n = kids[k];
+      if (n.nodeType === 1 && n.tagName && n.tagName.toLowerCase() === 'br') { bi = k; break; }
+    }
+    if (bi < 0) { lineNodes = kids; }
+    else { lineNodes = kids.slice(0, bi); after = kids.slice(bi + 1); }
+  }
+  const div = document.createElement('div');
+  lineNodes.forEach(n => div.appendChild(n));
+  if (!div.childNodes.length) div.appendChild(document.createElement('br'));
+  const frag = document.createDocumentFragment();
+  if (before.length) {
+    const b1 = bq.cloneNode(false);           // cloneNode(false) 保留 type="cite" 之类属性
+    before.forEach(n => b1.appendChild(n));
+    frag.appendChild(b1);
+  }
+  frag.appendChild(div);
+  if (after.length) {
+    const b2 = bq.cloneNode(false);
+    after.forEach(n => b2.appendChild(n));
+    frag.appendChild(b2);
+  }
+  bq.parentNode.replaceChild(frag, bq);
+  // 光标回到这一行开头
   try {
-    if (fmt === 'ul') document.execCommand('insertUnorderedList');
-    else if (fmt === 'ol') document.execCommand('insertOrderedList');
-    else if (fmt === 'quote') document.execCommand('outdent');
-    // 列表/引用脱出来是「裸文本 + <br>」直接挂在编辑器根上,再包回 <div>,
+    const sel = window.getSelection();
+    const rr = document.createRange();
+    const w = document.createTreeWalker(div, NodeFilter.SHOW_TEXT);
+    const tn = w.nextNode();
+    if (tn) rr.setStart(tn, 0); else rr.setStart(div, 0);
+    rr.collapse(true);
+    sel.removeAllRanges(); sel.addRange(rr);
+  } catch (_) {}
+  return true;
+}
+// 脱掉当前行的块格式。列表/标题交给 execCommand(列表拆分 + 序号重排浏览器做得比手搓稳,
+// 且 iOS 上这两条命令实测正常);引用手搓,见上。
+function _sumStripBlockFmt(info) {
+  if (!info) return;
+  try {
+    if (info.fmt === 'quote') { _sumUnwrapQuoteLine(info.fmtEl, info.lineEl); return; }
+    if (info.fmt === 'ul') document.execCommand('insertUnorderedList');
+    else if (info.fmt === 'ol') document.execCommand('insertOrderedList');
+    // 列表脱出来是「裸文本 + <br>」直接挂在编辑器根上,再包回 <div>,
     // 跟 _mdToEditHtml 生成的结构保持一致(标题这一步本身就是脱格式)
     document.execCommand('formatBlock', false, 'div');
   } catch (_) {}
@@ -4963,10 +5143,10 @@ function _sumHandleBlockFmtBackspace(ed, e) {
   if (!ed || !e) return false;
   if (e.key !== 'Backspace' || e.metaKey || e.ctrlKey || e.altKey) return false;
   if (e.isComposing || e.keyCode === 229) return false;   // IME 组词中的退格归输入法
-  const fmt = _sumBlockFmtAtLineStart(ed);
-  if (!fmt) return false;
+  const info = _sumBlockFmtAtLineStart(ed);
+  if (!info) return false;
   e.preventDefault();
-  _sumStripBlockFmt(fmt);
+  _sumStripBlockFmt(info);
   return true;
 }
 
@@ -17801,6 +17981,7 @@ function renderSettingsAccount(view) {
   view.querySelector('[data-action="logout"]').onclick = async () => {
     if (!confirm('确定退出登录?')) return;
     _clearCreds();          // 主动登出 → 清凭证,避免下次启动自动登回去
+    _snapClear();           // 连本地秒开快照一起清,别把数据留在机器上
     // 加长冷却到 1 小时,期间不允许自动重登(用户明确想退出)
     _autoReloginCooldownUntil = Date.now() + 3600 * 1000;
     try { await auth.signOut(); } catch (_) {}
@@ -19333,5 +19514,6 @@ const _PSF_STANDALONE = window.navigator.standalone === true
 
 // 启动
 applyTheme();
+_bootFromSnapshot();   // 先用本地快照秒开;没快照就静默跳过,走原来的「等 pull」路径
 setupAuth();
 bindGlobalEvents();

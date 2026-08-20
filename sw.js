@@ -1,9 +1,13 @@
 // PSFocus mobile · Service Worker
 // 目的:Chrome / Safari iOS 杀掉 tab 重新加载时,不依赖网络也能起来 — 防「无法打开此网页」
 // 策略:app shell(html / js / css)走 stale-while-revalidate,云端 API(CloudBase)绝不拦
-const SW_BUILD = '20260820-0930';
+const SW_BUILD = '20260820-1120';
 const CACHE_NAME = 'psfocus-shell-' + SW_BUILD;
-const SHELL_URLS = ['./', './index.html', './app.js', './style.css'];
+// 注意带 ?v=:fetch 处理器【不】忽略 query,所以预缓存的 key 必须跟 index.html
+// 里实际请求的 URL 一模一样,否则预缓存永远命中不到(2026-08-20 修)。
+// SDK 也一起预缓存 —— 它现在放自己域名,离线时靠它 + 本地快照仍能看数据。
+const SHELL_URLS = ['./', './index.html',
+  './app.js?v=' + SW_BUILD, './style.css?v=' + SW_BUILD, './cloudbase.full.js?v=' + SW_BUILD];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(

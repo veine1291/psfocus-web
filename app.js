@@ -247,26 +247,61 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ===== TCB 初始化 =====
-if (typeof cloudbase === 'undefined') {
-  psLog('ERR', 'cloudbase SDK not loaded');
-  showFatal('CloudBase SDK 没加载到。检查网络或浏览器是否拦了 static.cloudbase.net。');
-  throw new Error('cloudbase undefined');
-}
-psLog('LOG', 'cloudbase SDK ok, init env');
+// SDK 不再是首屏的硬前置(2026-08-20)。原来 index.html 里是一个同步 <script>,
+// 824KB 的 cloudbase.full.js 下完 + 解析完,app.js 才开始跑 —— 而本地快照渲染
+// 根本不需要它。现在改成:app.js 先跑、先用快照把画面画出来,SDK 在后台加载,
+// 加载完再 init + setupAuth。顺带两个好处:
+//   · 离线 / CDN 被挡时不再是白屏 throw,而是照常显示本地数据(只是不能同步)
+//   · SDK 放自己域名(web/cloudbase.full.js)→ 进 Service Worker 缓存 → 真离线可用,
+//     也不再受 CDN 的 `latest` 路径随时换版本影响;本地拿不到才回落 CDN
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20260820-1120';
+const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
-try {
-  tcbApp = cloudbase.init({ env: ENV_ID, region: REGION });
-  auth = tcbApp.auth({ persistence: 'local' });
-  db = tcbApp.database();
-  psLog('LOG', 'tcbApp/auth/db ready');
-} catch (e) {
-  psLog('ERR', 'cloudbase.init failed', e);
-  _psLogFlushNow();
-  showFatal('CloudBase 初始化失败:' + (e && e.message || e));
-  throw e;
+
+function _loadScript(url) {
+  return new Promise((res, rej) => {
+    const el = document.createElement('script');
+    el.src = url;
+    el.async = true;
+    el.onload = () => (window.cloudbase ? res() : rej(new Error('loaded but no cloudbase: ' + url)));
+    el.onerror = () => rej(new Error('load fail: ' + url));
+    document.head.appendChild(el);
+  });
+}
+async function _ensureCloudSdk() {
+  if (window.cloudbase) return;
+  try {
+    await _loadScript(_SDK_LOCAL);
+  } catch (e1) {
+    psLog('WARN', 'sdk local fail, fallback cdn', (e1 && e1.message) || e1);
+    await _loadScript(_SDK_CDN);
+  }
+}
+// 拉 SDK → init → 交给 setupAuth 走登录/同步。失败时:已有快照画面就只降级成
+// 「离线,不能同步」;连快照都没有(首次使用)才是真的没法用,显示 fatal。
+async function _initCloud() {
+  const t0 = Date.now();
+  try {
+    await _ensureCloudSdk();
+    psLog('LOG', 'cloudbase SDK ready in ' + (Date.now() - t0) + 'ms, init env');
+    tcbApp = cloudbase.init({ env: ENV_ID, region: REGION });
+    auth = tcbApp.auth({ persistence: 'local' });
+    db = tcbApp.database();
+    psLog('LOG', 'tcbApp/auth/db ready');
+  } catch (e) {
+    psLog('ERR', 'cloudbase init/load failed', (e && e.message) || e);
+    _psLogFlushNow();
+    if (_bootedFromSnapshot) {
+      setSync('error', '离线 — 显示本地缓存,暂不能同步');
+      return;
+    }
+    showFatal('CloudBase 没加载到。检查网络,或浏览器是否拦了 static.cloudbase.net。\n' + ((e && e.message) || e));
+    return;
+  }
+  setupAuth();
 }
 
 // ===== 全局状态 =====
@@ -754,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260820-0930';
+const _PSFOCUS_BUILD = '20260820-1120';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -19512,8 +19547,33 @@ const _PSF_STANDALONE = window.navigator.standalone === true
   document.addEventListener('focusout', () => setTimeout(apply, 80), true);
 })();
 
+// 启动耗时体检 —— 把每一段单独记下来,下次看 mobile-debug.log 就能直接读出
+// 时间花在哪(导航 / SDK / app.js / css / 首次绘制),不用再靠猜。
+function _logBootTiming() {
+  setTimeout(() => {
+    try {
+      const nav = (performance.getEntriesByType('navigation') || [])[0];
+      const res = performance.getEntriesByType('resource') || [];
+      const one = (needle) => {
+        const r = res.find(x => (x.name || '').indexOf(needle) >= 0);
+        return r ? Math.round(r.responseEnd - r.startTime) : -1;
+      };
+      const fcp = (performance.getEntriesByName('first-contentful-paint') || [])[0];
+      psLog('LOG', 'boot-timing'
+        + ' nav=' + (nav ? Math.round(nav.responseEnd - nav.startTime) : -1) + 'ms'
+        + ' css=' + one('style.css') + 'ms'
+        + ' appjs=' + one('app.js') + 'ms'
+        + ' sdk=' + one('cloudbase') + 'ms'
+        + ' dcl=' + (nav ? Math.round(nav.domContentLoadedEventEnd) : -1) + 'ms'
+        + ' fcp=' + (fcp ? Math.round(fcp.startTime) : -1) + 'ms'
+        + ' snapshot=' + (_bootedFromSnapshot ? 'yes' : 'no'));
+    } catch (_) {}
+  }, 4000);
+}
+
 // 启动
 applyTheme();
 _bootFromSnapshot();   // 先用本地快照秒开;没快照就静默跳过,走原来的「等 pull」路径
-setupAuth();
 bindGlobalEvents();
+_initCloud();          // SDK 后台加载 → init → setupAuth(不挡首屏)
+_logBootTiming();

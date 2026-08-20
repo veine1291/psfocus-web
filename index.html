@@ -14,8 +14,7 @@
        DNS+TLS 做掉,别等 app.js 跑起来才开始(手机上这几百毫秒很明显) -->
   <link rel="preconnect" href="https://tcb-api.tencentcloudapi.com" crossorigin>
   <link rel="preconnect" href="https://tcb-ws.tencentcloudapi.com" crossorigin>
-  <link rel="preconnect" href="https://static.cloudbase.net" crossorigin>
-  <link rel="stylesheet" href="style.css?v=20260820-0930">
+  <link rel="stylesheet" href="style.css?v=20260820-1120">
 </head>
 <body>
 
@@ -153,8 +152,10 @@
 <!-- Toast -->
 <div id="toast" class="toast hidden"></div>
 
-<!-- 腾讯云 CloudBase SDK(暴露 window.cloudbase) -->
-<script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js?v=1"></script>
-<script src="app.js?v=20260820-0930"></script>
+<!-- CloudBase SDK 不再用同步 <script> 挡首屏:824KB 下载+解析完 app.js 才能开跑,
+     而「用本地快照秒开」这条路根本不需要它。改由 app.js 在画完首屏后自己去加载
+     (见 _initCloud);这里只 preload,让下载在解析 HTML 时就并行开始。 -->
+<link rel="preload" href="cloudbase.full.js?v=20260820-1120" as="script">
+<script src="app.js?v=20260820-1120"></script>
 </body>
 </html>

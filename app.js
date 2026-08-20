@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260820-1120';
+const _PSFOCUS_BUILD = '20260821-0756';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1097,6 +1097,8 @@ async function bindCloud() {
         _bootedFromSnapshot = false; _snapDirty = false;
       }
       _snapSave(true);   // 这份就是下次冷启的秒开数据
+      // 预热完成音解码:第一次勾完成时就能即时响,不用等几十毫秒的 decode
+      try { _mEnsureCompletionBuffer(); } catch (_) {}
       // 兜底:对比 localStorage 备份,本地有但云端没有的近期 summaries 自动补回
       // 防"跨设备 stale push 覆盖云端"导致用户笔记凭空消失
       try { _restoreSummariesFromBackupLS(); } catch (_) {}
@@ -8308,23 +8310,68 @@ function _medGetAudioCtx() {
 // ===== 完成任务提示音 (2026-07-01) =====
 // 默认合成明亮上行三音琶音(复用冥想的 AudioContext);用户可在设置里上传自定义音效,
 // 存 settings.completionSoundData (data URL) 随 state 同步到电脑端 —— 一处上传三端通用。
-let _completionAudioElM = null;
+// 2026-08-20:自定义音效改走 Web Audio,不再用 <audio> 元素。
+// 原因(Kayu 报「完成音挤占背景音」):iOS 上只要页面播过一次 HTMLMediaElement,
+// 整个页面的音频会话就被切成独占类别,用户正在听的 BGM 会被直接掐掉。
+// AudioContext 走的是可混音的会话,提示音叠在 BGM 上响,不打断。
+// 代价是 data URL 要先解码成 AudioBuffer(异步),所以登录后预热一次,之后即点即响。
+// 现在全 web 端已经没有任何 new Audio / <audio> —— 这是保住「不抢音频会话」的前提,
+// 以后要加音效请一律走 AudioContext。
+let _completionBufM = null;        // 解码好的 AudioBuffer
+let _completionBufKeyM = '';       // 它对应的 data URL(用户换音效要重新解码)
+let _completionDecodeFailM = false;
+
+async function _mEnsureCompletionBuffer() {
+  const data = (state && state.settings && state.settings.completionSoundData) || '';
+  if (!data) return null;
+  if (_completionBufM && _completionBufKeyM === data) return _completionBufM;
+  if (_completionDecodeFailM && _completionBufKeyM === data) return null;   // 已知解不出,别每次重试
+  const ctx = _medGetAudioCtx();
+  if (!ctx) return null;
+  try {
+    const raw = await (await fetch(data)).arrayBuffer();
+    const decoded = await ctx.decodeAudioData(raw);
+    _completionBufM = decoded; _completionBufKeyM = data; _completionDecodeFailM = false;
+    return decoded;
+  } catch (e) {
+    // 解不出来(编码 Web Audio 不支持)→ 退回内置合成音。
+    // 【不】退回 <audio>:那正是会掐掉 BGM 的东西,宁可换个声音也不打断用户听歌。
+    _completionBufKeyM = data; _completionDecodeFailM = true; _completionBufM = null;
+    psLog('WARN', 'completion sound decode fail, fallback to tones', (e && e.message) || e);
+    return null;
+  }
+}
+function _mPlayBuffer(buf) {
+  const ctx = _medGetAudioCtx();
+  if (!ctx || !buf) return false;
+  try {
+    if (ctx.state === 'suspended') ctx.resume();
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start();
+    return true;
+  } catch (_) { return false; }
+}
+function _mCompletionTones() {
+  _mPlayTone(659.25, 0,    0.45, 0.14);   // E5
+  _mPlayTone(830.61, 0.09, 0.45, 0.13);   // G#5
+  _mPlayTone(987.77, 0.18, 0.55, 0.13);   // B5
+}
 function _playCompletionSoundM() {
   const s = (state && state.settings) || {};
   if (s.completionSoundEnabled === false) return;
   const data = s.completionSoundData;
-  if (data) {
-    try {
-      if (!_completionAudioElM) _completionAudioElM = new Audio();
-      if (_completionAudioElM.src !== data) _completionAudioElM.src = data;
-      _completionAudioElM.currentTime = 0;
-      _completionAudioElM.play().catch(() => {});
+  if (data && !(_completionDecodeFailM && _completionBufKeyM === data)) {
+    if (_completionBufM && _completionBufKeyM === data) {
+      if (_mPlayBuffer(_completionBufM)) return;
+    } else {
+      // 还没解码(首次 / 刚换过音效)→ 解完再响,只晚几十毫秒
+      _mEnsureCompletionBuffer().then(buf => { if (!_mPlayBuffer(buf)) _mCompletionTones(); });
       return;
-    } catch (_) {}
+    }
   }
-  _mPlayTone(659.25, 0,    0.45, 0.14);   // E5
-  _mPlayTone(830.61, 0.09, 0.45, 0.13);   // G#5
-  _mPlayTone(987.77, 0.18, 0.55, 0.13);   // B5
+  _mCompletionTones();
 }
 function _mPlayTone(freq, delay, dur, peak) {
   const ctx = _medGetAudioCtx();
@@ -9270,6 +9317,13 @@ function bindCloudTimelineImages(root) {
       .map(c => c.querySelector('.dp-image'))
       .filter(Boolean)
       .map(img => ({ cloudFileID: img.dataset.cloudFileId || '', title: img.alt || '' }));
+    // 大图里也能删:找到这组图属于哪个任务(详情 sheet 的 body 上有 data-task-id)
+    const gridHost = grid.closest('[data-task-id]');
+    const gridTaskId = gridHost ? gridHost.dataset.taskId : '';
+    const imgIds = cells.map(c => c.dataset.imgId || '');
+    const lbOpts = gridTaskId
+      ? { onDelete: (k) => _mDeleteTaskImage(gridTaskId, imgIds[k]) }
+      : null;
     cells.forEach((cell, i) => {
       const img = cell.querySelector('.dp-image');
       if (!img) return;
@@ -9278,7 +9332,7 @@ function bindCloudTimelineImages(root) {
         // 删除按钮在图上,得让删除走自己的 handler
         if (ev.target.closest('[data-action="dp-task-del-image"]')) return;
         ev.stopPropagation();
-        openImageLightbox(slides, i);
+        openImageLightbox(slides, i, lbOpts);
       });
     });
   });
@@ -9313,9 +9367,15 @@ function bindCloudTimelineImages(root) {
 // =========================================================
 // ===== 图片 Lightbox(全屏 + 横向 swipe 切换)=====
 // =========================================================
-function openImageLightbox(images, startIdx) {
+// lightbox 是全局单例,这两个跟着每次 open 更新:当前图 index + 本次的删除回调
+let _lbOnDelete = null;
+let _lbCurIdx = 0;
+
+// opts.onDelete(idx) —— 传了才在右上角出删除按钮(返回 false = 用户取消,不关 lightbox)
+function openImageLightbox(images, startIdx, opts) {
   if (!Array.isArray(images) || !images.length) return;
   startIdx = Math.max(0, Math.min(startIdx || 0, images.length - 1));
+  _lbOnDelete = (opts && typeof opts.onDelete === 'function') ? opts.onDelete : null;
   let lb = document.getElementById('img-lightbox');
   if (!lb) {
     lb = document.createElement('div');
@@ -9324,6 +9384,7 @@ function openImageLightbox(images, startIdx) {
     lb.innerHTML = `
       <div class="img-lb-mask"></div>
       <div class="img-lb-stage">
+        <button class="img-lb-del hidden" type="button" aria-label="删除这张图" title="删除"><span class="ico-trash"></span></button>
         <button class="img-lb-close" type="button" aria-label="关闭">×</button>
         <div class="img-lb-viewport">
           <div class="img-lb-track"></div>
@@ -9335,6 +9396,17 @@ function openImageLightbox(images, startIdx) {
       </div>`;
     document.body.appendChild(lb);
     lb.querySelector('.img-lb-mask').addEventListener('click', closeImageLightbox);
+    // 删除按钮:lightbox 是全局单例、被多处复用(时间轴/摘要/任务/作品),
+    // 只有传了 onDelete 的调用方才显示它 —— 所以 handler 绑一次,读当前的 _lbOnDelete
+    const delBtn = lb.querySelector('.img-lb-del');
+    const doDel = (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      if (typeof _lbOnDelete !== 'function') return;
+      const fn = _lbOnDelete, i = _lbCurIdx;
+      if (fn(i) !== false) closeImageLightbox();
+    };
+    delBtn.addEventListener('click', doDel);
+    delBtn.addEventListener('touchend', doDel, { passive: false });
     const closeBtn = lb.querySelector('.img-lb-close');
     closeBtn.addEventListener('click', closeImageLightbox);
     // touch fallback — 防 iOS Safari 上 viewport touch-action:none 偶发把附近 tap 吞掉
@@ -9391,8 +9463,12 @@ function openImageLightbox(images, startIdx) {
     track.style.transform = `translateX(${-idx * 100}%)`;
     counter.textContent = `${idx + 1} / ${images.length}`;
     titleEl.textContent = images[idx].title || '';
+    _lbCurIdx = idx;          // 删除按钮要知道当前看的是第几张
     _loadAround(idx);
   };
+  // 只有调用方给了 onDelete 才露删除按钮(时间轴/作品图不给,就没有)
+  const delBtnEl = lb.querySelector('.img-lb-del');
+  if (delBtnEl) delBtnEl.classList.toggle('hidden', !_lbOnDelete);
   updateUI(false);
 
   const viewport = lb.querySelector('.img-lb-viewport');
@@ -12068,6 +12144,20 @@ function openEventDetail(id) {
     }
   };
 }
+// 删任务附图 —— 缩略图右上角的 × 和大图查看器里的删除都走这一个入口,
+// 免得两处各写一份、改一处漏一处(2026-08-20)
+function _mDeleteTaskImage(taskId, imgId) {
+  if (!taskId || !imgId) return false;
+  const t = (state.tasks || []).find(x => x.id === taskId);
+  if (!t) return false;
+  if (!confirm('删除这张图?')) return false;
+  t.images = (t.images || []).filter(x => x.id !== imgId);
+  t.updatedAt = Date.now();
+  pushState();
+  openTaskDetail(taskId);   // 重开详情刷新图片网格
+  return true;
+}
+
 function openTaskDetail(id, opts) {
   try {
     return _openTaskDetailInner(id, opts);
@@ -12256,7 +12346,7 @@ function _openTaskDetailInner(id, opts) {
   const imagesHtml = images.map(im => `
     <div class="dp-image-cell" data-img-id="${esc(im.id)}">
       <img class="dp-image" data-cloud-file-id="${esc(im.cloudFileID)}" alt="${esc(im.name || '')}" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
-      <button class="dp-image-del" data-action="dp-task-del-image" data-img-id="${esc(im.id)}" title="删除">×</button>
+      <button class="dp-image-del" data-action="dp-task-del-image" data-img-id="${esc(im.id)}" title="删除" aria-label="删除这张图"><span class="ico-x"></span></button>
     </div>
   `).join('');
 
@@ -12832,12 +12922,7 @@ function bindTaskDetailEvents(body, id) {
   });
   body.querySelectorAll('[data-action="dp-task-del-image"]').forEach(b => b.onclick = (ev) => {
     ev.stopPropagation();
-    const imgId = b.dataset.imgId;
-    if (!confirm('删除这张图?')) return;
-    t.images = (t.images || []).filter(x => x.id !== imgId);
-    t.updatedAt = Date.now();
-    pushState();
-    openTaskDetail(id);
+    _mDeleteTaskImage(id, b.dataset.imgId);
   });
 
   // 异步加载所有云图(图片 + 时间轴 placeholder 等任何 data-cloud-file-id)

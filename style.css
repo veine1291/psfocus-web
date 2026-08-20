@@ -1166,7 +1166,8 @@ body.sum-editor-open { overflow: hidden; }
  *   造成「能加能改、就是删不掉」。时间是高频操作,统一放开,别让用户为了删一个时间去找 P2。 */
 #sheet.td-p1 .td-sub-add,
 #sheet.td-p1 [data-action="dp-remove-tag"],
-#sheet.td-p1 .dp-image-del,
+/* 小抽屉状态只藏子任务的删除,图片的 × 要一直在 ——
+   手机没有 hover,藏起来等于图片永远删不掉(Kayu 2026-08-20 报) */
 #sheet.td-p1 .dp-sub-del {
   display: none;
 }
@@ -2143,11 +2144,16 @@ body.sum-editor-open { overflow: hidden; }
   font-size: 14px;
   line-height: 1;
   display: flex; align-items: center; justify-content: center;
-  opacity: 0;
-  transition: opacity .15s ease;
+  /* 手机上没有 hover —— 原来 opacity:0 只在 :hover/:active 显示,
+     实际效果是这个按钮永远看不见(Kayu 2026-08-20 报「附图无法删除」)。改成常显。 */
+  opacity: 1;
+  border: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .15s ease;
 }
-.dp-image-cell:hover .dp-image-del,
-.dp-image-cell:active .dp-image-del { opacity: 1; }
+.dp-image-del:active { background: rgba(0, 0, 0, 0.8); }
+.dp-image-del .ico-x { width: 12px; height: 12px; background: currentColor; }
 .dp-image-add {
   aspect-ratio: 1 / 1;
   border-radius: 8px;
@@ -4366,6 +4372,27 @@ body.sum-editor-open { overflow: hidden; }
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 .img-lb-close:active { background: rgba(0, 0, 0, 0.8); }
+/* 大图里的删除 —— 与关闭按钮同规格(44px 触控目标),摆在它左边;
+   只有调用方传了 onDelete 才会去掉 .hidden(时间轴/作品图不给删) */
+.img-lb-del {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: 70px;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 20;
+  isolation: isolate;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .15s ease;
+}
+.img-lb-del.hidden { display: none; }
+.img-lb-del:active { background: var(--danger, #d9534f); }
+.img-lb-del .ico-trash { width: 20px; height: 20px; background: currentColor; }
 .img-lb-viewport {
   flex: 1 1 auto;
   overflow: hidden;

@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260821-0756';
+const _PSFOCUS_BUILD = '20260821-1046';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -5952,7 +5952,7 @@ function _renderSummaryDayHeaderModules(dayKey) {
         const avgStr = count > 1 ? avg.toFixed(1) : String(entries[0].value || 0);
         txt = `${m.title || '打分'} ${avgStr}/${max}${count > 1 ? ` <span class="sum-day-mod-extra">平均 ×${count}</span>` : ''}`;
       } else {
-        txt = `${m.title || '打分'} —`;
+        continue;   // 当天这个模块没记录 → 不出 chip(对齐桌面,Kayu:没内容就别占位)
       }
     } else if (m.kind === 'duration') {
       if (m.source === 'focus') continue;
@@ -5965,7 +5965,7 @@ function _renderSummaryDayHeaderModules(dayKey) {
         const display = count > 1 ? _summaryFmtDurationMs(avg) : _summaryFmtDurationMs(total);
         txt = `${m.title || '时长'} ${display}${count > 1 ? ` <span class="sum-day-mod-extra">平均 ×${count}</span>` : ''}`;
       } else {
-        txt = `${m.title || '时长'} —`;
+        continue;   // 同上,没记录不显示
       }
     } else if (m.kind === 'checkin') {
       const mode = _checkinMode(m);
@@ -5974,7 +5974,8 @@ function _renderSummaryDayHeaderModules(dayKey) {
         txt = `${m.title || '打卡'} ${done?'✓':'○'}`;
       } else if (mode === 'count') {
         const cnt = _checkinCountForDay(m, dayKey);
-        txt = `${m.title || '打卡'} ${cnt > 0 ? cnt + ' 次' : '—'}`;
+        if (cnt <= 0) continue;   // 当天没打卡 → 不显示
+        txt = `${m.title || '打卡'} ${cnt} 次`;
       } else {   // once
         const cnt = _checkinCountForDay(m, dayKey);
         txt = `${m.title || '打卡'} ${cnt > 0 ? '✓' : '○'}`;
@@ -12283,7 +12284,7 @@ function _openTaskDetailInner(id, opts) {
     return !!(c && c.done);
   };
   const _renderSubRow = (s) => `
-    <li class="dp-sub ${s.done?'done':''}" data-sub-id="${esc(s.id)}" data-sub-source="${s.source}"${s.checklistItem ? ' data-sub-checklist="1"' : ''}${s.depth ? ` style="margin-left:${s.depth * 14}px"` : ''}>
+    <li class="dp-sub ${s.done?'done':''}" data-sub-id="${esc(s.id)}" data-sub-source="${s.source}" data-sub-parent="${esc(s.parent || '')}"${s.checklistItem ? ' data-sub-checklist="1"' : ''}${s.depth ? ` style="margin-left:${s.depth * 14}px"` : ''}>
       <button class="dp-sub-check ${s.done?'done':''}" data-action="toggle-sub">${s.done ? '✓' : ''}</button>
       ${s.checklistItem ? '<span class="dp-sub-checklist-mark" title="检查事项 — 每次重复都会重置">≡</span>' : ''}
       <span class="dp-sub-title" contenteditable="true" spellcheck="false" data-action="edit-sub-title">${esc(s.title || '')}</span>
@@ -12295,7 +12296,7 @@ function _openTaskDetailInner(id, opts) {
     if (depth > 40) return '';   // 深度守卫:normalize 前的瞬时环不至于爆栈白屏
     if (_hideDoneSubs && _subDoneNow(c)) return '';
     let h = _renderSubRow({
-      source: 'task', id: c.id, title: c.title,
+      source: 'task', id: c.id, title: c.title, parent: c.parentTaskId || '',
       checklistItem: c.checklistItem === true,
       done: _subDoneNow(c), depth,
     });
@@ -12309,7 +12310,7 @@ function _openTaskDetailInner(id, opts) {
   const legacyRows = legacySubs
     .filter(s => !(_hideDoneSubs && s.done))
     .map(s => ({
-      source: 'legacy', id: s.id, title: s.title,
+      source: 'legacy', id: s.id, title: s.title, parent: t.id,
       checklistItem: false, done: !!s.done, depth: 0,
     }));
   let subsInner = normalKids.map(c => _renderSubTree(c, 0)).join('')
@@ -12503,7 +12504,108 @@ function _openTaskDetailInner(id, opts) {
     if (dp) dp.scrollTop = _prevScrollTop;
   }
 }
+// ===== 详情里的子任务 / 检查事项:长按拖拽调序(2026-08-21)=====
+// 桌面早就能拖(HTML5 draggable),手机一直没有 —— 触屏没有 dragstart 事件,得自己做
+// 长按 + touchmove。规则跟桌面 _dpSubDrag 对齐:**只在同一父级 + 同类别(子任务 / 检查事项
+// 各自排)内调序**,跨组不动,免得两端排出来的顺序不一样。
+// 落位时按 DOM 顺序整组重编 order(100/200/300…)而不是取中点 —— 老数据 order 普遍是 0,
+// 取中点会算出同一个值、拖了等于没拖。只给 order 真变了的条目 bump updatedAt。
+function _subGroupKeyM(li) {
+  return (li.dataset.subParent || '') + '|' + (li.dataset.subChecklist || '') + '|' + (li.dataset.subSource || '');
+}
+function _commitSubOrderM(taskId, list, dragEl) {
+  const key = _subGroupKeyM(dragEl);
+  const rows = Array.from(list.querySelectorAll('li.dp-sub')).filter(li => _subGroupKeyM(li) === key);
+  if (rows.length < 2) return false;
+  let changed = false;
+  if (dragEl.dataset.subSource === 'legacy') {
+    // 老模型:t.subtasks 数组,按 DOM 顺序重排数组本身
+    const t = (state.tasks || []).find(x => x.id === taskId);
+    if (!t || !Array.isArray(t.subtasks)) return false;
+    const ids = rows.map(li => li.dataset.subId);
+    const byId = new Map(t.subtasks.map(s => [s.id, s]));
+    const reordered = ids.map(i => byId.get(i)).filter(Boolean);
+    const rest = t.subtasks.filter(s => !ids.includes(s.id));
+    if (reordered.length !== ids.length) return false;
+    t.subtasks = reordered.concat(rest);
+    t.updatedAt = Date.now();
+    changed = true;
+  } else {
+    rows.forEach((li, i) => {
+      const x = (state.tasks || []).find(y => y.id === li.dataset.subId);
+      if (!x) return;
+      const want = (i + 1) * 100;
+      if ((x.order || 0) !== want) { x.order = want; x.updatedAt = Date.now(); changed = true; }
+    });
+  }
+  if (changed) pushState();
+  return changed;
+}
+function bindSubDragSortM(body, taskId) {
+  const list = body.querySelector('.dp-sub-list');
+  if (!list) return;
+  let timer = null, dragEl = null, startX = 0, startY = 0, baseY = 0, moved = false;
+  const clear = () => {
+    clearTimeout(timer); timer = null;
+    if (dragEl) { dragEl.classList.remove('drag-lift'); dragEl.style.transform = ''; }
+    dragEl = null;
+  };
+  list.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    const li = e.target.closest && e.target.closest('li.dp-sub');
+    if (!li) return;
+    if (e.target.closest('.dp-sub-check, .dp-sub-del')) return;   // 勾选 / 删除按钮不参与拖拽
+    const t = e.touches[0];
+    startX = t.clientX; startY = baseY = t.clientY; moved = false;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      dragEl = li;
+      li.classList.add('drag-lift');
+      // 长按可能落在可编辑标题上,iOS 会起选区 / 放大镜 —— 拖起来就把焦点和选区清掉
+      try { const ae = document.activeElement; if (ae && li.contains(ae) && ae.blur) ae.blur(); } catch (_) {}
+      try { const sel = window.getSelection(); if (sel) sel.removeAllRanges(); } catch (_) {}
+      try { navigator.vibrate && navigator.vibrate(12); } catch (_) {}
+    }, 380);
+  }, { passive: true });
+  list.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    if (!dragEl) {
+      // 长按成立前明显移动 = 用户在滚列表,取消
+      if (Math.hypot(t.clientX - startX, t.clientY - startY) > 9) { clearTimeout(timer); timer = null; }
+      return;
+    }
+    if (e.cancelable) e.preventDefault();   // 拖拽中锁页面滚动
+    moved = true;
+    dragEl.style.transform = `translate3d(0, ${t.clientY - baseY}px, 0) scale(1.02)`;
+    const key = _subGroupKeyM(dragEl);
+    const sibs = Array.from(list.querySelectorAll('li.dp-sub'))
+      .filter(s => s !== dragEl && _subGroupKeyM(s) === key);
+    for (const s of sibs) {
+      const r = s.getBoundingClientRect();
+      const before = !!(dragEl.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_PRECEDING);
+      if (before && t.clientY < r.top + r.height / 2) {
+        list.insertBefore(dragEl, s); dragEl.style.transform = ''; baseY = t.clientY; break;
+      }
+      if (!before && t.clientY > r.top + r.height / 2) {
+        list.insertBefore(dragEl, s.nextSibling); dragEl.style.transform = ''; baseY = t.clientY; break;
+      }
+    }
+  }, { passive: false });
+  const end = () => {
+    clearTimeout(timer); timer = null;
+    if (!dragEl) return;
+    const el = dragEl, didMove = moved;
+    if (el) { el.classList.remove('drag-lift'); el.style.transform = ''; }
+    dragEl = null;
+    if (!didMove) return;
+    if (_commitSubOrderM(taskId, list, el)) openTaskDetail(taskId);
+  };
+  list.addEventListener('touchend', end);
+  list.addEventListener('touchcancel', end);
+}
+
 function bindTaskDetailEvents(body, id) {
+  bindSubDragSortM(body, id);
   const t = state.tasks.find(x => x.id === id);
   if (!t) return;
   // task-detail-close × 按钮早就在'sheet 设计语言去掉×'的清理里删了, 但这里 binding 还在
@@ -19585,14 +19687,14 @@ const _PSF_STANDALONE = window.navigator.standalone === true
     if (kbHeight < 50 || !focused) {
       if (lastOffset !== 0) {
         applying = true;
+        // ⚠ 别在两帧后把 transition 清掉:.18s 的过渡才跑了 ~32ms 就被撤掉,
+        // 属性会直接跳到终值 —— 看起来就是「顶一下」而不是滑上去(Kayu 2026-08-21 报的卡顿)。
+        // 让它自己跑完;transition 留在 inline style 上没有副作用(transform 只有这里写)。
         body.style.transition = 'transform .18s ease, padding-bottom .18s ease';
         body.style.transform = '';
         body.style.paddingBottom = '';
         lastOffset = 0;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          body.style.transition = '';
-          applying = false;
-        }));
+        applying = false;
       }
       return;
     }
@@ -19610,26 +19712,38 @@ const _PSF_STANDALONE = window.navigator.standalone === true
       return;
     }
     body.style.transition = 'transform .18s ease, padding-bottom .18s ease';
-    body.style.transform = `translateY(${newOffset}px)`;
+    body.style.transform = `translate3d(0, ${newOffset}px, 0)`;
     body.style.paddingBottom = '0px';
     lastOffset = newOffset;
-    // 抬完了再把焦点滚进视野 — 工具栏紧贴键盘, focus 通常本来就在工具栏上面所以可见;
-    // 不可见的情况 (sheet 很高,focus 被 sheet 内部 scroll 隐藏) scrollIntoView 兜底
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      body.style.transition = '';
-      applying = false;
+    applying = false;
+    // 抬完了再看要不要把焦点滚进视野。
+    // 只在【真的看不见】时才滚 —— 以前无条件 scrollIntoView({block:'center'}),
+    // 焦点本来就可见时也硬把它拽到正中间,叠在抬升动画上就是那一下顿挫(Kayu 2026-08-21 报)
+    requestAnimationFrame(() => {
       try {
-        if (ae && typeof ae.scrollIntoView === 'function') {
-          ae.scrollIntoView({ block: 'center', behavior: 'auto' });
+        if (!ae || typeof ae.getBoundingClientRect !== 'function') return;
+        const r = ae.getBoundingClientRect();
+        const visTop = vv.offsetTop;
+        const visBottom = vv.offsetTop + vv.height;
+        if (r.top >= visTop + 8 && r.bottom <= visBottom - 8) return;   // 已经看得见,别动
+        if (typeof ae.scrollIntoView === 'function') {
+          ae.scrollIntoView({ block: 'nearest', behavior: 'auto' });    // nearest:最小位移
         }
       } catch (_) {}
-    }));
+    });
   };
-  vv.addEventListener('resize', apply);
-  vv.addEventListener('scroll', apply);
+  // vv 的 resize/scroll 在键盘弹出动画期间会连发几十次 —— 用 rAF 合并成每帧最多一次,
+  // 否则每次事件都读一遍布局再写一次 style,自己把自己顶卡(渲染规范 5.4)
+  let rafId = 0;
+  const applyThrottled = () => {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => { rafId = 0; apply(); });
+  };
+  vv.addEventListener('resize', applyThrottled);
+  vv.addEventListener('scroll', applyThrottled);
   // focus/blur 触发 — 键盘可能在 vv 事件之前调起
-  document.addEventListener('focusin', () => setTimeout(apply, 80), true);
-  document.addEventListener('focusout', () => setTimeout(apply, 80), true);
+  document.addEventListener('focusin', () => setTimeout(applyThrottled, 80), true);
+  document.addEventListener('focusout', () => setTimeout(applyThrottled, 80), true);
 })();
 
 // 启动耗时体检 —— 把每一段单独记下来,下次看 mobile-debug.log 就能直接读出

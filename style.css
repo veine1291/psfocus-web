@@ -359,6 +359,18 @@ input:focus, textarea:focus { border-color: var(--accent); }
   transition: none;
 }
 .card.drag-onto { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 详情里子任务长按拖拽(2026-08-21)—— 与主列表卡片同一套视觉 */
+.dp-sub.drag-lift {
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+  background: var(--bg-panel);
+  border-radius: 8px;
+  opacity: 0.96;
+  position: relative;
+  z-index: 6;
+  transition: none;
+}
+/* 长按落在可编辑标题上时,别让 iOS 弹出「拷贝/查询」callout 和放大镜跟拖拽抢 */
+.dp-sub { -webkit-touch-callout: none; }
 
 /* ===== 滴答式大标题(任务 tab,topbar 只留按钮)+ 全高 tab 的底部空块修正 ===== */
 .view-bigtitle { padding: 4px 18px 10px; }

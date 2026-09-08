@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260908-0858';
+const _PSFOCUS_BUILD = '20260908-1051';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -8760,6 +8760,16 @@ function _shoppingLastDefaultsM(c) {
   const last = sorted[sorted.length - 1] || null;
   return { qty: last && +last.qty > 0 ? +last.qty : 1, price: last && +last.price >= 0 ? +last.price : 0 };
 }
+// 勾选表单里的参考:最近三笔(新的在前)
+function _shoppingRecentHtmlM(c) {
+  const ps = ((c && c.purchases) || []).filter(p => p && p.ts).slice().sort((a, b) => b.ts - a.ts).slice(0, 3);
+  if (!ps.length) return '';
+  const unit = c.unit ? esc(c.unit) : '';
+  const d = (ts) => { const x = new Date(ts); return `${x.getMonth() + 1}月${x.getDate()}日`; };
+  return `<div class="shop-buy-recent"><span class="shop-buy-recent-label">最近</span>${ps.map(p =>
+    `<span class="shop-buy-recent-item">${d(p.ts)} ×${_consumableFmtNum(p.qty)}${unit}${+p.price > 0 ? ` ¥${_consumableFmtNum(p.price)}` : ''}</span>`
+  ).join('<span class="dot">·</span>')}</div>`;
+}
 // opts.qty / opts.price = 用户这次填的;没传就沿用上一笔
 function _shoppingRecordPurchaseM(c, opts) {
   if (!c) return null;
@@ -8815,6 +8825,7 @@ function openShoppingPurchaseSheetM(c) {
     <div class="sheet-content shop-buy">
       <div class="shop-buy-title">记一笔 · ${esc(c.name || '未命名')}</div>
       <div class="shop-buy-sub">默认沿用上一笔,改成这次的实际数量和价格</div>
+      ${_shoppingRecentHtmlM(c)}
       <div class="shop-buy-row">
         <label class="shop-buy-field">数量${unit ? `(${unit})` : ''}
           <input type="text" inputmode="decimal" class="shop-buy-qty" value="${esc(_consumableFmtNum(def.qty))}" placeholder="1">

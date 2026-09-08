@@ -8595,3 +8595,5 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .shop-buy-actions { display: flex; gap: 10px; margin-top: 18px; }
 .shop-buy-cancel { flex: 1 1 0; padding: 12px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); border-radius: 12px; font-size: 15px; }
 .shop-buy-ok { flex: 2 1 0; padding: 12px; border-radius: 12px; font-size: 15px; }
+.shop-buy-recent { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.shop-buy-recent-label, .shop-buy-recent .dot { color: var(--text-faint, var(--text-dim)); }

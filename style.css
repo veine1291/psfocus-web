@@ -8581,3 +8581,17 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .shop-cd.st-today { color: var(--warning, #c98a1a); font-weight: 500; }
 .shop-cd.st-soon { color: var(--accent-text, var(--accent)); }
 .shop-cd.st-unknown { color: var(--text-faint, var(--text-dim)); }
+/* 购物清单:勾选后的记一笔表单(sheet) */
+.shop-buy { padding: 4px 18px 18px; }
+.shop-buy-title { font-size: 17px; font-weight: 600; color: var(--text); }
+.shop-buy-sub { font-size: 12px; color: var(--text-faint, var(--text-dim)); margin-top: 4px; }
+.shop-buy-row { display: flex; gap: 12px; margin-top: 16px; }
+.shop-buy-field { flex: 1 1 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.shop-buy-qty, .shop-buy-price {
+  width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 17px; font-variant-numeric: tabular-nums;
+  color: var(--text); background: var(--bg-input, var(--bg-section)); border: 1px solid var(--border); border-radius: 10px;
+}
+.shop-buy-qty:focus, .shop-buy-price:focus { outline: none; border-color: var(--accent); }
+.shop-buy-actions { display: flex; gap: 10px; margin-top: 18px; }
+.shop-buy-cancel { flex: 1 1 0; padding: 12px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); border-radius: 12px; font-size: 15px; }
+.shop-buy-ok { flex: 2 1 0; padding: 12px; border-radius: 12px; font-size: 15px; }

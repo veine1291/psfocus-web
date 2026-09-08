@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260908-0846';
+const _PSFOCUS_BUILD = '20260908-0858';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -8755,12 +8755,19 @@ function _shoppingSortedM() {
 function _shoppingDueCountM() {
   return _shoppingSortedM().filter(x => x.cd.state === 'overdue' || x.cd.state === 'today').length;
 }
-function _shoppingRecordPurchaseM(c) {
+function _shoppingLastDefaultsM(c) {
+  const sorted = ((c && c.purchases) || []).filter(p => p && p.ts).slice().sort((a, b) => a.ts - b.ts);
+  const last = sorted[sorted.length - 1] || null;
+  return { qty: last && +last.qty > 0 ? +last.qty : 1, price: last && +last.price >= 0 ? +last.price : 0 };
+}
+// opts.qty / opts.price = 用户这次填的;没传就沿用上一笔
+function _shoppingRecordPurchaseM(c, opts) {
   if (!c) return null;
   if (!Array.isArray(c.purchases)) c.purchases = [];
-  const sorted = c.purchases.filter(p => p && p.ts).slice().sort((a, b) => a.ts - b.ts);
-  const last = sorted[sorted.length - 1] || null;
-  const rec = { id: genId('cp'), ts: Date.now(), qty: last && +last.qty > 0 ? +last.qty : 1, price: last && +last.price >= 0 ? +last.price : 0 };
+  const def = _shoppingLastDefaultsM(c);
+  const qty = opts && Number.isFinite(+opts.qty) && +opts.qty > 0 ? +opts.qty : def.qty;
+  const price = opts && Number.isFinite(+opts.price) && +opts.price >= 0 ? +opts.price : def.price;
+  const rec = { id: genId('cp'), ts: Date.now(), qty, price };
   c.purchases.push(rec);
   _shoppingSyncGenEventM(c);
   return rec;
@@ -8796,6 +8803,51 @@ function _shoppingSyncGenEventM(c) {
   state.events.push(newEv);
   c.nextEventId = newEv.id;
 }
+// 勾选后的底部小表单:数量 / 总价,默认沿用上一笔;回车或「记一笔」确认。
+// 用 sheet 而不是行内展开:手机上键盘一弹起,列表里的行内输入框容易被盖住,
+// 而 #sheet 已经有一套跟着键盘抬升的逻辑(visualViewport),复用最稳。
+function openShoppingPurchaseSheetM(c) {
+  if (!c) return;
+  const def = _shoppingLastDefaultsM(c);
+  const unit = c.unit ? esc(c.unit) : '';
+  showSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content shop-buy">
+      <div class="shop-buy-title">记一笔 · ${esc(c.name || '未命名')}</div>
+      <div class="shop-buy-sub">默认沿用上一笔,改成这次的实际数量和价格</div>
+      <div class="shop-buy-row">
+        <label class="shop-buy-field">数量${unit ? `(${unit})` : ''}
+          <input type="text" inputmode="decimal" class="shop-buy-qty" value="${esc(_consumableFmtNum(def.qty))}" placeholder="1">
+        </label>
+        <label class="shop-buy-field">总价 ¥
+          <input type="text" inputmode="decimal" class="shop-buy-price" value="${def.price > 0 ? esc(_consumableFmtNum(def.price)) : ''}" placeholder="0">
+        </label>
+      </div>
+      <div class="shop-buy-actions">
+        <button class="shop-buy-cancel" data-action="close-sheet">取消</button>
+        <button class="shop-buy-ok btn-primary">记一笔</button>
+      </div>
+    </div>`, (body) => {
+    const qEl = body.querySelector('.shop-buy-qty'), pEl = body.querySelector('.shop-buy-price');
+    const commit = () => {
+      const qty = _parseConsNum(qEl.value), price = _parseConsNum(pEl.value);
+      if (!(qty > 0)) { showToast('数量得大于 0'); qEl.focus(); qEl.select(); return; }
+      qEl.blur(); pEl.blur();
+      const live = ((state.ledger && state.ledger.consumables) || []).find(x => x.id === c.id) || c;   // sheet 挂着期间 state 可能被替换,按 id 重取
+      const rec = _shoppingRecordPurchaseM(live, { qty, price });
+      pushState();
+      try { _playCompletionSoundM(); } catch (_) {}
+      closeSheet();
+      renderAll();
+      showToast('已记一笔:' + (live.name || '') + ' ×' + _consumableFmtNum(rec.qty) + (rec.price > 0 ? ' ¥' + _consumableFmtNum(rec.price) : '') + ' · 再点勾选框可撤销');
+    };
+    body.querySelector('.shop-buy-ok').addEventListener('click', commit);
+    // 回车 = 确认(组词中的回车不算);数量框回车先跳到价格框
+    qEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); pEl.focus(); pEl.select(); } });
+    pEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); commit(); } });
+    setTimeout(() => { try { qEl.focus(); qEl.select(); } catch (_) {} }, 60);
+  });
+}
 function renderShoppingListM(view, cl) {
   const rows = _shoppingSortedM();
   if (!rows.length) {
@@ -8803,7 +8855,7 @@ function renderShoppingListM(view, cl) {
     return;
   }
   const due = rows.filter(x => x.cd.state === 'overdue' || x.cd.state === 'today').length;
-  let html = `<div class="shop-hint-m">按预测的下次购买日排序 · 勾选即记一笔购买(沿用上一笔的数量和价格) · 再点一下撤销${due ? ` · <b>${due} 项该买</b>` : ''}</div>`;
+  let html = `<div class="shop-hint-m">按预测的下次购买日排序 · 勾选后填这次的数量和价格(默认沿用上一笔) · 再点一下撤销${due ? ` · <b>${due} 项该买</b>` : ''}</div>`;
   html += `<div class="card-list">` + rows.map(({ c, cd }) => {
     const today = _shoppingTodayPurchaseM(c);
     const s = _consumableStats(c);
@@ -8835,11 +8887,7 @@ function renderShoppingListM(view, cl) {
       showToast('已撤销「' + (c.name || '') + '」今天这一笔');
       return;
     }
-    const rec = _shoppingRecordPurchaseM(c);
-    pushState();
-    try { _playCompletionSoundM(); } catch (_) {}
-    renderAll();
-    showToast('已记一笔:' + (c.name || '') + ' ×' + _consumableFmtNum(rec.qty) + (rec.price > 0 ? ' ¥' + _consumableFmtNum(rec.price) : '') + ' · 再点可撤销');
+    openShoppingPurchaseSheetM(c);   // 填这次的数量/单价(默认上一笔),确认才记
   }));
   view.querySelectorAll('[data-shop-edit]').forEach(el => el.addEventListener('click', () => {
     const c = ((state.ledger && state.ledger.consumables) || []).find(x => x.id === el.dataset.shopEdit);

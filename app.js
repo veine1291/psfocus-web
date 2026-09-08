@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260821-1046';
+const _PSFOCUS_BUILD = '20260908-0846';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1849,6 +1849,10 @@ function _topLevelTasks(arr) { return (arr || []).filter(t => !_isChildTask(t));
 function getCurrentList() {
   if (!state) return { title: '任务', tasks: [], project: null };
   const { selectedKind, selectedId } = ui;
+  if (selectedKind === 'smart-list' && selectedId === SHOPPING_LIST_ID_M) {
+    // 购物清单(2026-09-08):账本消耗品的清单化视图,不需要开账本 tab
+    return { title: '购物清单', tasks: [], project: null, kind: 'shopping' };
+  }
   if (selectedKind === 'smart-list') {
     const sl = (state.smartLists || []).find(x => x.id === selectedId);
     if (!sl) return { title: '所有任务', tasks: _topLevelTasks((state.tasks || []).filter(t => !t.archived)), project: null, kind: 'smart-list-fallback' };
@@ -2110,7 +2114,8 @@ function renderAll() {
     try { renderCalendarSidebar(); } catch (e) { psLog('ERR', 'renderCalendarSidebar throw', e); }
   }
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
-  $('fab').classList.toggle('hidden', !(ui.tab === 'tasks' || ui.tab === 'calendar'
+  const _shopFabHide = ui.tab === 'tasks' && ui.selectedKind === 'smart-list' && ui.selectedId === SHOPPING_LIST_ID_M;
+  $('fab').classList.toggle('hidden', _shopFabHide || !(ui.tab === 'tasks' || ui.tab === 'calendar'
     || ui.tab === 'ledger'
     || (ui.tab === 'summary' && summaryState.tab !== 'data')));
   // 引用源剪贴板浮动 chip — 任一界面只要 pendingQuoteSource 存在就显示
@@ -8715,6 +8720,132 @@ function renderTimerTab(view) {
 // =========================================================
 // ===== 任务 tab =====
 // =========================================================
+// =====================================================================
+// 购物清单(2026-09-08,对齐桌面 renderShoppingListView)
+// 虚拟智能清单 __shopping__:账本「消耗品」按预测的下次购买日排成一张清单,
+// 勾选 = 记一笔购买(数量/单价沿用上一笔),再点 = 撤销今天这笔。数据仍是 state.ledger.consumables。
+// =====================================================================
+const SHOPPING_LIST_ID_M = '__shopping__';
+function _shoppingAvailableM() {
+  return !!(state && state.ledger && Array.isArray(state.ledger.consumables) && state.ledger.consumables.length);
+}
+function _dayStartM(ts) { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function _shoppingTodayPurchaseM(c) {
+  const t0 = _dayStartM(Date.now());
+  const ps = ((c && c.purchases) || []).filter(p => p && p.ts >= t0 && p.ts < t0 + 86400000);
+  ps.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  return ps[0] || null;
+}
+function _shoppingCountdownM(c) {
+  const s = _consumableStats(c);
+  if (!s || s.empty) return { state: 'unknown', text: '还没有购买记录', days: null, lastTs: null };
+  if (s.needMore || !s.nextTs) return { state: 'unknown', text: '上次 ' + _consumableFmtDate(s.lastTs) + ' · 再记一笔就能预测', days: null, lastTs: s.lastTs };
+  const days = Math.round((_dayStartM(s.nextTs) - _dayStartM(Date.now())) / 86400000);
+  if (days < 0)  return { state: 'overdue', text: '该买了 · 过了 ' + (-days) + ' 天', days };
+  if (days === 0) return { state: 'today', text: '今天该买', days };
+  if (days <= 3) return { state: 'soon', text: '还剩 ' + days + ' 天', days };
+  return { state: 'ok', text: '还剩 ' + days + ' 天 · ' + _consumableFmtDate(s.nextTs), days };
+}
+function _shoppingSortedM() {
+  const order = { overdue: 0, today: 1, soon: 2, ok: 3, unknown: 4 };
+  // 同为「没法预测」的:有过购买记录的排前(上次越久越靠前),从没买过的垫底(与桌面一致)
+  return ((state.ledger && state.ledger.consumables) || []).slice().map(c => ({ c, cd: _shoppingCountdownM(c) }))
+    .sort((a, b) => (order[a.cd.state] - order[b.cd.state]) || ((a.cd.days ?? 9e9) - (b.cd.days ?? 9e9)) || ((a.cd.lastTs ?? 9e15) - (b.cd.lastTs ?? 9e15)));
+}
+function _shoppingDueCountM() {
+  return _shoppingSortedM().filter(x => x.cd.state === 'overdue' || x.cd.state === 'today').length;
+}
+function _shoppingRecordPurchaseM(c) {
+  if (!c) return null;
+  if (!Array.isArray(c.purchases)) c.purchases = [];
+  const sorted = c.purchases.filter(p => p && p.ts).slice().sort((a, b) => a.ts - b.ts);
+  const last = sorted[sorted.length - 1] || null;
+  const rec = { id: genId('cp'), ts: Date.now(), qty: last && +last.qty > 0 ? +last.qty : 1, price: last && +last.price >= 0 ? +last.price : 0 };
+  c.purchases.push(rec);
+  _shoppingSyncGenEventM(c);
+  return rec;
+}
+function _shoppingUndoTodayM(c) {
+  const p = _shoppingTodayPurchaseM(c);
+  if (!p) return false;
+  c.purchases = (c.purchases || []).filter(x => x !== p && x.id !== p.id);
+  _shoppingSyncGenEventM(c);
+  return true;
+}
+// 开了「自动生成日历事件」的消耗品:购买后重算下次提醒事件(与桌面 cons-save 同一套规则;
+// 事件只写 schedules,legacy 字段由 pushState 里的 normalize 镜像补齐)
+function _shoppingSyncGenEventM(c) {
+  if (!c) return;
+  if (c.nextEventId) {
+    state.events = (state.events || []).filter(ev => ev.id !== c.nextEventId);
+    c.nextEventId = null;
+  }
+  if (!c.genEvent) return;
+  const stats = _consumableStats(c);
+  if (!stats || !stats.nextTs) return;
+  const today0 = _dayStartM(Date.now());
+  let evTs = stats.nextTs;
+  if (evTs < today0) evTs = today0 + 86400000;
+  const ev0 = _dayStartM(evTs);
+  const newEv = {
+    id: genId('e'), title: `补 ${c.name || '消耗品'}`,
+    schedules: [{ id: genId('sch'), kind: 'date', start: ev0, allDay: true, repeat: 'none', reminderOffset: null }],
+    color: '', tags: [], createdAt: Date.now(), updatedAt: Date.now(), consumableId: c.id,
+  };
+  if (!Array.isArray(state.events)) state.events = [];
+  state.events.push(newEv);
+  c.nextEventId = newEv.id;
+}
+function renderShoppingListM(view, cl) {
+  const rows = _shoppingSortedM();
+  if (!rows.length) {
+    view.innerHTML = `<div class="empty">账本里还没有消耗品<br><br>在电脑端「账本 → 消耗品」加上常买的东西,这里就会出现</div>`;
+    return;
+  }
+  const due = rows.filter(x => x.cd.state === 'overdue' || x.cd.state === 'today').length;
+  let html = `<div class="shop-hint-m">按预测的下次购买日排序 · 勾选即记一笔购买(沿用上一笔的数量和价格) · 再点一下撤销${due ? ` · <b>${due} 项该买</b>` : ''}</div>`;
+  html += `<div class="card-list">` + rows.map(({ c, cd }) => {
+    const today = _shoppingTodayPurchaseM(c);
+    const s = _consumableStats(c);
+    const unit = c.unit ? esc(c.unit) : '';
+    const meta = [];
+    if (s && !s.empty && !s.needMore) meta.push(`月消耗 ${_consumableFmtNum(s.perMonth)}${unit}`);
+    if (s && !s.empty) meta.push(`上次 ${_consumableFmtDate(s.lastTs)}`);
+    if (today) meta.push(`今天记了 ${_consumableFmtNum(today.qty)}${unit}${today.price > 0 ? ` ¥${_consumableFmtNum(today.price)}` : ''}`);
+    return `<div class="card shop-card ${today ? 'completed' : ''} st-${cd.state}" data-shop-id="${esc(c.id)}">
+      <div class="card-checkbox ${today ? 'checked' : ''}" data-shop-toggle="${esc(c.id)}"><span class="ico-check"></span></div>
+      <div class="card-body" data-shop-edit="${esc(c.id)}">
+        <div class="card-title">${esc(c.name || '未命名')}</div>
+        <div class="card-meta">
+          <span class="shop-cd st-${cd.state}">${esc(today ? '今天已买' : cd.text)}</span>
+          ${meta.length ? `<span class="dot">·</span>${meta.map(esc).join('<span class="dot">·</span>')}` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('') + `</div>`;
+  view.innerHTML = html;
+  // 勾选 = 记一笔 / 撤销;点正文 = 打开消耗品编辑(改数量单价、看统计)
+  view.querySelectorAll('[data-shop-toggle]').forEach(el => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const c = ((state.ledger && state.ledger.consumables) || []).find(x => x.id === el.dataset.shopToggle);
+    if (!c) return;
+    if (_shoppingTodayPurchaseM(c)) {
+      _shoppingUndoTodayM(c);
+      pushState(); renderAll();
+      showToast('已撤销「' + (c.name || '') + '」今天这一笔');
+      return;
+    }
+    const rec = _shoppingRecordPurchaseM(c);
+    pushState();
+    try { _playCompletionSoundM(); } catch (_) {}
+    renderAll();
+    showToast('已记一笔:' + (c.name || '') + ' ×' + _consumableFmtNum(rec.qty) + (rec.price > 0 ? ' ¥' + _consumableFmtNum(rec.price) : '') + ' · 再点可撤销');
+  }));
+  view.querySelectorAll('[data-shop-edit]').forEach(el => el.addEventListener('click', () => {
+    const c = ((state.ledger && state.ledger.consumables) || []).find(x => x.id === el.dataset.shopEdit);
+    if (c && typeof openConsumableEditSheet === 'function') openConsumableEditSheet(c);
+  }));
+}
 function renderTasksTab(view) {
   const cl = getCurrentList();
   const project = cl.project;
@@ -8725,6 +8856,7 @@ function renderTasksTab(view) {
 }
 
 function renderListView(view, cl) {
+  if (cl.kind === 'shopping') return renderShoppingListM(view, cl);
   const project = cl.project;
   // 项目视图走专门的渲染器(带累计专注 + 可折叠区 + 详情)
   if (project) return renderProjectView(view, cl);
@@ -14588,7 +14720,7 @@ function renderDrawerNav() {
   const body = $('drawer-nav-body');
   const smartLists = (state.smartLists || []);
   let html = '';
-  if (smartLists.length) {
+  if (smartLists.length || _shoppingAvailableM()) {
     html += navSectionTitle('__smart__', '智能清单');
     if (!ui.collapsedSections.has('__smart__')) {
       html += smartLists.map(sl => {
@@ -14596,6 +14728,11 @@ function renderDrawerNav() {
           + smartListEvents(sl).length + smartListProjects(sl).length;
         return navRowHtml({ kind: 'smart-list', id: sl.id, label: sl.name || '未命名', icon: 'ico-magic', count: cnt });
       }).join('');
+      // 购物清单:账本消耗品(该买了 / 今天到期 的条数做角标)
+      if (_shoppingAvailableM()) {
+        const due = _shoppingDueCountM();
+        html += navRowHtml({ kind: 'smart-list', id: SHOPPING_LIST_ID_M, label: '购物清单', icon: 'ico-wallet', count: due > 0 ? due : null });
+      }
     }
   }
   const tagNames = uniq([

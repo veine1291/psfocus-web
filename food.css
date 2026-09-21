@@ -6,3 +6,69 @@
 @media(max-width:440px){.food-three{grid-template-columns:1fr}.ps-food .food-three button{display:grid;grid-template-columns:90px minmax(0,1fr);width:100%}.food-three button>small:last-child{grid-column:2}.food-form-pair{grid-template-columns:1fr 100px}.food-calorie-values{gap:20px}.food-week{grid-template-columns:1fr}.food-week>div{display:grid;grid-template-columns:35px repeat(3,minmax(0,1fr));gap:5px}.food-week h3 small{display:none}.food-week button{min-height:82px}.food-purchase label{max-width:100%}.food-purchase input[type=date]{width:135px}}
 @media(pointer:coarse){.ps-food .food-btn,.ps-food summary{min-height:44px}.ps-food input,.ps-food select,.ps-food textarea{font-size:16px}.food-purchase{padding:14px 0}}
 @media(prefers-reduced-motion:reduce){.ps-food *{scroll-behavior:auto}}
+
+/* Stable module shell: the desktop toolbar never participates in page scrolling. */
+.ps-food{width:100%;max-width:none;margin:0;container-type:inline-size;container-name:food;min-width:0}
+body.section-food .dash-content{padding:0;overflow:hidden;min-width:0}
+body.section-food .ps-food{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.ps-food .food-tabs{flex:0 0 auto;margin:0;padding:12px 20px;min-height:64px;background:var(--bg-page);z-index:2;position:sticky;top:0;align-items:center}
+.ps-food .food-tabs .food-btn{min-height:38px;padding:8px 22px;white-space:nowrap}
+.food-content{min-width:0;padding:20px}
+body.section-food .food-content{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain}
+.food-status{padding:5px 20px;min-height:28px;flex:none;background:var(--bg-page)}
+.food-workspace{display:grid;grid-template-columns:minmax(310px,.8fr) minmax(0,1.4fr);gap:20px;align-items:start}
+.food-workspace>*{min-width:0}
+.food-editor-pane .food-form{max-width:none;gap:12px}
+.food-editor-pane textarea{min-height:150px}
+.food-editor-pane .food-form-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
+.food-import,.food-stock-extra{border-top:1px solid var(--border-soft);padding-top:12px}
+.food-import summary,.food-stock-extra summary{cursor:pointer;margin-bottom:12px;color:var(--text-dim)}
+.food-import[open],.food-stock-extra[open]{display:grid;gap:12px}
+.food-category-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.ps-food .food-category-chips .food-btn{min-height:30px;padding:4px 8px;border-radius:var(--radius-pill)}
+.food-category-chips small{color:var(--accent-text)}
+.food-ingredient-group{margin:12px 0}
+.food-ingredient-group .food-ingredients{margin:5px 0}
+.food-recipe-list,.food-stock-list{grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));align-items:start}
+.food-browser-pane .food-search{max-width:none}
+.food-browser-pane .food-heading>div{min-width:0}
+.food-panel h3,.food-panel p{overflow-wrap:anywhere}
+.food-overview{grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr)}
+.food-plan-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.48fr);gap:20px;align-items:start}
+.food-plan-detail{min-width:0}
+.food-plan-workspace .food-week{grid-template-columns:repeat(7,minmax(0,1fr))}
+.food-plan-workspace .food-week button{padding:10px 6px}
+.ps-food [data-mobile-only]{display:none}
+@container food (min-width:1450px){
+.food-overview{grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr) minmax(260px,1fr);grid-template-areas:'today fridge shop' 'today calories shop'}
+.food-workspace{grid-template-columns:minmax(410px, .7fr) minmax(0,1.5fr)}
+}
+@container food (max-width:1100px){
+.food-plan-workspace{grid-template-columns:1fr}
+.food-overview{grid-template-columns:minmax(0,1.35fr) minmax(260px,1fr)}
+.food-workspace{grid-template-columns:minmax(290px,.9fr) minmax(0,1fr)}
+.food-recipe-pair{grid-template-columns:1fr!important}
+}
+@container food (max-width:760px){
+.food-workspace{grid-template-columns:1fr}
+.food-overview{grid-template-columns:1fr;grid-template-areas:'today' 'fridge' 'calories' 'shop'}
+.food-content{padding:14px}
+.ps-food .food-tabs{padding:10px 14px;gap:3px;min-height:60px}
+.ps-food .food-tabs .food-btn{flex:1;padding:8px 4px}
+.food-plan-workspace .food-week{grid-template-columns:1fr}
+.food-plan-workspace .food-week>div{display:grid;grid-template-columns:34px repeat(3,minmax(0,1fr));gap:5px}
+.food-plan-workspace .food-week h3 small{display:none}
+.food-plan-workspace .food-week button{min-height:82px}
+}
+@container food (max-width:500px){
+.food-editor-pane .food-form-pair{grid-template-columns:1fr}
+.food-three{grid-template-columns:1fr}
+.ps-food .food-three button{display:grid;grid-template-columns:90px minmax(0,1fr)}
+.food-three button>small:last-child{grid-column:2}
+}
+body:not(.section-food) .food-workspace:not(.food-editing)>.food-editor-pane{display:none}
+body:not(.section-food) .ps-food [data-mobile-only]{display:inline-flex}
+body:not(.section-food) .food-workspace{grid-template-columns:1fr}
+
+
+body:not(.section-food) .ps-food{padding:0}

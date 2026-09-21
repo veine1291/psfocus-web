@@ -8597,3 +8597,13 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .shop-buy-ok { flex: 2 1 0; padding: 12px; border-radius: 12px; font-size: 15px; }
 .shop-buy-recent { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .shop-buy-recent-label, .shop-buy-recent .dot { color: var(--text-faint, var(--text-dim)); }
+
+/* 饮食：沿用单色 mask 图标体系 */
+.ico-food{display:inline-block;width:16px;height:16px;background:currentColor;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M4 3v6c0 3 6 3 6 0V3M7 3v18M20 3c-4 2-5 6-5 10h5M20 3v18'/%3E%3C/svg%3E") center/contain no-repeat}
+
+/* 新增饮食入口后，小屏幕仍可访问全部底部导航。 */
+.tabbar{max-width:calc(100vw - 20px);overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+
+/* Food module type scale */
+.ps-food{--fs-display:32px;--fs-h1:22px;--fs-h2:16px;--fs-h3:14px;--fs-body:14px;--fs-small:12px;--fs-label:11px;padding:0 12px}

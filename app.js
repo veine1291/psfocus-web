@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20260820-1120';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20260921-1528';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260908-1051';
+const _PSFOCUS_BUILD = '20260921-1528';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -897,13 +897,13 @@ function _mergeRemoteAdditive(remote) {
   };
   let changed = false;
   const keys = ['summaries', 'tasks', 'events', 'projects', 'folders', 'taskLists',
-                'smartLists', 'templates', 'concepts', 'meditationSessions', 'sessions'];
+                'smartLists', 'templates', 'concepts', 'meditationSessions', 'sessions', 'foodEntries'];
   for (const k of keys) {
     const ra = Array.isArray(remote[k]) ? remote[k] : null;
     if (!ra) continue;
     const la = Array.isArray(state[k]) ? state[k] : [];
-    const merged = _mergeArr(la, ra);
-    if (merged.length !== la.length) changed = true;
+    const merged = k === 'foodEntries' ? window.PSFood.merge(la, ra) : _mergeArr(la, ra);
+    if (merged.length !== la.length || (k === 'foodEntries' && JSON.stringify(merged) !== JSON.stringify(la))) changed = true;
     state[k] = merged;
   }
   // 标签 / 概念别名 等简单字符串数组:并集
@@ -1090,7 +1090,7 @@ async function bindCloud() {
         _bootedFromSnapshot = false; _snapDirty = false;
         pushState();
       } else {
-        state = sanitizeState(remote);
+        state = sanitizeState(window.PSFood.preserve(remote, state));
         try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换不算本机删除(墓碑差分基线重置)
         _initialPullOk = true;
         _lastKnownGoodTaskCount = (state.tasks || []).length;
@@ -1255,7 +1255,7 @@ function _applyRemoteSnapshot(rawState) {
   _psMemSnapshot('applyRemote before');
   try {
     applyingRemote = true;
-    state = sanitizeState(rawState);
+    state = sanitizeState(window.PSFood.preserve(rawState, state));
     try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换不算本机删除(墓碑差分基线重置)
     applyingRemote = false;
     _initialPullOk = true;
@@ -1650,7 +1650,7 @@ async function manualPullState() {
     const prevTs = (state && state._cloudUpdatedAt) || 0;
     const remoteTs2 = (remote && remote._cloudUpdatedAt) || 0;
     applyingRemote = true;
-    state = sanitizeState(remote);
+    state = sanitizeState(window.PSFood.preserve(remote, state));
     try { _tombSyncBaselineM(state); } catch (_) {}   // 整份替换不算本机删除(墓碑差分基线重置)
     applyingRemote = false;
     if (prevTs > remoteTs2 && prevLocal) {
@@ -2016,6 +2016,7 @@ const TAB_DEFS = {
   calendar: { label: '日历', icon: 'ico-calendar' },
   summary:  { label: '摘要', icon: 'ico-pencil' },
   ledger:   { label: '账本', icon: 'ico-wallet' },
+  food: { label: '饮食', icon: 'ico-food' },
   stats:    { label: '统计', icon: 'ico-history' },
   timer:    { label: '冥想', icon: 'ico-clock' },
   settings: { label: '设置', icon: 'ico-settings' },
@@ -2257,6 +2258,11 @@ function renderTopbar() {
       rightBtn.classList.remove('hidden');
       rightBtn.classList.toggle('active', !!summaryState.searchOpen);
     }
+  } else if (ui.tab === 'food') {
+    $('topbar-title').textContent = '饮食';
+    $('topbar-subtitle').textContent = '';
+    leftBtn.classList.add('hidden');
+    $('topbar-right-btn').classList.add('hidden');
   } else if (ui.tab === 'ledger') {
     // 顶栏对齐日历:中间 = ‹ 期间日期(点击回本期)›,左上 = 月/季/年 切换 pill
     const lgWord = _ledgerViewWord();
@@ -2319,6 +2325,18 @@ function _insertBigTitleM(view) {
       ${cl.tasks.length ? `<div class="view-bigtitle-sub">${undone} 待办 · ${done} 已完成</div>` : ''}
     </div>`);
 }
+function renderFoodTab(view) {
+  window.PSFoodUI.mount(view, {
+    getState: () => state,
+    save: () => { pushState(); _snapSave(true); },
+    importRecipe: async data => {
+      if (!uid || !tcbApp) throw new Error('请先登录云同步，再使用图片或链接导入');
+      const res = await tcbApp.callFunction({ name: 'ocrHandwriting', data });
+      return res.result;
+    },
+    openCalendar: date => { ui.tab = 'calendar'; ui.calCursor = new Date(date + 'T12:00:00').getTime(); ui.calSelectedDay = null; ui.calMode = 'day'; saveUI(); renderAll(); },
+  });
+}
 function renderTab(tab) {
   const view = elView();
   // 切 tab 时清掉 view 上可能残留的 transform / scrollTop(防下拉刷新等手势之后切 tab,影响内部布局)
@@ -2353,6 +2371,7 @@ function renderTab(tab) {
   if (tab === 'works') return renderWorksTab(view);
   if (tab === 'calendar') return renderCalendarTab(view);
   if (tab === 'summary') return renderSummaryTab(view);
+  if (tab === 'food') return renderFoodTab(view);
   if (tab === 'ledger') return renderLedgerTab(view);
   if (tab === 'stats') return renderStatsTab(view);
   if (tab === 'timer') return renderTimerTab(view);
@@ -12234,6 +12253,8 @@ function _flushTaskDetailInputs() {
 // 手机端事件详情 sheet — 看详情 / 改时间(含重复)/ 删除。颜色、项目归属等高级编辑仍在桌面端。
 // 复用任务那套时间编辑器 openQuickTimePickerSheet + legacy 镜像同步。
 function openEventDetail(id) {
+  const foodEvent = (state.events || []).find(e => e.id === id && e.foodMealId);
+  if (foodEvent) { ui.tab = 'food'; renderAll(); window.PSFoodUI.openMeal(foodEvent.foodMealId); window.PSFoodUI.render(); return; }
   const ev = (state.events || []).find(x => x.id === id);
   if (!ev) { showToast('该事件已被删除'); return; }
   const body = $('sheet-body'); const sheet = $('sheet');

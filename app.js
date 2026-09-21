@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20260921-1528';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20260921-1536';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260921-1528';
+const _PSFOCUS_BUILD = '20260921-1536';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2115,6 +2115,11 @@ function renderAll() {
     try { renderCalendarSidebar(); } catch (e) { psLog('ERR', 'renderCalendarSidebar throw', e); }
   }
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
+  const activeBar = document.querySelector('.tabbar'), activeTab = activeBar?.querySelector('.tab.active');
+  if (activeTab && activeBar.dataset.visibleActiveTab !== ui.tab) {
+    activeBar.dataset.visibleActiveTab = ui.tab;
+    activeBar.scrollLeft = Math.max(0, activeTab.offsetLeft - (activeBar.clientWidth - activeTab.offsetWidth) / 2);
+  }
   const _shopFabHide = ui.tab === 'tasks' && ui.selectedKind === 'smart-list' && ui.selectedId === SHOPPING_LIST_ID_M;
   $('fab').classList.toggle('hidden', _shopFabHide || !(ui.tab === 'tasks' || ui.tab === 'calendar'
     || ui.tab === 'ledger'

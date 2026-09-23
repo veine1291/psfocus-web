@@ -160,3 +160,24 @@ body:not(.section-food) .ps-food{padding:0}
 .food-stock-card summary::after{content:"⌄";color:var(--text-faint);font-size:var(--fs-small)}
 
 .food-mobile .food-tabs [aria-current=page]{color:var(--text-strong);font-weight:600}
+
+/* Keep confirmation by its target, and give each expiry mode its own fields. */
+.ps-food .food-delete-control{display:inline-flex;align-items:center;flex-wrap:wrap;gap:8px;max-width:100%;min-width:0}
+.ps-food .food-delete-question{font-size:var(--fs-small);color:var(--text-dim)}
+.ps-food .food-delete-control [data-food-action=confirm-delete]{color:var(--danger);border-color:var(--danger);background:var(--danger-soft)}
+.ps-food .food-life{width:100%;max-width:100%;min-inline-size:0;box-sizing:border-box}
+.ps-food .food-life legend{max-width:100%;white-space:normal}
+.ps-food .food-life [hidden]{display:none!important}
+.ps-food .food-life-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.ps-food .food-life .food-field{grid-template-columns:minmax(0,1fr)}
+.ps-food .food-life-modes{display:flex;gap:6px;margin:0 0 16px;padding:4px;border-radius:var(--radius);background:var(--bg-input)}
+.ps-food .food-life-modes .food-btn{flex:1;min-width:0;border:0;background:transparent;font-size:var(--fs-small);padding:8px}
+.ps-food .food-life-modes [aria-pressed=true]{background:var(--bg-panel);color:var(--text-strong);box-shadow:var(--shadow-sm)}
+.ps-food .food-life .food-duration{display:grid;grid-template-columns:minmax(0,1fr) minmax(68px,.5fr);gap:8px}
+.ps-food .food-life .food-duration>*{width:100%;min-width:0;max-width:100%}
+.ps-food input[type=date]{display:block;-webkit-appearance:none;appearance:none;box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-inline-size:0}
+.ps-food input[type=date]::-webkit-date-and-time-value{min-height:1.5em;text-align:left}
+.ps-food input[type=date]::-webkit-datetime-edit{min-width:0;padding:0}
+.ps-food .food-form-error{color:var(--danger);background:var(--danger-soft);padding:10px 12px;border-radius:var(--radius);margin:0;overflow-wrap:anywhere}
+.food-mobile .food-status{position:static;box-shadow:none;background:transparent;z-index:auto}
+@container food (max-width:900px){.ps-food .food-life-grid{grid-template-columns:minmax(0,1fr)}}

@@ -25,15 +25,17 @@ function merge(a,b){const out=new Map();for(const x of [...(Array.isArray(a)?a:[
 function preserve(target,local){if(target&&local&&(target.foodEntries||local.foodEntries))target.foodEntries=merge(target.foodEntries,local.foodEntries);return target;}
 function saveRecipe(s,input){if(!String(input.name||'').trim())throw Error('请填写菜名');const items=typeof input.ingredients==='string'?ingredients(input.ingredients):copy(input.ingredients||[]);if(!items.length&&!input.sourceUrl&&!input.sourceText)throw Error('请填写材料，或保留来源作为待整理菜谱');for(const i of items){if(!i.name)throw Error('材料名称不能为空');if(i.quantity!=null)num(i.quantity,'材料用量');}return put(s,{...input,type:'recipe',name:input.name.trim(),ingredients:classify(items),steps:Array.isArray(input.steps)?input.steps:String(input.steps||'').split('\n').filter(Boolean),kcal:input.kcal===''||input.kcal==null?null:num(input.kcal,'整道菜热量',true)});}
 function lifeFields(input){
+if(input.expiryMode==='date'){if(input.expires&&!validDate(input.expires))throw Error('请填写有效的到期日期');return {expiryMode:'date',producedOn:'',shelfLife:null,shelfLifeUnit:'days',expires:input.expires||''};}
+if(input.expiryMode==='duration')input={...input,expires:''};
 const producedOn=String(input.producedOn||'').trim(),value=input.shelfLife,shelfLifeUnit=input.shelfLifeUnit||'days';
-if(!producedOn&&(value==null||value==='')){if(input.expires&&!validDate(input.expires))throw Error('请填写有效的到期日期');return {producedOn:'',shelfLife:null,shelfLifeUnit:'days',expires:input.expires||''};}
+if(!producedOn&&(value==null||value==='')){if(input.expires&&!validDate(input.expires))throw Error('请填写有效的到期日期');return {expiryMode:input.expires?'date':'duration',producedOn:'',shelfLife:null,shelfLifeUnit:'days',expires:input.expires||''};}
 if(!validDate(producedOn))throw Error('请填写有效的生产 / 制作日期');
 const shelfLife=Number(value);if(!Number.isInteger(shelfLife)||shelfLife<=0)throw Error('保质期时长需要填写大于 0 的整数');
 if(!['days','weeks','months','years'].includes(shelfLifeUnit))throw Error('请选择保质期单位');
 let expires;if(shelfLifeUnit==='days'||shelfLifeUnit==='weeks')expires=addDays(producedOn,shelfLife*(shelfLifeUnit==='weeks'?7:1));
 else{const d=new Date(producedOn+'T12:00:00'),day=d.getDate();d.setDate(1);d.setMonth(d.getMonth()+shelfLife*(shelfLifeUnit==='years'?12:1));const end=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();d.setDate(Math.min(day,end));expires=dateKey(d);}
 if(!validDate(expires))throw Error('保质期时长超出可记录范围');
-return {producedOn,shelfLife,shelfLifeUnit,expires};
+return {expiryMode:'duration',producedOn,shelfLife,shelfLifeUnit,expires};
 }
 
 function addLot(s,input){if(!String(input.name||'').trim())throw Error('请填写食物名称');if(input.expires&&!validDate(input.expires))throw Error('请填写有效的到期日期');const u=unit(num(input.quantity,'入库量'),input.unit);return put(s,{...input,type:'lot',name:input.name.trim(),...u,category:category(input),kind:input.kind==='cooked'?'cooked':'raw',...lifeFields(input),location:input.location||(input.kind!=='cooked'&&category(input)==='seasoning'?'常温':'冷藏'),kcal:input.kcal===''||input.kcal==null?null:num(input.kcal,'这批熟食总热量',true)});}

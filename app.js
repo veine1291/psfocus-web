@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20260923-1038';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20260924-1858';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260923-1038';
+const _PSFOCUS_BUILD = '20260924-1858';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2333,6 +2333,7 @@ function _insertBigTitleM(view) {
 function renderFoodTab(view) {
   window.PSFoodUI.mount(view, {
     getState: () => state,
+    pickDate: opts => openDatePicker(opts),
     save: () => { pushState(); _snapSave(true); },
     importRecipe: async data => {
       if (!uid || !tcbApp) throw new Error('请先登录云同步，再使用图片或链接导入');
@@ -19243,6 +19244,27 @@ function openCreateTaskSheet(opts) {
 }
 
 // 简易时间选择 sheet — 改/加 schedule(只设第一个,不做多 schedule 编辑)
+// Single-date edition of the dashboard's common drp calendar, anchored to the field.
+let closeSingleDatePicker = null;
+function openDatePicker({anchorEl,current=null,onApply}) {
+  closeSingleDatePicker?.();
+  let selected=current==null?'':tsToDateInput(current),month=startOfMonth(current==null?new Date():new Date(current));
+  const popup=document.createElement('div');popup.className='drp-popup drp-popup-compact ps-date-picker';popup.setAttribute('role','dialog');popup.setAttribute('aria-label','选择日期');
+  document.body.appendChild(popup);
+  const close=()=>{popup.remove();document.removeEventListener('pointerdown',outside,true);document.removeEventListener('keydown',key,true);window.removeEventListener('resize',position);window.visualViewport?.removeEventListener('resize',position);closeSingleDatePicker=null;if(anchorEl.isConnected)anchorEl.focus({preventScroll:true});};
+  const outside=e=>{if(!popup.contains(e.target)&&!anchorEl.contains(e.target))close();};
+  const key=e=>{if(e.isComposing)return;if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();close();}};
+  function position(){const r=anchorEl.getBoundingClientRect(),v=window.visualViewport,w=v?.width||innerWidth,h=v?.height||innerHeight,left=v?.offsetLeft||0,top=v?.offsetTop||0;popup.style.maxHeight=Math.max(160,h-16)+'px';popup.style.left=(left+Math.max(8,Math.min(r.left,w-popup.offsetWidth-8)))+'px';popup.style.top=(top+Math.max(8,Math.min(r.bottom+6,h-popup.offsetHeight-8)))+'px';}
+  function apply(){const input=popup.querySelector('.drp-date-input'),value=input.value.trim().replace(/\//g,'-').replace(/^(\d{4})(\d{2})(\d{2})$/,'$1-$2-$3');if(value&&!window.PSFood.validDate(value)){popup.querySelector('.drp-summary').textContent='请输入有效日期，如 2026-09-24';input.focus();return;}selected=value;const ts=selected?new Date(selected+'T00:00:00').getTime():null;close();onApply(ts);}
+  function draw(){const first=new Date(month);first.setDate(1-((first.getDay()+6)%7));let cells='';for(let i=0;i<42;i++){const d=addDays(first,i),value=tsToDateInput(d.getTime());cells+='<button type="button" class="drp-cell '+(d.getMonth()!==month.getMonth()?'out-month ':'')+(value===tsToDateInput(Date.now())?'today ':'')+(value===selected?'start':'')+'" data-date="'+value+'" aria-label="'+value+'" aria-pressed="'+(value===selected)+'">'+d.getDate()+'</button>';}
+    popup.innerHTML='<div class="drp-header"><button type="button" class="drp-nav" data-month="-12" aria-label="上一年">«</button><button type="button" class="drp-nav" data-month="-1" aria-label="上一月">‹</button><div class="drp-month-labels"><span>'+month.getFullYear()+' 年 '+(month.getMonth()+1)+' 月</span></div><button type="button" class="drp-nav" data-month="1" aria-label="下一月">›</button><button type="button" class="drp-nav" data-month="12" aria-label="下一年">»</button></div><div class="drp-weekrow">'+Array.from('一二三四五六日',x=>'<div class="drp-weekday">'+x+'</div>').join('')+'</div><div class="drp-grid">'+cells+'</div><label class="drp-input-row"><span>日期</span><input class="drp-date-input" type="text" inputmode="numeric" aria-label="手动输入日期" placeholder="YYYY-MM-DD" value="'+selected+'"></label><div class="drp-footer"><span class="drp-summary" role="status">'+(selected||'请选择日期')+'</span><div class="drp-actions"><button type="button" class="drp-btn" data-pick="today">今天</button><button type="button" class="drp-btn" data-pick="clear">清除</button><button type="button" class="drp-btn" data-pick="cancel">取消</button><button type="button" class="drp-btn drp-btn-apply" data-pick="apply">确定</button></div></div>';position();
+  }
+  popup.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;e.stopPropagation();if(b.dataset.month){month=addMonths(month,+b.dataset.month);draw();return;}if(b.dataset.date){selected=b.dataset.date;popup.querySelector('.drp-date-input').value=selected;popup.querySelector('.drp-summary').textContent=selected;popup.querySelectorAll('.drp-cell').forEach(cell=>{const yes=cell.dataset.date===selected;cell.classList.toggle('start',yes);cell.setAttribute('aria-pressed',yes);});return;}if(b.dataset.pick==='apply')apply();else if(b.dataset.pick==='cancel')close();else if(b.dataset.pick==='clear'){selected='';draw();}else if(b.dataset.pick==='today'){selected=tsToDateInput(Date.now());month=startOfMonth(new Date());draw();}});
+  popup.addEventListener('keydown',e=>{if(e.isComposing)return;if(e.key==='Enter'&&e.target.matches('input')){e.preventDefault();apply();}if(e.key==='Tab'){const items=[...popup.querySelectorAll('button,input')],first=items[0],last=items[items.length-1];if(e.shiftKey&&e.target===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&e.target===last){e.preventDefault();first.focus();}}});
+  document.addEventListener('pointerdown',outside,true);document.addEventListener('keydown',key,true);window.addEventListener('resize',position);window.visualViewport?.addEventListener('resize',position);closeSingleDatePicker=close;draw();popup.querySelector('.drp-cell.start,.drp-cell.today,.drp-cell').focus({preventScroll:true});
+}
+
+
 function openQuickTimePickerSheet(currentSched, onSave) {
   const now = currentSched && currentSched.start ? new Date(currentSched.start) : new Date();
   // 状态 (跟桌面 schedule-add modal 一致): mode (日期/时间段) + start/end + allDay + repeat + reminderOffset

@@ -181,3 +181,10 @@ body:not(.section-food) .ps-food{padding:0}
 .ps-food .food-form-error{color:var(--danger);background:var(--danger-soft);padding:10px 12px;border-radius:var(--radius);margin:0;overflow-wrap:anywhere}
 .food-mobile .food-status{position:static;box-shadow:none;background:transparent;z-index:auto}
 @container food (max-width:900px){.ps-food .food-life-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* Food date fields use the common app calendar. */
+.ps-food [data-food-action="pick-date"]{width:100%;min-width:0;display:flex;gap:var(--space-2);align-items:center;justify-content:flex-start;min-height:42px;padding:var(--space-3);background:var(--bg-input)}
+.ps-food [data-food-action="pick-date"] .ico-calendar{display:inline-block;width:18px;height:18px;flex-shrink:0}
+.ps-food .food-date-label{min-width:0;overflow-wrap:anywhere}
+.ps-food .food-meal-price{color:var(--text-dim);font-size:var(--fs-small);font-variant-numeric:tabular-nums;white-space:normal}
+.ps-food{--space-2:8px;--space-3:12px}

@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20260925-0951';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20260925-1039';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260925-0951';
+const _PSFOCUS_BUILD = '20260925-1039';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2264,7 +2264,7 @@ function renderTopbar() {
       rightBtn.classList.toggle('active', !!summaryState.searchOpen);
     }
   } else if (ui.tab === 'food') {
-    $('topbar-title').textContent = '饮食';
+    renderFoodHeader();
     $('topbar-subtitle').textContent = '';
     leftBtn.classList.add('hidden');
     $('topbar-right-btn').classList.add('hidden');
@@ -2330,8 +2330,36 @@ function _insertBigTitleM(view) {
       ${cl.tasks.length ? `<div class="view-bigtitle-sub">${undone} 待办 · ${done} 已完成</div>` : ''}
     </div>`);
 }
+function renderFoodHeader(){
+  if(ui.tab!=='food')return;
+  const names={overview:'饮食',recipes:'菜谱',stock:'库存',plan:'排餐',shop:'采购'},current=window.PSFoodUI.getTab();
+  const title=$('topbar-title');
+  title.innerHTML='<button type="button" class="topbar-title-switch topbar-food-switch" aria-haspopup="menu" aria-expanded="false" aria-controls="popover-body" aria-label="切换饮食板块，当前'+names[current]+'">'+names[current]+'<span class="ico-chevron-down topbar-title-chev" aria-hidden="true"></span></button>';
+  title.firstElementChild.onclick=e=>{e.stopPropagation();openFoodSectionMenu(title.firstElementChild);};
+}
+function openFoodSectionMenu(anchor){
+  const tabs=[['overview','概览'],['recipes','菜谱'],['stock','库存'],['plan','排餐'],['shop','采购']],current=window.PSFoodUI.getTab();
+  showPopover(tabs.map(([id,label])=>({label,toggle:true,checked:id===current,stateText:id===current?'当前':'',action:()=>{closePopover();window.PSFoodUI.switchTab(id);$('topbar-title').firstElementChild?.focus({preventScroll:true});}})),{anchor});
+  anchor.setAttribute('aria-expanded','true');const menu=$('popover-body');menu.dataset.foodMenu='1';menu.setAttribute('role','menu');menu.setAttribute('aria-label','饮食板块');
+  menu.querySelectorAll('button').forEach((b,i)=>{b.dataset.foodTab=tabs[i][0];b.setAttribute('role','menuitemradio');b.setAttribute('aria-checked',tabs[i][0]===current);});
+  menu.querySelector('[aria-checked=true]')?.focus({preventScroll:true});
+  menu.onkeydown=e=>{if(e.isComposing)return;const buttons=[...menu.querySelectorAll('button')],i=buttons.indexOf(document.activeElement);if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closePopover();anchor.focus({preventScroll:true});}else if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();buttons[e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}};
+}
+function openFoodStockSheet({html,onMount,onClose,titleId}){
+  const sheet=$('sheet'),body=$('sheet-body'),anchor=document.activeElement,view=elView();let raf=0;
+  const scroll=view.scrollTop,previousOverflow=view.style.overflow,app=$('app'),oldInert=app.inert;
+  const fit=()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{if(sheet.classList.contains('hidden'))return;const vv=window.visualViewport,h=vv?.height||innerHeight,offset=vv?.offsetTop||0;body.style.bottom=Math.max(0,innerHeight-h-offset)+'px';body.style.setProperty('--food-sheet-height',Math.floor(h*.90)+'px');body.style.maxHeight=Math.floor(h-12)+'px';const active=document.activeElement,form=body.querySelector('form');if(form?.contains(active)){const a=active.getBoundingClientRect(),r=form.getBoundingClientRect();if(a.top<r.top||a.bottom>r.bottom)active.scrollIntoView({block:'nearest'});}});};
+  const key=e=>{if(e.isComposing||document.querySelector('.ps-date-picker'))return;if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeSheet();}else if(e.key==='Tab'){const controls=[...body.querySelectorAll('button,input:not([type=hidden]),select,textarea,summary')].filter(el=>!el.disabled&&el.getClientRects().length),first=controls[0],last=controls[controls.length-1];if(e.shiftKey&&e.target===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&e.target===last){e.preventDefault();first.focus();}}};
+  showSheet('<div class="sheet-handle"></div>'+html,{onMount:()=>{sheet.classList.remove('td-p1','td-p2');sheet.classList.add('food-stock-sheet');body.setAttribute('role','dialog');body.setAttribute('aria-modal','true');body.setAttribute('aria-labelledby',titleId);body.style.paddingBottom='';view.style.overflow='hidden';app.inert=true;onMount(body);document.addEventListener('keydown',key,true);window.visualViewport?.addEventListener('resize',fit);window.visualViewport?.addEventListener('scroll',fit);window.addEventListener('resize',fit);fit();body.querySelector('[data-food-action=close-stock-drawer]')?.focus({preventScroll:true});},onClose:()=>{onClose();closeSingleDatePicker?.();cancelAnimationFrame(raf);document.removeEventListener('keydown',key,true);window.visualViewport?.removeEventListener('resize',fit);window.visualViewport?.removeEventListener('scroll',fit);window.removeEventListener('resize',fit);sheet.classList.remove('food-stock-sheet');body.removeAttribute('role');body.removeAttribute('aria-modal');body.removeAttribute('aria-labelledby');body.style.bottom='';body.style.removeProperty('--food-sheet-height');view.style.overflow=previousOverflow;view.scrollTop=scroll;app.inert=oldInert;if(anchor?.isConnected)anchor.focus({preventScroll:true});}});
+}
+
+
 function renderFoodTab(view) {
   window.PSFoodUI.mount(view, {
+    mobileNavigation: true,
+    onViewChange: renderFoodHeader,
+    openStockEditor: openFoodStockSheet,
+    closeStockEditor: message => { closeSheet(); if(message)showToast(message); },
     getState: () => state,
     pickDate: opts => openDatePicker(opts),
     save: () => { pushState(); _snapSave(true); },
@@ -13350,7 +13378,9 @@ function openTagEditor(id) {
 // 第二参数可以是 function (老接口, onMount) 或 object ({ onMount, noSwipeClose, noMaskClose })
 // - noSwipeClose: 不绑顶部下拉关闭手势 (iPad picker 弹起时手指容易碰)
 // - noMaskClose: 点 mask 不关 sheet (iOS native picker 关闭瞬间合成 click 容易落在 mask 上误关)
+let _sheetOnClose = null;
 function showSheet(html, onMountOrOpts) {
+  if(_sheetOnClose){const close=_sheetOnClose;_sheetOnClose=null;close();}
   const sheet = $('sheet'), body = $('sheet-body');
   body.classList.remove('td-detail-wrap');   // 别把任务详情的「藏把手」样式带给别的抽屉
   body.innerHTML = html;
@@ -13362,6 +13392,7 @@ function showSheet(html, onMountOrOpts) {
     onMount = onMountOrOpts;
   } else if (onMountOrOpts && typeof onMountOrOpts === 'object') {
     onMount = onMountOrOpts.onMount;
+    _sheetOnClose = onMountOrOpts.onClose || null;
     noSwipeClose = !!onMountOrOpts.noSwipeClose;
     noMaskClose = !!onMountOrOpts.noMaskClose;
   }
@@ -13376,6 +13407,7 @@ function _calRemoveDragPlaceholderM() {
   if (el) el.remove();
 }
 function closeSheet() {
+  if(_sheetOnClose){const close=_sheetOnClose;_sheetOnClose=null;close();}
   _calRemoveDragPlaceholderM();
   const body = $('sheet-body');
   body.style.transform = '';
@@ -13434,6 +13466,7 @@ function _applySheetHeight() {
 // 触摸点落在输入控件 / 按钮上时跳过(避免影响打字 / 点击)
 // 方向在首次有效位移时锁定,拖动过程中不再翻转,避免手抖来回切模式。
 function bindSheetSwipeClose(body) {
+  body._sheetSwipeCleanup?.();
   let startY = 0, dy = 0, dragging = false;
   let startH = 0, mode = null;           // mode: null 未定 | 'close' 下拉关 | 'grow' 上拉增高
   const HIT_AREA_PX = 60; // 顶部 60px 内任何空白区域可下拉
@@ -13499,6 +13532,7 @@ function bindSheetSwipeClose(body) {
   body.addEventListener('touchmove',  onMove,  { passive: false });
   body.addEventListener('touchend',   onEnd,   { passive: true });
   body.addEventListener('touchcancel',onEnd,   { passive: true });
+  body._sheetSwipeCleanup=()=>{body.removeEventListener('touchstart',onStart);body.removeEventListener('touchmove',onMove);body.removeEventListener('touchend',onEnd);body.removeEventListener('touchcancel',onEnd);};
 }
 
 // ----- 详情更多菜单 -----
@@ -14209,6 +14243,7 @@ function openAutoTagSheet(opts) {
 // opts.anchor:把 popover 定位在该元素附近(优先放在元素上方/下方,自动避免溢出)
 // opts.side:left|right(无 anchor 时的默认侧)
 function showPopover(items, opts) {
+  closePopover();
   const pop = $('popover'), body = $('popover-body');
   body.classList.toggle('popover-left', !!(opts && opts.side === 'left'));
   // 重置 anchor 定位
@@ -14280,7 +14315,7 @@ function showPopover(items, opts) {
     });
   }
 }
-function closePopover() { $('popover').classList.add('hidden'); }
+function closePopover() { $('popover').classList.add('hidden');const menu=$('popover-body');if(menu.dataset.foodMenu){delete menu.dataset.foodMenu;menu.removeAttribute('role');menu.removeAttribute('aria-label');menu.onkeydown=null;document.querySelector('.topbar-food-switch')?.setAttribute('aria-expanded','false');} }
 
 // =========================================================
 // ===== 左抽屉(清单导航)=====
@@ -19921,6 +19956,7 @@ const _PSF_STANDALONE = window.navigator.standalone === true
     if (applying) return;
     const sheet = $('sheet');
     if (!sheet || sheet.classList.contains('hidden')) return;
+    if(sheet.classList.contains('food-stock-sheet')){lastOffset=0;return;}
     const body = $('sheet-body');
     if (!body) return;
     const kbHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);

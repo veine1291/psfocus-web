@@ -188,3 +188,42 @@ body:not(.section-food) .ps-food{padding:0}
 .ps-food .food-date-label{min-width:0;overflow-wrap:anywhere}
 .ps-food .food-meal-price{color:var(--text-dim);font-size:var(--fs-small);font-variant-numeric:tabular-nums;white-space:normal}
 .ps-food{--space-2:8px;--space-3:12px}
+
+/* Mobile sections use the app title menu. Keep only useful metadata and actions below it. */
+.food-mobile:not(.food-stock-drawer)>.food-content{padding-top:12px}
+.food-mobile .food-page-heading h1{display:none}
+.food-mobile .food-page-heading{margin-bottom:14px}
+.food-mobile .food-shop-full>.food-heading h2{display:none}
+.food-mobile .food-shop-full>.food-heading{justify-content:flex-start}
+#popover-body[data-food-menu] .popover-toggle{min-height:46px}
+#popover-body[data-food-menu] .popover-toggle[aria-checked=true]{color:var(--accent-text);background:var(--accent-soft);border-radius:var(--radius)}
+#popover-body[data-food-menu] .toggle-state{font-size:12px}
+#popover-body[data-food-menu] button:focus-visible{outline:2px solid var(--accent-text);outline-offset:-2px}
+#sheet.food-stock-sheet .sheet-body{height:var(--food-sheet-height,90svh);max-height:calc(100svh - 12px);padding-bottom:calc(12px + var(--safe-bottom));}
+.food-stock-drawer{padding:0;flex:1;min-height:0;display:flex;container-type:normal}
+.food-stock-drawer .food-editor-pane{padding:0!important;border:0!important;flex:1;min-height:0;display:flex;flex-direction:column;background:transparent}
+.food-stock-drawer .food-drawer-head{padding:12px 20px;gap:12px;border-bottom:1px solid var(--border-soft)}
+.food-stock-drawer .food-drawer-head>div{flex:1;min-width:0}
+.food-stock-drawer .food-drawer-head h2{font-size:var(--fs-h2);font-weight:600;margin-bottom:4px}
+.food-stock-drawer .food-drawer-head small{font-size:var(--fs-small);color:var(--text-faint)}
+.food-stock-drawer .food-drawer-head .food-btn{width:40px;height:40px;min-height:40px;padding:10px;border:0;background:var(--bg-section);border-radius:var(--radius-pill);flex:none}
+.food-stock-drawer .food-drawer-head .ico-x{display:block;width:18px;height:18px}
+.food-stock-drawer .food-form{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scroll-padding:16px;padding:20px;display:flex;flex-direction:column;gap:18px!important;max-width:none}
+.food-stock-drawer .food-form>*{flex-shrink:0}
+.food-stock-drawer .food-field{gap:8px;font-size:var(--fs-body);color:var(--text-dim)}
+.food-stock-drawer .food-field input,.food-stock-drawer .food-field select,.food-stock-drawer .food-field textarea{color:var(--text);min-height:46px;border-color:var(--border-soft);border-radius:var(--radius);padding:11px 12px;font-size:16px}
+.food-stock-drawer .food-form-pair{gap:12px}
+.food-stock-drawer .food-life{padding:16px 12px;background:var(--bg-section);border:0;border-radius:var(--radius-lg)}
+.food-stock-drawer .food-life-grid{grid-template-columns:minmax(0,1fr)}
+.food-stock-drawer .food-life legend{float:left;width:100%;margin-bottom:14px;font-size:var(--fs-body);font-weight:600}
+.food-stock-drawer .food-life-modes{clear:both}
+.food-stock-drawer .food-life-preview{border-bottom:0;padding-bottom:0}
+.food-stock-drawer .food-drawer-footer{flex:none;margin:0;padding:12px 20px 0;border-top:1px solid var(--border-soft);background:var(--bg-panel);gap:10px}
+.food-stock-drawer .food-drawer-footer .food-primary{min-height:48px;border-radius:var(--radius);font-weight:600}
+.food-stock-drawer .food-stock-extra{padding:0;border:0}
+.food-stock-drawer .food-stock-extra>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--text-dim)}
+.food-stock-drawer .food-stock-extra>summary::before{content:'›';margin-right:8px}
+.food-stock-drawer .food-stock-extra[open]>summary::before{transform:rotate(90deg)}
+.food-stock-drawer .food-stock-extra[open]{display:grid;gap:14px}
+.food-stock-drawer [hidden]{display:none!important}
+@media(prefers-reduced-motion:reduce){#sheet.food-stock-sheet .sheet-body{animation:none}}

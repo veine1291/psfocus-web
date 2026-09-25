@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20260924-1858';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20260925-0951';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260924-1858';
+const _PSFOCUS_BUILD = '20260925-0951';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -1547,9 +1547,9 @@ async function _performPush(attempt) {
       }
       throw new Error((r && r.error) || '云函数返回失败');
     }
-    if (r.sizeWarning) setSync('synced', '⚠ 数据体积 ' + r.sizeWarning + ',接近云端上限');
+    if (r.sizeNotice) setSync('synced', r.sizeNotice);
     _lastKnownGoodTaskCount = (state.tasks || []).length;  // push 成功后更新基准
-    if (!r.sizeWarning) setSync('synced', '已同步');
+    if (!r.sizeNotice) setSync('synced', '已同步');
     _saveSummariesBackupLS();   // push 成功 → 把最近 summaries 落地一份, 万一云端被覆盖能恢复
   } catch (e) {
     const errMsg = (e && (e.message || e.code || String(e))) || '未知';

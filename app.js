@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20261005-1648';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20261005-2307';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20261005-1648';
+const _PSFOCUS_BUILD = '20261005-2307';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -16397,21 +16397,34 @@ function refreshCalBlockColors(host) {
   const theme=getComputedStyle($('app'));
   const dark=read(theme.getPropertyValue('--cal-ink-dark').trim());
   const light=read(theme.getPropertyValue('--cal-ink-light').trim());
-  const entries=Array.from(host.querySelectorAll('.cal-block,.cal-allday-pill')).map(el=>[el,getComputedStyle(el).backgroundColor]);
+  const entries=Array.from(host.querySelectorAll('.cal-block,.cal-allday-pill')).map(el=>{
+    const style=getComputedStyle(el);
+    return [el,style.backgroundColor,style.getPropertyValue('--block-color').trim()];
+  });
   const cache=new Map();
-  for (const [el,color] of entries) {
-    let inks=cache.get(color);
+  for (const [el,color,source] of entries) {
+    const key=color+'|'+source;
+    let inks=cache.get(key);
     if (!inks) {
-      const bg=read(color),base=contrast(bg,dark)>=contrast(bg,light)?dark:light;
-      const ink=(start,target)=>{
-        let rgb;
-        for(let weight=start;weight<=1.0001;weight=Math.min(1,weight+.02)) {
-          rgb=bg.map((v,i)=>Math.round(v*(1-weight)+base[i]*weight));
-          if(contrast(bg,rgb)>=target || weight===1) break;
+      const bg=read(color),rgb=read(source).map(v=>v/255);
+      const max=Math.max(...rgb),min=Math.min(...rgb),delta=max-min,level=(max+min)/2;
+      let hue=0;
+      if(delta) {
+        hue=(max===rgb[0]?(rgb[1]-rgb[2])/delta+(rgb[1]<rgb[2]?6:0):max===rgb[1]?(rgb[2]-rgb[0])/delta+2:(rgb[0]-rgb[1])/delta+4)*60;
+      }
+      // Keep the project hue visible; mixing a pastel fill with 82% black erased it.
+      const saturation=delta?Math.min(.45,delta/(1-Math.abs(2*level-1))*.65):0;
+      const useDark=contrast(bg,dark)>=contrast(bg,light);
+      const ink=(target,sat)=>{
+        let result;
+        for(let step=0;step<=100;step++) {
+          const lightness=useDark?.5-step*.005:.5+step*.005;
+          result=read('hsl('+hue+' '+(sat*100)+'% '+(lightness*100)+'%)');
+          if(contrast(bg,result)>=target || step===100) break;
         }
-        return 'rgb('+rgb.join(',')+')';
+        return 'rgb('+result.join(',')+')';
       };
-      inks=[ink(.82,5.5),ink(.64,4.5)];cache.set(color,inks);
+      inks=[ink(5.1,saturation),ink(4.5,saturation*.8)];cache.set(key,inks);
     }
     el.style.setProperty('--cal-block-ink',inks[0]);
     el.style.setProperty('--cal-block-meta',inks[1]);

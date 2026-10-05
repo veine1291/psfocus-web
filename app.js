@@ -1,4 +1,4 @@
-﻿/* =========================================================
+/* =========================================================
    PS Focus Mobile — 完整版(任务/日历/统计/设置)
    ========================================================= */
 
@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20260930-2026';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20261005-1558';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20260930-2026';
+const _PSFOCUS_BUILD = '20261005-1558';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -2162,6 +2162,7 @@ function renderTabBar() {
   }));
 }
 function renderTopbar() {
+  $('app').classList.toggle('is-calendar', ui.tab === 'calendar');
   const leftBtn = $('topbar-left-btn');
   // 离开日历 tab 时移除 cal-nav-row 类(防止 #topbar-title 被定型成 flex row,影响其它 tab 的标题显示)
   $('topbar-title').classList.remove('cal-nav-row');
@@ -2182,17 +2183,17 @@ function renderTopbar() {
   } else if (ui.tab === 'calendar') {
     const c = new Date(ui.calCursor);
     let dateText;
-    if (ui.calMode === 'month') dateText = `${c.getFullYear()} 年 ${c.getMonth()+1} 月`;
+    if (ui.calMode === 'month') dateText = c.getFullYear() === new Date().getFullYear() ? `${c.getMonth()+1}月` : `${c.getFullYear()}年${c.getMonth()+1}月`;
     else if (ui.calMode === 'week') {
       const ws = startOfWeek(c), we = addDays(ws, 6);
-      dateText = `${ws.getMonth()+1}/${ws.getDate()} – ${we.getMonth()+1}/${we.getDate()}`;
+      dateText = ws.getFullYear() !== new Date().getFullYear() ? `${ws.getFullYear()}年${ws.getMonth()+1}月` : (ws.getMonth() === we.getMonth() ? `${ws.getMonth()+1}月` : `${ws.getMonth()+1}–${we.getMonth()+1}月`);
     } else dateText = `${c.getMonth()+1} 月 ${c.getDate()} 日`;
     // 顶部标题改成 prev / 中间日期(=回今日按钮) / next 三段式 — 对齐桌面端 < 今天 > UI
     const titleEl = $('topbar-title');
     titleEl.classList.add('cal-nav-row');
     titleEl.innerHTML = `
       <button class="cal-nav-btn" data-action="cal-prev" aria-label="上一${ui.calMode==='month'?'月':ui.calMode==='week'?'周':'日'}"><span class="ico-chevron-left"></span></button>
-      <button class="cal-nav-today" data-action="cal-today">${esc(dateText)}</button>
+      <button class="cal-nav-today" data-action="cal-today" aria-label="${esc(dateText)}，回到今天">${esc(dateText)}</button>
       <button class="cal-nav-btn" data-action="cal-next" aria-label="下一${ui.calMode==='month'?'月':ui.calMode==='week'?'周':'日'}"><span class="ico-chevron-right"></span></button>
     `;
     titleEl.querySelector('[data-action="cal-prev"]').onclick = (ev) => { ev.stopPropagation(); calNavigate(-1); };
@@ -2201,16 +2202,21 @@ function renderTopbar() {
       ev.stopPropagation();
       ui.calCursor = Date.now();
       ui.calSelectedDay = null;
+      _calScrollMemo.clear();
       saveUI(); renderAll();
     };
     // 日视图副标题显示星期几(原来只是重复视图名「日」,没信息量;Kayu 2026-07-26)
-    $('topbar-subtitle').textContent = ui.calMode === 'month' ? '月'
-      : (ui.calMode === 'week' ? '周' : ['周日','周一','周二','周三','周四','周五','周六'][c.getDay()]);
+    $('topbar-subtitle').textContent = ui.calMode === 'day' ? ['周日','周一','周二','周三','周四','周五','周六'][c.getDay()] : '';
     // 日历 tab: 左按钮 = 视图切换(显示当前视图字)
     const label = ui.calMode === 'month' ? '月' : (ui.calMode === 'week' ? '周' : '日');
     leftBtn.innerHTML = `<span class="cal-view-switch-pill"><span class="cal-view-switch-label">${esc(label)}</span><span class="ico-chevron-down"></span></span>`;
     leftBtn.setAttribute('aria-label', '视图切换');
     leftBtn.classList.remove('hidden');
+    const listBtn = $('topbar-right-btn2');
+    listBtn.innerHTML = '<span class="ico-list"></span>';
+    listBtn.setAttribute('aria-label', '任务清单');
+    listBtn.classList.remove('hidden');
+    $('topbar-right-btn').innerHTML = '<span class="ico-more"></span>';
     $('topbar-right-btn').classList.remove('hidden');
   } else if (ui.tab === 'stats') {
     $('topbar-title').textContent = '统计'; $('topbar-subtitle').textContent = '';
@@ -9929,21 +9935,8 @@ function closeImageLightbox() {
 // ===== 日历侧边抽屉 — 对齐桌面 cal-side-panel,可拖任务到日历 =====
 // =========================================================
 function _ensureCalSideToggleBtn() {
-  let b = document.getElementById('cal-side-toggle-btn');
-  if (!b) {
-    b = document.createElement('button');
-    b.id = 'cal-side-toggle-btn';
-    b.className = 'cal-side-toggle-btn';
-    b.type = 'button';
-    b.innerHTML = '<span class="ico-list"></span>';
-    b.setAttribute('aria-label', '任务清单');
-    b.addEventListener('click', () => {
-      if (ui.calSideOpen) closeCalSideDrawer();
-      else openCalSideDrawer();
-    });
-    document.body.appendChild(b);
-  }
-  b.style.display = (ui.tab === 'calendar') ? '' : 'none';
+  // Task list now lives in the top bar, clear any old floating instance.
+  document.getElementById('cal-side-toggle-btn')?.remove();
 }
 
 function _ensureCalSideDrawer() {
@@ -16141,29 +16134,33 @@ function calBlockHtml(d, dayStartMs) {
   const startMin  = (d.start - dayStartMs) / 60000;
   const heightMin = (d.end - d.start) / 60000;
   const startStr = `${pad(new Date(d.origStart).getHours())}:${pad(new Date(d.origStart).getMinutes())}`;
-  const compact = heightMin < 45;
+  const compact = heightMin * MOBILE_CAL_HOUR_PX() / 60 < 32;
+  const endStr = `${pad(new Date(d.origEnd).getHours())}:${pad(new Date(d.origEnd).getMinutes())}`;
+  const shortTime = value => value.replace(/^0/, '').replace(/:00$/, '');
+  const timeRange = ui.calMode === 'week' ? `${shortTime(startStr)}–${shortTime(endStr)}` : `${startStr}–${endStr}`;
+  const readableLabel = esc(`${d.title}，${startStr} 至 ${endStr}`);
   const styleVars = `--top-min:${startMin};--height-min:${heightMin};--lane-idx:${d.lane};--lane-count:${d.laneCount};--block-color:${esc(d.color)};`;
 
   if (d.kind === 'task') {
     const sidAttr = d.scheduleId ? `data-schedule-id="${esc(d.scheduleId)}"` : '';
     const occAttr = d.occurrenceStart != null ? `data-occurrence-start="${d.occurrenceStart}"` : '';
     const animCls = _animateDoneIds.has(d.taskId) ? ' just-done-anim' : '';
-    // 未完成任务样式:统一实色底浅字 (plan-scheduled) — 虚线太浅看不清,计划模式开关都用实色
+    // 已安排任务保留类别标记，手机端使用清晰文字配项目染色背景。
     const planCls = !d.done ? ' plan-scheduled' : '';
-    return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}${planCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} style="${styleVars}">
+    return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}${planCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} role="button" tabindex="0" aria-label="${readableLabel}" style="${styleVars}">
       <div class="cal-task-row">
         <span class="cal-task-check ${d.done?'checked':''}" data-action="cal-task-toggle" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr}></span>
         <div class="cal-task-title">${esc(d.title)}</div>
       </div>
-      ${!compact && d.project ? `<div class="cal-task-sub">${esc(d.project.name || '')}</div>` : ''}
-      ${!compact ? `<div class="cal-task-meta">${startStr}</div>` : ''}
+      ${d.project ? `<div class="cal-task-sub">${esc(d.project.name || '')}</div>` : ''}
+      <div class="cal-task-meta">${timeRange}</div>
     </div>`;
   }
 
   if (d.kind === 'event') {
-    return `<div class="cal-block cal-block-event ${compact?'compact':''}" data-event-id="${esc(d.eventId)}" style="${styleVars}">
+    return `<div class="cal-block cal-block-event ${compact?'compact':''}" data-event-id="${esc(d.eventId)}" role="button" tabindex="0" aria-label="${readableLabel}" style="${styleVars}">
       <div class="cal-block-title">${esc(d.title)}</div>
-      ${heightMin >= 30 ? `<div class="cal-block-time">${startStr}</div>` : ''}
+      <div class="cal-block-time">${timeRange}</div>
     </div>`;
   }
 
@@ -16178,7 +16175,7 @@ function calBlockHtml(d, dayStartMs) {
     data-session-id="${esc(d.sessionId || '')}"
     data-orig-start="${d.origStart}"
     data-orig-end="${d.origEnd}"
-    style="${styleVars}">
+    role="button" tabindex="0" aria-label="${readableLabel}，专注 ${esc(durStr)}" style="${styleVars}">
     <div class="cal-block-title">${esc(d.title)}${countStr}</div>
     <div class="cal-block-dur">${esc(durStr)}${heightMin >= 30 ? ' · ' + esc(startStr) : ''}</div>
   </div>`;
@@ -16186,15 +16183,15 @@ function calBlockHtml(d, dayStartMs) {
 
 function calHourLinesHtml(hours) {
   let html = '';
-  for (let h = 0; h < hours; h++) {
+  for (let h = 0; h <= hours; h++) {
     html += `<div class="cal-hour-line" style="--hour-idx:${h};"></div>`;
   }
   return html;
 }
 function calHourLabelsHtml(hours) {
   let html = '';
-  for (let h = 0; h < hours; h++) {
-    html += `<div class="cal-hour-label" style="--hour-idx:${h};">${h}</div>`;   // 滴答式:只显示小时数
+  for (let h = 0; h <= hours; h++) {
+    html += `<div class="cal-hour-label" style="--hour-idx:${h};">${pad(h % 24)}</div>`;   // 滴答式:只显示小时数
   }
   return html;
 }
@@ -16237,12 +16234,12 @@ let _mobileCalHourPx = null;
 function MOBILE_CAL_HOUR_PX() {
   if (_mobileCalHourPx == null) {
     const v = parseInt(localStorage.getItem('psfocus.mobile.calHourPx') || '', 10);
-    _mobileCalHourPx = (Number.isFinite(v) && v >= 24 && v <= 160) ? v : 44;
+    _mobileCalHourPx = (Number.isFinite(v) && v >= 24 && v <= 160) ? Math.max(32, v) : 36;
   }
   return _mobileCalHourPx;
 }
 function setMobileCalHourPx(v) {
-  const clamped = Math.max(24, Math.min(160, Math.round(v)));
+  const clamped = Math.max(32, Math.min(160, Math.round(v)));
   _mobileCalHourPx = clamped;
   try { localStorage.setItem('psfocus.mobile.calHourPx', String(clamped)); } catch (_) {}
   return clamped;
@@ -16384,6 +16381,19 @@ function _calEdgeAutoScroll(bodyEl, clientY) {
 
 // 双指捏合缩放时间轴(mobile-only)— 直接改 host 上的 --cal-hour-px,
 // 块/线/标签都用此变量算位置,自动 reflow,无需重渲染
+// Keep whole text lines as cards resize, instead of clipping a half line at low zoom.
+function refreshCalBlockDensity(host) {
+  if (!host) return;
+  const hourPx = Number(host.style.getPropertyValue('--cal-hour-px')) || MOBILE_CAL_HOUR_PX();
+  host.querySelectorAll('.cal-block').forEach(block => {
+    const height = Math.max(18, Number(block.style.getPropertyValue('--height-min')) * hourPx / 60);
+    const hasMeta = height >= 48;
+    block.classList.toggle('compact', height < 32);
+    block.classList.toggle('cal-has-meta', hasMeta);
+    block.style.setProperty('--cal-title-lines', Math.max(1, Math.floor((height - 4 - (hasMeta ? 14 : 0)) / 13)));
+  });
+}
+
 function bindCalPinchZoom(host) {
   if (!host) return;
   const bodyEl = host.querySelector('.cal-week-body');
@@ -16413,8 +16423,9 @@ function bindCalPinchZoom(host) {
     const newDist = dist(e.touches[0], e.touches[1]);
     if (initialDist < 1) return;
     const ratio = newDist / initialDist;
-    const newHourPx = Math.max(24, Math.min(160, Math.round(initialHourPx * ratio)));
+    const newHourPx = Math.max(32, Math.min(160, Math.round(initialHourPx * ratio)));
     host.style.setProperty('--cal-hour-px', newHourPx);
+    refreshCalBlockDensity(host);
     // 强制 reflow,让 scrollHeight 立即按新 hour-px 算 — 否则 scrollTop 被旧 maxScroll clamp,中心点偏移
     void bodyEl.scrollHeight;
     // 让捏合中心点的内容 Y 保持在屏幕同一位置
@@ -16445,7 +16456,8 @@ function _calScrollToHour(view, hour) {
 // 记忆 day/week 视图的 scroll 位置 — 同 mode 同 anchor day 直接复用,跨日才回到默认
 const _calScrollMemo = new Map();
 function _calScrollKey() {
-  const day0 = startOfDay(new Date(ui.calCursor)).getTime();
+  const cursor = new Date(ui.calCursor);
+  const day0 = (ui.calMode === 'week' ? startOfWeek(cursor) : startOfDay(cursor)).getTime();
   return `${ui.calMode}::${day0}`;
 }
 function _calApplyScrollMemo(view, defaultHour) {
@@ -16466,11 +16478,15 @@ function _calApplyScrollMemo(view, defaultHour) {
   setTimeout(apply, 60);
   // 监听滚动实时记忆(防 pinch 时被覆盖,只在用户主动滚才记;passive 不阻塞)
   body.addEventListener('scroll', () => {
-    _calScrollMemo.set(_calScrollKey(), body.scrollTop);
+    _calScrollMemo.set(key, body.scrollTop);
   }, { passive: true });
 }
 
 function _bindCalBlocks(view) {
+  view.querySelectorAll('.cal-block[role="button"]').forEach(block => block.addEventListener('keydown', e => {
+    if (e.target !== block || e.isComposing || !['Enter', ' '].includes(e.key)) return;
+    e.preventDefault(); block.click();
+  }));
   // 计划模式模板虚线块 — 点(移动用 tap, 对齐桌面 dblclick 意图)→ 展开侧栏对应 tag, 打开侧栏
   view.querySelectorAll('.cal-plan-block').forEach(el => el.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -16895,13 +16911,13 @@ function renderDayView(view) {
   view.innerHTML = `
     <div class="cal-day-view" style="--cal-hour-px:${MOBILE_CAL_HOUR_PX()};--cal-hours:${CAL_HOURS};">
       ${allDayItems.length ? `<div class="cal-week-allday-row">
-        <div class="cal-week-allday-spacer"></div>
+        <div class="cal-week-allday-spacer">全天</div>
         <div class="cal-week-allday-bars">
           ${allDayItems.map(_calAllDayPillHtml).join('')}
         </div>
       </div>` : ''}
       <div class="cal-week-body">
-        <div class="cal-week-gutter">${calHourLabelsHtml(CAL_HOURS)}</div>
+        <div class="cal-week-gutter">${calHourLabelsHtml(CAL_HOURS)}${isToday ? renderNowLabelHtml() : ''}</div>
         <div class="cal-week-cols">
           <div class="cal-week-col cal-day-col" data-day-ms="${dayStart}">
             ${calHourLinesHtml(CAL_HOURS)}
@@ -16913,6 +16929,7 @@ function renderDayView(view) {
         </div>
       </div>
     </div>`;
+  refreshCalBlockDensity(view.querySelector('.cal-day-view'));
   _bindCalBlocks(view);
   bindCalendarGestures(view);
   bindCalPinchZoom(view.querySelector('.cal-day-view'));
@@ -16931,10 +16948,10 @@ function renderWeekView(view) {
   for (let i = 0; i < 7; i++) {
     const d = days[i];
     const isToday = startOfDay(d).getTime() === today0;
-    head += `<div class="cal-week-day-head ${isToday?'today':''}" data-week-day-ms="${startOfDay(d).getTime()}">
+    head += `<button type="button" class="cal-week-day-head ${isToday?'today':''}" data-week-day-ms="${startOfDay(d).getTime()}" aria-label="${d.getMonth()+1}月${d.getDate()}日，查看日程" ${isToday ? 'aria-current="date"' : ''}>
       <span class="cal-week-dow">${'一二三四五六日'[i]}</span>
       <span class="cal-week-num">${d.getDate()}</span>
-    </div>`;
+    </button>`;
   }
   head += `</div>`;
 
@@ -16974,10 +16991,10 @@ function renderWeekView(view) {
     }
   }
   const allDayHtml = allDayPerDay.some(a => a.length) ? `<div class="cal-week-allday-row">
-    <div class="cal-week-allday-spacer"></div>
-    ${allDayPerDay.map(items => `<div class="cal-week-allday-cell">
+    <div class="cal-week-allday-spacer">全天</div>
+    ${allDayPerDay.map((items, i) => `<div class="cal-week-allday-cell">
       ${items.slice(0, 3).map(_calAllDayPillHtml).join('')}
-      ${items.length > 3 ? `<div class="cal-allday-more">+${items.length - 3}</div>` : ''}
+      ${items.length > 3 ? `<button class="cal-allday-more" data-week-day-ms="${startOfDay(days[i]).getTime()}" aria-label="查看当天全部全天日程">+${items.length - 3}</button>` : ''}
     </div>`).join('')}
   </div>` : '';
 
@@ -17000,7 +17017,7 @@ function renderWeekView(view) {
       ${head}
       ${allDayHtml}
       <div class="cal-week-body">
-        <div class="cal-week-gutter">${calHourLabelsHtml(CAL_HOURS)}</div>
+        <div class="cal-week-gutter">${calHourLabelsHtml(CAL_HOURS)}${days.some(d => startOfDay(d).getTime() === today0) ? renderNowLabelHtml() : ''}</div>
         <div class="cal-week-cols">${colsHtml}</div>
       </div>
     </div>`;
@@ -17010,20 +17027,24 @@ function renderWeekView(view) {
     ui.calMode = 'day';
     saveUI(); renderAll();
   }));
+  refreshCalBlockDensity(view.querySelector('.cal-week'));
   _bindCalBlocks(view);
   bindCalendarGestures(view);
   bindCalPinchZoom(view.querySelector('.cal-week'));
   bindCalGridDragCreate(view.querySelector('.cal-week'));
-  // 滚到 8:00 或当前小时(如果今天在本周内)
-  const todayInWeek = days.some(d => startOfDay(d).getTime() === today0);
-  _calApplyScrollMemo(view, todayInWeek ? Math.max(0, new Date().getHours() - 1) : 8);
+  // 首次查看一周从 8 点开始；完整 24 小时可滚动，用户滚动位置仍会保留。
+
+  _calApplyScrollMemo(view, 8);
 }
 
+function renderNowLabelHtml() {
+  const now = new Date(), minutes = now.getHours()*60+now.getMinutes();
+  return `<span class="cal-now-label" style="--now-min:${minutes}">${pad(now.getHours())}:${pad(now.getMinutes())}</span>`;
+}
 function renderNowLineHtml() {
   const now = new Date();
   const minNow = now.getHours() * 60 + now.getMinutes();
-  const label = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-  return `<div class="cal-now-line" style="--now-min:${minNow};"><span class="cal-now-label">${label}</span></div>`;
+  return `<div class="cal-now-line" style="--now-min:${minNow};"></div>`;
 }
 
 function bindCalendarGestures(el) {
@@ -17077,6 +17098,16 @@ function openLedgerViewSwitcher() {
   ], { side: 'left' });
 }
 
+function openCalendarDensityMenu() {
+  showPopover([{ sectionTitle: '时间轴密度 · 也可双指缩放' }, ...[
+    ['紧凑', 32], ['标准', 48], ['宽松', 72]
+  ].map(([label, px]) => ({ label, toggle: true, stateText: MOBILE_CAL_HOUR_PX() === px ? '已选' : '', action: () => {
+    const body = $('view').querySelector('.cal-week-body');
+    const hour = body ? body.scrollTop / MOBILE_CAL_HOUR_PX() : 8;
+    setMobileCalHourPx(px); _calScrollMemo.set(_calScrollKey(), hour * px);
+    closePopover(); renderAll();
+  } }))]);
+}
 function openCalendarMoreMenu() {
   const s = state.settings;
   const showDone   = s.calShowDone      !== false;
@@ -17105,6 +17136,7 @@ function openCalendarMoreMenu() {
     { numberInput: true, label: '专注合并间隔', icon: 'ico-clock', value: mergeGap, min: 0, max: 240, step: 1, unit: '分钟',
       onChange: (v) => { s.calMergeGapMin = Math.max(0, Math.min(240, v)); pushState(); renderAll(); } },
     { divider: true },
+    ...(ui.calMode !== 'month' ? [{ label: '时间轴密度', icon: 'ico-clock', stateText: MOBILE_CAL_HOUR_PX() <= 36 ? '紧凑' : MOBILE_CAL_HOUR_PX() <= 56 ? '标准' : '宽松', action: () => { closePopover(); openCalendarDensityMenu(); } }] : []),
     { label: '回到今日', icon: 'ico-today', action: () => {
       ui.calCursor = Date.now();
       ui.calSelectedDay = startOfDay(new Date()).getTime();
@@ -19595,7 +19627,9 @@ function bindGlobalEvents() {
   });
   // 第二个右上按钮 — 项目 tab:点击直接切换列表/相册视图(无菜单)
   $('topbar-right-btn2').addEventListener('click', () => {
-    if (ui.tab === 'works') {
+    if (ui.tab === 'calendar') {
+      if (ui.calSideOpen) closeCalSideDrawer(); else openCalSideDrawer();
+    } else if (ui.tab === 'works') {
       setWorksUiPref({ view: worksState.view === 'gallery' ? 'list' : 'gallery' });
     }
   });

@@ -8639,6 +8639,9 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   --cal-now-size: 9px;
   --cal-planned-tint: 56%;
   --cal-session-tint: 22%;
+  --cal-panel-radius: var(--radius);
+  --cal-ink-dark: #000000;
+  --cal-ink-light: #FFFFFF;
 }
 .is-calendar .topbar { gap: 0; padding-left: 12px; padding-right: 12px; }
 .is-calendar #topbar-left-btn { flex: 0 0 64px; justify-content: flex-start; }
@@ -8668,11 +8671,11 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .is-calendar .cal-day-view .cal-week-allday-row { grid-template-columns: var(--cal-gutter) minmax(0, 1fr); }
 .is-calendar .cal-week-allday-spacer { font-size: var(--cal-meta-size); color: var(--text-dim); text-align: center; padding-top: 8px; }
 .is-calendar .cal-week-allday-cell, .is-calendar .cal-week-allday-bars { min-width: 0; padding: 4px 2px; background: var(--bg-panel); border-left: 1px solid var(--border-soft); border-bottom: 1px solid var(--border); }
-.is-calendar .cal-week-allday-spacer + div { border-top-left-radius: var(--radius-sm); border-left: 0; }
-.is-calendar .cal-week-allday-row > :last-child { border-top-right-radius: var(--radius-sm); }
-.is-calendar .cal-allday-pill { background: color-mix(in srgb, var(--block-color) 32%, var(--bg-panel)); color: var(--text-strong); border: 0; border-radius: var(--radius-xs); font-size: var(--cal-title-size); line-height: 16px; padding: 1px 3px; }
+.is-calendar .cal-week-allday-spacer + div { border-top-left-radius: var(--cal-panel-radius); border-left: 0; }
+.is-calendar .cal-week-allday-row > :last-child { border-top-right-radius: var(--cal-panel-radius); }
+.is-calendar .cal-allday-pill { background: color-mix(in srgb, var(--block-color) 32%, var(--bg-panel)); color: var(--cal-block-ink, var(--text-strong)); border: 0; border-radius: var(--radius-xs); font-size: var(--cal-title-size); line-height: 16px; padding: 1px 3px; }
 .is-calendar .cal-allday-more { font-size: var(--cal-meta-size); min-height: 24px; color: var(--text-dim); }
-.is-calendar .cal-week-body { overscroll-behavior: contain; scrollbar-width: none; border-radius: 0 0 var(--radius-sm) 0; }
+.is-calendar .cal-week-body { overscroll-behavior: contain; scrollbar-width: none; height: 100%; border-radius: 0; }
 .is-calendar .cal-week-body::-webkit-scrollbar { display: none; }
 .is-calendar .cal-week-gutter { width: var(--cal-gutter); }
 .is-calendar .cal-week-gutter, .is-calendar .cal-week-cols { height: calc(var(--cal-hours) * var(--cal-hour-px) * 1px + 64px); }
@@ -8690,10 +8693,10 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   padding: 2px; border-radius: var(--radius-xs); font-size: var(--cal-title-size); line-height: 14px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--block-color) 12%, transparent); }
 .is-calendar .cal-block-task, .is-calendar .cal-block-event, .is-calendar .cal-block-task.plan-scheduled {
   background: color-mix(in srgb, var(--block-color) var(--cal-planned-tint), var(--bg-panel)) !important;
-  color: var(--text-strong) !important;
+  color: var(--cal-block-ink, var(--text-strong)) !important;
   border: 0;
 }
-.is-calendar .cal-block-session { background: color-mix(in srgb, var(--block-color) var(--cal-session-tint), var(--bg-panel)); color: var(--text-strong); border: 0; box-shadow: inset 2px 0 var(--block-color); opacity: 1; }
+.is-calendar .cal-block-session { background: color-mix(in srgb, var(--block-color) var(--cal-session-tint), var(--bg-panel)); color: var(--cal-block-ink, var(--text-strong)); border: 0; box-shadow: inset 2px 0 var(--block-color); opacity: 1; }
 .is-calendar .cal-block-title, .is-calendar .cal-task-title, .is-calendar .cal-block-task.plan-scheduled .cal-task-title {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -8701,17 +8704,18 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   white-space: normal;
   overflow: hidden;
   overflow-wrap: anywhere;
-  color: var(--text-strong);
+  color: var(--cal-block-ink, var(--text-strong));
   font-weight: 400;
   line-height: 13px;
 }
 .is-calendar .cal-week .cal-task-check { display: none; }
 .is-calendar .cal-week .cal-task-row { display: block; }
 .is-calendar .cal-task-sub { display: none; }
-.is-calendar .cal-block-time, .is-calendar .cal-task-meta, .is-calendar .cal-block-dur, .is-calendar .cal-block-task.plan-scheduled .cal-task-meta { display: none; margin-top: 2px; font-size: var(--cal-meta-size); color: var(--text); opacity: 1; line-height: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.is-calendar .cal-block-time, .is-calendar .cal-task-meta, .is-calendar .cal-block-dur, .is-calendar .cal-block-task.plan-scheduled .cal-task-meta { display: none; margin-top: 2px; font-size: var(--cal-meta-size); color: var(--cal-block-meta, var(--text)); opacity: 1; line-height: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .is-calendar .cal-block-task.cal-has-meta.plan-scheduled .cal-task-meta, .is-calendar .cal-has-meta .cal-block-time, .is-calendar .cal-has-meta .cal-task-meta, .is-calendar .cal-has-meta .cal-block-dur { display: block; }
 .is-calendar .cal-block-task.task-done { background: color-mix(in srgb, var(--block-color) 18%, var(--bg-panel)) !important; }
-.is-calendar .cal-block-task.task-done .cal-task-title { opacity: 1; color: var(--text-dim); }
+.is-calendar .cal-block-task.task-done .cal-task-title { opacity: 1; color: var(--cal-block-meta, var(--text-dim)); }
+.is-calendar .cal-block.done, .is-calendar .cal-allday-pill.done { opacity: 1; }
 .is-calendar .cal-day-view .cal-task-check { border-color: var(--text-dim); }
 .is-calendar .cal-day-view .cal-task-check.checked { background: var(--text-strong); border-color: var(--text-strong); }
 .is-calendar .cal-day-view .cal-task-check.checked::after { color: var(--bg-panel); }
@@ -8726,3 +8730,28 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 :root[data-theme="dark"] .app.is-calendar { --cal-planned-tint: 28%; --cal-session-tint: 18%; }
 :root[data-theme="dark"] .is-calendar .cal-week-day-head.today .cal-week-num { color: var(--text-strong); }
 :root[data-theme="dark"] .is-calendar .cal-now-line, :root[data-theme="dark"] .is-calendar .cal-now-line::before { background: var(--text-dim); }
+
+/* Mask the visible white grid, while leaving its gray time gutter untouched.
+   Rounding only .cal-week-cols rounds the end of 24 hours, not the current viewport. */
+.is-calendar .cal-time-viewport {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  --cal-corner-circle: radial-gradient(circle closest-side, #000 99%, transparent 100%);
+  --cal-corner-size: calc(var(--cal-panel-radius) * 2);
+  --cal-viewport-mask:
+    linear-gradient(#000 0 0) left top / var(--cal-gutter) 100% no-repeat,
+    linear-gradient(#000 0 0) left calc(var(--cal-gutter) + var(--cal-panel-radius)) top / calc(100% - var(--cal-gutter) - var(--cal-corner-size)) 100% no-repeat,
+    linear-gradient(#000 0 0) right center / calc(100% - var(--cal-gutter)) calc(100% - var(--cal-corner-size)) no-repeat,
+    var(--cal-corner-circle) left var(--cal-gutter) top / var(--cal-corner-size) var(--cal-corner-size) no-repeat,
+    var(--cal-corner-circle) right top / var(--cal-corner-size) var(--cal-corner-size) no-repeat,
+    var(--cal-corner-circle) left var(--cal-gutter) bottom / var(--cal-corner-size) var(--cal-corner-size) no-repeat,
+    var(--cal-corner-circle) right bottom / var(--cal-corner-size) var(--cal-corner-size) no-repeat,
+    linear-gradient(#000 0 0) right top / calc(100% - var(--cal-gutter)) var(--cal-top-fill, 0px) no-repeat;
+  -webkit-mask: var(--cal-viewport-mask);
+  mask: var(--cal-viewport-mask);
+}
+.is-calendar :is(.cal-week,.cal-day-view):has(.cal-week-allday-row) .cal-time-viewport {
+  /* With all-day entries, the top corners belong to that fixed row. */
+  --cal-top-fill: var(--cal-panel-radius);
+}

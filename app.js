@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20261005-1558';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20261005-1644';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20261005-1558';
+const _PSFOCUS_BUILD = '20261005-1644';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -16382,6 +16382,42 @@ function _calEdgeAutoScroll(bodyEl, clientY) {
 // 双指捏合缩放时间轴(mobile-only)— 直接改 host 上的 --cal-hour-px,
 // 块/线/标签都用此变量算位置,自动 reflow,无需重渲染
 // Keep whole text lines as cards resize, instead of clipping a half line at low zoom.
+// Use the actual painted card color so custom palettes and both themes remain readable.
+function refreshCalBlockColors(host) {
+  if (!host) return;
+  const canvas=document.createElement('canvas'); canvas.width=canvas.height=1;
+  const ctx=canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return;
+  const read=color=>{
+    ctx.clearRect(0,0,1,1); ctx.fillStyle=color; ctx.fillRect(0,0,1,1);
+    return Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3);
+  };
+  const luminance=rgb=>rgb.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+  const contrast=(a,b)=>{const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
+  const theme=getComputedStyle($('app'));
+  const dark=read(theme.getPropertyValue('--cal-ink-dark').trim());
+  const light=read(theme.getPropertyValue('--cal-ink-light').trim());
+  const entries=Array.from(host.querySelectorAll('.cal-block,.cal-allday-pill')).map(el=>[el,getComputedStyle(el).backgroundColor]);
+  const cache=new Map();
+  for (const [el,color] of entries) {
+    let inks=cache.get(color);
+    if (!inks) {
+      const bg=read(color),base=contrast(bg,dark)>=contrast(bg,light)?dark:light;
+      const ink=(start,target)=>{
+        let rgb;
+        for(let weight=start;weight<=1.0001;weight=Math.min(1,weight+.02)) {
+          rgb=bg.map((v,i)=>Math.round(v*(1-weight)+base[i]*weight));
+          if(contrast(bg,rgb)>=target || weight===1) break;
+        }
+        return 'rgb('+rgb.join(',')+')';
+      };
+      inks=[ink(.82,5.5),ink(.64,4.5)];cache.set(color,inks);
+    }
+    el.style.setProperty('--cal-block-ink',inks[0]);
+    el.style.setProperty('--cal-block-meta',inks[1]);
+  }
+}
+
 function refreshCalBlockDensity(host) {
   if (!host) return;
   const hourPx = Number(host.style.getPropertyValue('--cal-hour-px')) || MOBILE_CAL_HOUR_PX();
@@ -16916,7 +16952,7 @@ function renderDayView(view) {
           ${allDayItems.map(_calAllDayPillHtml).join('')}
         </div>
       </div>` : ''}
-      <div class="cal-week-body">
+      <div class="cal-time-viewport"><div class="cal-week-body">
         <div class="cal-week-gutter">${calHourLabelsHtml(CAL_HOURS)}${isToday ? renderNowLabelHtml() : ''}</div>
         <div class="cal-week-cols">
           <div class="cal-week-col cal-day-col" data-day-ms="${dayStart}">
@@ -16928,8 +16964,10 @@ function renderDayView(view) {
           </div>
         </div>
       </div>
+      </div>
     </div>`;
   refreshCalBlockDensity(view.querySelector('.cal-day-view'));
+  refreshCalBlockColors(view);
   _bindCalBlocks(view);
   bindCalendarGestures(view);
   bindCalPinchZoom(view.querySelector('.cal-day-view'));
@@ -17016,9 +17054,10 @@ function renderWeekView(view) {
     <div class="cal-week" style="--cal-hour-px:${MOBILE_CAL_HOUR_PX()};--cal-hours:${CAL_HOURS};">
       ${head}
       ${allDayHtml}
-      <div class="cal-week-body">
+      <div class="cal-time-viewport"><div class="cal-week-body">
         <div class="cal-week-gutter">${calHourLabelsHtml(CAL_HOURS)}${days.some(d => startOfDay(d).getTime() === today0) ? renderNowLabelHtml() : ''}</div>
         <div class="cal-week-cols">${colsHtml}</div>
+      </div>
       </div>
     </div>`;
   // 周视图日格点击 → 切到日视图当天
@@ -17028,6 +17067,7 @@ function renderWeekView(view) {
     saveUI(); renderAll();
   }));
   refreshCalBlockDensity(view.querySelector('.cal-week'));
+  refreshCalBlockColors(view);
   _bindCalBlocks(view);
   bindCalendarGestures(view);
   bindCalPinchZoom(view.querySelector('.cal-week'));

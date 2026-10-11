@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20261005-2307';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20261011-1646';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20261005-2307';
+const _PSFOCUS_BUILD = '20261011-1646';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12306,6 +12306,7 @@ function openEventDetail(id) {
       ${schedHtml}
       <button class="dp-add-sched-btn" id="ev-add-sched"><span class="ico-plus"></span> 加时间</button>
     </div>
+    <div class="dp-merged-tags">${(ev.tags || []).map(tg => '<span class="dp-tag-chip"><button class="tag-chip-label" data-replace-event-tag="' + esc(tg) + '" title="替换标签">' + esc(tg) + '</button><button class="dp-tag-chip-x" data-remove-event-tag="' + esc(tg) + '" title="移除">×</button></span>').join('')}</div>
     <button id="ev-delete" style="margin-top:22px;width:100%;padding:11px;border:1px solid var(--danger,#d54141);border-radius:10px;background:transparent;color:var(--danger,#d54141);font-size:14px;">删除事件</button>
     <div style="margin-top:12px;color:var(--text-dim);font-size:11.5px;text-align:center;">颜色 / 项目归属等更多设置请在桌面端编辑</div>
   </div>`;
@@ -12362,6 +12363,17 @@ function openEventDetail(id) {
     else ev.schedules = ev.schedules.filter(s => s.id !== sid);
     _syncLegacy();
     pushState(); openEventDetail(id); renderAll();
+  });
+  body.querySelectorAll('[data-replace-event-tag]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    _showTagReplacement(b, b.dataset.replaceEventTag, next => {
+      ev.tags = [...new Set((ev.tags || []).map(tg => tg === b.dataset.replaceEventTag ? next : tg))];
+      ev.updatedAt = Date.now(); pushState(); openEventDetail(id); renderAll();
+    });
+  });
+  body.querySelectorAll('[data-remove-event-tag]').forEach(b => b.onclick = e => {
+    e.stopPropagation(); ev.tags = (ev.tags || []).filter(tg => tg !== b.dataset.removeEventTag);
+    ev.updatedAt = Date.now(); pushState(); openEventDetail(id); renderAll();
   });
   const delBtn = body.querySelector('#ev-delete');
   if (delBtn) delBtn.onclick = () => {
@@ -12575,7 +12587,7 @@ function _openTaskDetailInner(id, opts) {
     const c = colorOfTag(tg);
     // bg 15→24%, 不要 border (没了之后 chip 跟 sheet 反差也清楚, 比双层细描更耐看 Kayu 2026-05-28)
     return `<span class="dp-tag-chip" style="background:color-mix(in srgb,${esc(c)} 24%,transparent);color:${esc(c)};">
-      <span>${esc(tg)}</span>
+      <button class="tag-chip-label" data-replace-task-tag="${esc(tg)}" title="替换标签">${esc(tg)}</button>
       <button class="dp-tag-chip-x" data-action="dp-remove-tag" data-tag="${esc(tg)}" title="移除">×</button>
     </span>`;
   }).join('');
@@ -13076,6 +13088,15 @@ function bindTaskDetailEvents(body, id) {
   }
 
   // 标签 chip × 删除(只此一个入口,合并 UI 后不再有 input 加标签 — 改在 note 里输 #xxx)
+  body.querySelectorAll('[data-replace-task-tag]').forEach(b => b.onclick = e => {
+    e.stopPropagation(); _flushTaskDetailInputs();
+    _showTagReplacement(b, b.dataset.replaceTaskTag, next => {
+      const task = state.tasks.find(x => x.id === id);
+      if (!task) return;
+      task.tags = [...new Set((task.tags || []).map(tg => tg === b.dataset.replaceTaskTag ? next : tg))];
+      task.updatedAt = Date.now(); pushState(); openTaskDetail(id); renderAll();
+    });
+  });
   body.querySelectorAll('[data-action="dp-remove-tag"]').forEach(b => b.onclick = (ev) => {
     ev.stopPropagation();
     const tg = b.dataset.tag;
@@ -14308,7 +14329,30 @@ function showPopover(items, opts) {
     });
   }
 }
-function closePopover() { $('popover').classList.add('hidden');const menu=$('popover-body');if(menu.dataset.foodMenu){delete menu.dataset.foodMenu;menu.removeAttribute('role');menu.removeAttribute('aria-label');menu.onkeydown=null;document.querySelector('.topbar-food-switch')?.setAttribute('aria-expanded','false');} }
+function _showTagReplacement(anchor, current, onPick) {
+  const names = _planCollectAllTags();
+  showPopover(names.map(name => ({
+    label: name === current ? name + ' · 当前' : name, disabled: name === current,
+    iconHtml: '<span class="tag-replace-dot" style="background:' + esc(colorOfTag(name)) + '"></span>',
+    action: () => { closePopover(); onPick(name); },
+  })), {anchor});
+  const body = $('popover-body');
+  body.classList.add('tag-replace-menu');
+  body.setAttribute('aria-label', '替换标签');
+  const search = document.createElement('input');
+  search.className = 'tag-replace-search'; search.placeholder = '搜索标签';
+  search.setAttribute('aria-label', '搜索标签');
+  body.prepend(search);
+  search.oninput = () => body.querySelectorAll('[data-i]').forEach(el => {
+    el.hidden = !names[+el.dataset.i].toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase());
+  });
+  search.onkeydown = e => {
+    if (e.isComposing) return;
+    if (e.key === 'Escape') { e.stopPropagation(); closePopover(); anchor.focus(); }
+  };
+  // Keep the mobile keyboard closed until the user actually chooses to search.
+}
+function closePopover() { $('popover-body').classList.remove('tag-replace-menu'); $('popover').classList.add('hidden');const menu=$('popover-body');if(menu.dataset.foodMenu){delete menu.dataset.foodMenu;menu.removeAttribute('role');menu.removeAttribute('aria-label');menu.onkeydown=null;document.querySelector('.topbar-food-switch')?.setAttribute('aria-expanded','false');} }
 
 // =========================================================
 // ===== 左抽屉(清单导航)=====
@@ -17409,7 +17453,7 @@ function openEditDayTemplateSheet(tplId) {
       const tagChipsHtml = pickedTags.map(tg => {
         const c = colorOfTag(tg);
         return `<span class="dp-tag-chip" style="background:color-mix(in srgb,${esc(c)} 24%,transparent);color:${esc(c)};">
-          <span>${esc(tg)}</span>
+          <button class="tag-chip-label" data-replace-block-tag="${esc(tg)}" title="替换标签">${esc(tg)}</button>
           <button class="dp-tag-chip-x" data-remove-block-tag="${esc(tg)}" title="移除">×</button>
         </span>`;
       }).join('');
@@ -17587,6 +17631,15 @@ function openEditDayTemplateSheet(tplId) {
       pushState();
       addTagInp.value = '';
       rerender();
+    });
+    body.querySelectorAll('[data-replace-block-tag]').forEach(el => el.onclick = ev => {
+      ev.stopPropagation();
+      _showTagReplacement(el, el.dataset.replaceBlockTag, next => {
+        const b = tpl.blocks.find(x => x.id === ed.pickedBlockId);
+        if (!b) return;
+        b.tags = [...new Set((b.tags || []).map(t => t === el.dataset.replaceBlockTag ? next : t))];
+        b.updatedAt = Date.now(); pushState(); rerender();
+      });
     });
     body.querySelectorAll('[data-remove-block-tag]').forEach(el => el.onclick = (ev) => {
       ev.stopPropagation();

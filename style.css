@@ -8761,3 +8761,24 @@ body.cal-block-editing .sheet-body { touch-action: none; }
   /* With all-day entries, the top corners belong to that fixed row. */
   --cal-top-fill: var(--cal-panel-radius);
 }
+
+/* A tag's label edits its value; its separate x keeps the remove action. */
+.tag-chip-label { font: inherit; color: inherit; background: none; border: 0; padding: 2px 1px; cursor: pointer; min-width: 0; text-align: left; overflow-wrap: anywhere; border-radius: var(--radius-xs, 4px); }
+.tag-chip-label:hover { background: var(--bg-hover); }
+.tag-chip-label:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.tag-replace-menu { width: 224px; max-width: calc(100vw - 16px); box-sizing: border-box; color: var(--text); }
+.tag-replace-heading { padding: 6px 10px; font-size: var(--fs-small, 12px); color: var(--text-dim); }
+.tag-replace-search { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm, 6px); font: inherit; color: var(--text); background: var(--bg-input, var(--bg-panel)); margin-bottom: 4px; }
+.tag-replace-options { max-height: min(230px, calc(100vh - 110px)); overflow-y: auto; overscroll-behavior: contain; }
+.tag-replace-menu .dash-popup-item { width: 100%; border: 0; background: none; color: var(--text); font: inherit; text-align: left; }
+.tag-replace-menu .dash-popup-item:hover { background: var(--bg-hover); }
+.tag-replace-dot { display: inline-block; width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; }
+.tag-replace-current { margin-left: auto; font-size: var(--fs-small, 12px); color: var(--text-dim); }
+
+.popover-body.tag-replace-menu { max-height: min(360px, calc(100dvh - 100px)); overflow-y: auto; overscroll-behavior: contain; }
+.tag-replace-menu [hidden] { display: none; }
+.tag-replace-menu .popover-item { min-height: 44px; }
+.tag-replace-search { font-size: 16px; }
+.dp-tag-chip .tag-chip-label { min-height: 28px; }
+
+.tag-replace-search:focus-visible { outline: 1px solid var(--accent-text); outline-offset: 1px; }

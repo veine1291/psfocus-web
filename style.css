@@ -7277,8 +7277,7 @@ body.canvas-open { overflow: hidden; }
 }
 .cal-block-handle:active::after { transform: scale(1.12); }
 
-/* 编辑期间锁住 sheet 滚动(防误滚)— cal 内部仍可由 autoScroll 主动滚 */
-body.cal-block-editing .sheet-body { touch-action: none; }
+/* 仅任务块拖拽拦截 touchmove，抽屉保留原生文字选择与滚动。 */
 
 /* ============ 项目(作品)tab ============ */
 .works-wrap { padding-bottom: 24px; }
@@ -8782,3 +8781,41 @@ body.cal-block-editing .sheet-body { touch-action: none; }
 .dp-tag-chip .tag-chip-label { min-height: 28px; }
 
 .tag-replace-search:focus-visible { outline: 1px solid var(--accent-text); outline-offset: 1px; }
+
+/* 手机日历与时间编辑：标题完整显示，副标题留在顶栏内部。 */
+.is-calendar .topbar:has(.topbar-subtitle:not(:empty)) { height: calc(var(--safe-top) + 72px); }
+.is-calendar .topbar-subtitle { line-height: 16px; flex: 0 0 auto; }
+.is-calendar .cal-week-day-head { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.td-detail-wrap textarea.td-title { display: block; flex: 0 0 auto; box-sizing: border-box; width: 100%; min-height: 40px; max-height: none; resize: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+#sheet input[type="text"], #sheet textarea, #sheet [contenteditable] { -webkit-user-select: text; user-select: text; touch-action: auto; }
+.sa-sheet { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.sa-tab.active { color: var(--accent-text); }
+.sa-summary-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
+.sa-summary-card { min-width: 0; padding: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; text-align: left; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--bg-section); }
+.sa-summary-card > span { font-size: 12px; color: var(--text-dim); }
+.sa-summary-card strong { font-size: 15px; line-height: 1.4; font-weight: 600; color: var(--accent-text); }
+.sa-summary-card small { font-size: 11px; line-height: 1.4; color: var(--text-dim); }
+.sa-summary-card.active { border-color: var(--accent); background: var(--bg-active); }
+.sa-summary-card:disabled { opacity: .65; }
+.sa-time-editor { border-radius: var(--radius); padding: 10px 12px; background: var(--bg-section); }
+.sa-time-parts { display: flex; gap: 4px; padding: 3px; background: var(--bg-page); border-radius: var(--radius-sm); }
+.sa-time-parts button { flex: 1; min-height: 36px; color: var(--text-dim); border-radius: var(--radius-sm); font-size: 13px; }
+.sa-time-parts button.active { background: var(--bg-panel); color: var(--accent-text); box-shadow: var(--shadow-sm); }
+.sa-time-values { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 12px 0; }
+.sa-time-values label { min-width: 0; }
+.sa-time-values select { width: 100%; min-width: 0; min-height: 52px; padding: 8px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-panel); color: var(--text-strong); font: inherit; font-size: 22px; font-variant-numeric: tabular-nums; }
+.sa-duration-presets { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
+.sa-duration-presets button { padding: 8px 2px; min-height: 36px; border-radius: var(--radius-sm); border: 1px solid var(--border-soft); color: var(--text-dim); background: var(--bg-panel); font-size: 12px; white-space: nowrap; }
+.sa-duration-presets button.active { color: var(--accent-text); border-color: var(--accent); background: var(--bg-active); }
+.sa-date-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--text-dim); }
+.sa-date-value { flex: 1; text-align: right; }
+.sa-date-value, .sa-edit-date { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; color: var(--accent-text); font-size: 13px; }
+.sa-edit-date { width: 100%; margin-top: 4px; }
+.sa-date-value .ico-chevron-down, .sa-edit-date .ico-chevron-down { width: 12px; height: 12px; flex-shrink: 0; }
+.sa-range-summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); color: var(--text-dim); font-size: 11px; line-height: 1.7; font-variant-numeric: tabular-nums; }
+.sa-time-error { color: var(--danger); font-size: 12px; line-height: 1.5; }
+.sa-time-error:empty { display: none; }
+.sa-time-error:not(:empty) { margin-top: 6px; }
+.sa-sheet button:focus-visible, .sa-sheet select:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
+#sheet.schedule-time-sheet .sheet-body { max-height: calc(100svh - var(--safe-top) - 12px); }

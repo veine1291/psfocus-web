@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20261028-0925';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20261029-0549';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20261028-0925';
+const _PSFOCUS_BUILD = '20261029-0549';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12652,7 +12652,7 @@ function _openTaskDetailInner(id, opts) {
       ${focusedHtml}
 
       <!-- 大标题 -->
-      <input type="text" class="td-title dp-title-input ${checked ? 'done' : ''}" value="${esc(t.title || '')}" />
+      <textarea rows="1" class="td-title dp-title-input ${checked ? 'done' : ''}" aria-label="任务名称">${esc(t.title || '')}</textarea>
 
       <!-- 描述 -->
       <textarea class="td-note dp-note-input" rows="2">${esc(t.note || '')}</textarea>
@@ -12805,7 +12805,7 @@ function bindSubDragSortM(body, taskId) {
     if (e.touches.length !== 1) return;
     const li = e.target.closest && e.target.closest('li.dp-sub');
     if (!li) return;
-    if (e.target.closest('.dp-sub-check, .dp-sub-del')) return;   // 勾选 / 删除按钮不参与拖拽
+    if (e.target.closest('.dp-sub-check, .dp-sub-del, input, textarea, select, [contenteditable]')) return; // 文字选择留给系统，行空白处仍可长按排序
     const t = e.touches[0];
     startX = t.clientX; startY = baseY = t.clientY; moved = false;
     clearTimeout(timer);
@@ -12893,11 +12893,22 @@ function bindTaskDetailEvents(body, id) {
   // 标题
   const titleEl = body.querySelector('.dp-title-input');
   if (titleEl) {
+    const fitTitle = () => { titleEl.style.height = 'auto'; titleEl.style.height = titleEl.scrollHeight + 'px'; };
+    fitTitle();
+    titleEl.addEventListener('input', fitTitle);
+    // 抽屉拉伸或设备旋转时宽度会变，长标题仍应完整展开。
+    let titleWidth = titleEl.clientWidth;
+    body._taskTitleResizeCleanup?.();
+    const resizeTitle = new ResizeObserver(() => {
+      if (titleEl.clientWidth !== titleWidth) { titleWidth = titleEl.clientWidth; fitTitle(); }
+    });
+    resizeTitle.observe(titleEl);
+    body._taskTitleResizeCleanup = () => { resizeTitle.disconnect(); body._taskTitleResizeCleanup = null; };
     titleEl.addEventListener('blur', () => {
       const v = titleEl.value.trim();
       if (v && v !== t.title) { t.title = v; pushState(); renderAll(); }
     });
-    titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') titleEl.blur(); });
+    titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); titleEl.blur(); } });
   }
 
   // 大勾选 — 重复任务切 nextPending occurrence,非重复切全局
@@ -13396,6 +13407,7 @@ let _sheetOnClose = null;
 function showSheet(html, onMountOrOpts) {
   if(_sheetOnClose){const close=_sheetOnClose;_sheetOnClose=null;close();}
   const sheet = $('sheet'), body = $('sheet-body');
+  body._taskTitleResizeCleanup?.();
   body.classList.remove('td-detail-wrap');   // 别把任务详情的「藏把手」样式带给别的抽屉
   body.innerHTML = html;
   body.style.transform = '';
@@ -13424,6 +13436,7 @@ function closeSheet() {
   if(_sheetOnClose){const close=_sheetOnClose;_sheetOnClose=null;close();}
   _calRemoveDragPlaceholderM();
   const body = $('sheet-body');
+  body._taskTitleResizeCleanup?.();
   body.style.transform = '';
   body.style.transition = '';
   // 清掉拉高留下的内联高度 —— 否则会串到下一个打开的 sheet(通用 sheet 各有自己的高度预期)
@@ -15744,12 +15757,13 @@ function expandItemOccurrencesInDay(item, dayStart, dayEnd) {
     if (repeat === 'none') {
       pushOcc(s.start);
     } else {
-      // 计算该天对应的 origStart 时刻(同 anchor 的小时:分)
+      // 也展开此前开始但延续到今天的周期，跨午夜不能丢掉第二天的一截。
       const anchorD = new Date(s.start);
-      const dayD = new Date(dayStart);
-      const occ = new Date(dayStart);
-      occ.setHours(anchorD.getHours(), anchorD.getMinutes(), 0, 0);
-      if (occ.getTime() >= s.start) {
+      const firstDay = Math.max(startOfDay(anchorD).getTime(), startOfDay(new Date(dayStart - dur)).getTime());
+      for (let dayD = new Date(firstDay); dayD.getTime() < dayEnd; dayD = addDays(dayD, 1)) {
+        const occ = new Date(dayD);
+        occ.setHours(anchorD.getHours(), anchorD.getMinutes(), 0, 0);
+        if (occ.getTime() < s.start) continue;
         const dow = dayD.getDay();
         let hit;
         if (repeat === 'daily')   hit = true;
@@ -15759,7 +15773,7 @@ function expandItemOccurrencesInDay(item, dayStart, dayEnd) {
         else if (repeat === 'every-n-days') {
           const n = Math.max(1, Math.min(365, parseInt(s.repeatN, 10) || 2));
           const anchorDay = startOfDay(new Date(s.start)).getTime();
-          const diff = Math.round((dayStart - anchorDay) / 86400000);
+          const diff = Math.round((dayD.getTime() - anchorDay) / 86400000);
           hit = (diff >= 0) && (diff % n === 0);
         }
         else if (repeat === 'weekdays') {
@@ -16263,7 +16277,7 @@ function calBlockHtml(d, dayStartMs) {
     const animCls = _animateDoneIds.has(d.taskId) ? ' just-done-anim' : '';
     // 已安排任务保留类别标记，手机端使用清晰文字配项目染色背景。
     const planCls = !d.done ? ' plan-scheduled' : '';
-    return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}${planCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} role="button" tabindex="0" aria-label="${readableLabel}" style="${styleVars}">
+    return `<div class="cal-block cal-block-task ${compact?'compact':''}${d.done?' task-done':''}${animCls}${planCls}" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr} data-orig-start="${d.origStart}" data-orig-end="${d.origEnd}" role="button" tabindex="0" aria-label="${readableLabel}" style="${styleVars}">
       <div class="cal-task-row">
         <span class="cal-task-check ${d.done?'checked':''}" data-action="cal-task-toggle" data-task-id="${esc(d.taskId)}" ${sidAttr} ${occAttr}></span>
         <div class="cal-task-title">${esc(d.title)}</div>
@@ -16807,18 +16821,17 @@ function openSessionDetailSheet(seedId, origStart, origEnd) {
 let _calBlockEditing = null;          // { el, taskId, scheduleId, occStart, dayMs }
 let _calBlockEditDocBound = false;
 
-function _exitBlockEdit(commit) {
+function _exitBlockEdit(commit, redraw = true) {
   if (!_calBlockEditing) return;
   const { el, taskId, scheduleId, occStart } = _calBlockEditing;
-  // 跨日拖动: dayMs 在 touchmove 里可能被换成当前 col 的 dayMs
-  const dayMs = _calBlockEditing.dayMs;
-  if (commit) {
+  // 日格只显示完整时间段的一截，不能拿午夜处的裁切坐标覆盖原始时间。
+  const edit = _calBlockEditing;
+  const changed = edit.start !== edit.originalStart || edit.end !== edit.originalEnd;
+  if (commit && changed) {
     const t = state.tasks.find(x => x.id === taskId);
     if (t) {
-      const newTop = parseFloat(el.style.getPropertyValue('--top-min')) || 0;
-      const newH = parseFloat(el.style.getPropertyValue('--height-min')) || 30;
-      const newStart = dayMs + Math.round(newTop) * 60000;
-      const newEnd = dayMs + Math.round(newTop + newH) * 60000;
+      const newStart = edit.start;
+      const newEnd = edit.end;
       const sched = scheduleId ? (t.schedules || []).find(s => s.id === scheduleId)
                   : ((t.schedules || [])[0]);
       const isRecurring = sched && sched.repeat && sched.repeat !== 'none';
@@ -16835,11 +16848,12 @@ function _exitBlockEdit(commit) {
         sched.end = newEnd;
         sched.allDay = false;
         sched.kind = 'range';
-        // 同步 legacy
-        t.start = newStart;
-        t.end = newEnd;
-        t.allDay = false;
-        t.dueAt = newStart;
+        // legacy 始终镜像第一段；编辑第二段不能改写第一段的镜像。
+        const first = t.schedules[0];
+        t.start = first.start;
+        t.end = first.end;
+        t.allDay = !!first.allDay;
+        t.dueAt = first.start;
         t.updatedAt = Date.now();
         pushState();
       }
@@ -16851,7 +16865,7 @@ function _exitBlockEdit(commit) {
   document.body.classList.remove('cal-block-editing');
   el.style.transform = '';   // 清掉跨日拖动的 translateX
   _calBlockEditing = null;
-  if (commit) renderAll();
+  if (redraw && changed) renderAll();
 }
 
 function bindCalBlockEdit(view) {
@@ -16881,6 +16895,12 @@ function bindCalBlockEdit(view) {
     let touchMoved = false;
     let dragMode = null;       // 'move' | 'resize-top' | 'resize-bottom'
     let startTop = 0, startH = 0, startY = 0;
+    let gestureStart = 0, gestureEnd = 0, gestureDay = 0;
+    const snapshotGesture = () => {
+      gestureStart = _calBlockEditing.start;
+      gestureEnd = _calBlockEditing.end;
+      gestureDay = _calBlockEditing.dayMs;
+    };
     const SNAP = 15;
     const LONG_PRESS_MS = 320;
     const FALLBACK_LONG_PRESS_MS = 260;  // touchend 时若 duration > 这个值也算长按
@@ -16907,23 +16927,29 @@ function bindCalBlockEdit(view) {
     };
     const enterEditMode = () => {
       if (_calBlockEditing && _calBlockEditing.el === el) return;
-      if (_calBlockEditing && _calBlockEditing.el !== el) _exitBlockEdit(true);
-      if (!el.querySelector('.cal-block-handle.top')) {
+      if (_calBlockEditing && _calBlockEditing.el !== el) _exitBlockEdit(true, false);
+      const col = el.closest('.cal-week-col');
+      const dayMs = col ? +col.dataset.dayMs : 0;
+      const visible = readVars();
+      const fullStart = Number(el.dataset.origStart) || dayMs + visible.top * 60000;
+      const fullEnd = Number(el.dataset.origEnd) || dayMs + (visible.top + visible.h) * 60000;
+      // 续接处不是任务真正的端点，不给它拉伸手柄。
+      if (fullStart >= dayMs && !el.querySelector('.cal-block-handle.top')) {
         el.insertAdjacentHTML('afterbegin', '<span class="cal-block-handle top"></span>');
       }
-      if (!el.querySelector('.cal-block-handle.bottom')) {
+      if (fullEnd <= dayMs + 86400000 && !el.querySelector('.cal-block-handle.bottom')) {
         el.insertAdjacentHTML('beforeend', '<span class="cal-block-handle bottom"></span>');
       }
       el.classList.add('editing');
       document.body.classList.add('cal-block-editing');
-      const col = el.closest('.cal-week-col');
-      const dayMs = col ? +col.dataset.dayMs : 0;
       _calBlockEditing = {
         el,
         taskId: el.dataset.taskId,
         scheduleId: el.dataset.scheduleId || null,
         occStart: el.dataset.occurrenceStart != null ? +el.dataset.occurrenceStart : null,
-        dayMs,
+        dayMs, origDayMs: dayMs,
+        originalStart: fullStart, originalEnd: fullEnd,
+        start: fullStart, end: fullEnd,
       };
       try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
     };
@@ -16940,6 +16966,7 @@ function bindCalBlockEdit(view) {
         dragMode = handle ? (handle.classList.contains('top') ? 'resize-top' : 'resize-bottom') : 'move';
         const cur = readVars();
         startTop = cur.top; startH = cur.h; startY = t.clientY;
+        snapshotGesture();
         e.stopPropagation();
         return;
       }
@@ -16952,6 +16979,7 @@ function bindCalBlockEdit(view) {
         dragMode = 'move';
         const cur = readVars();
         startTop = cur.top; startH = cur.h; startY = pressY;
+        snapshotGesture();
       }, LONG_PRESS_MS);
     }, { passive: true });
 
@@ -16969,7 +16997,7 @@ function bindCalBlockEdit(view) {
         const dy = t.clientY - startY;
         const dMin = (dy / HOUR_PX()) * 60;
         if (dragMode === 'move') {
-          let nt = snap(startTop + dMin);
+          let nt = startTop + snap(dMin);
           nt = Math.max(0, Math.min(24 * 60 - startH, nt));
           setVars(nt, startH);
           // 跨日拖动 (仅 move; resize 不允许跨日, start>end 没意义) — 用 elementFromPoint 找当前 col
@@ -16992,15 +17020,26 @@ function bindCalBlockEdit(view) {
             }
           }
         } else if (dragMode === 'resize-top') {
-          let nt = snap(startTop + dMin);
+          let nt = startTop + snap(dMin);
           let nh = startH - (nt - startTop);
           if (nh < SNAP) { nt = startTop + startH - SNAP; nh = SNAP; }
           if (nt < 0) { nh += nt; nt = 0; }
           setVars(nt, nh);
         } else {
-          let nh = snap(startH + dMin);
+          let nh = startH + snap(dMin);
           nh = Math.max(SNAP, Math.min(24 * 60 - startTop, nh));
           setVars(startTop, nh);
+        }
+        const current = readVars();
+        const edit = _calBlockEditing;
+        if (dragMode === 'move') {
+          const delta = edit.dayMs - gestureDay + (current.top - startTop) * 60000;
+          edit.start = gestureStart + delta;
+          edit.end = gestureEnd + delta;
+        } else if (dragMode === 'resize-top') {
+          edit.start = gestureStart + (current.top - startTop) * 60000;
+        } else {
+          edit.end = gestureEnd + (current.h - startH) * 60000;
         }
         autoScroll(t.clientY);
       }
@@ -17021,6 +17060,13 @@ function bindCalBlockEdit(view) {
     });
     el.addEventListener('touchcancel', () => {
       if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+      if (dragMode && _calBlockEditing?.el === el) {
+        Object.assign(_calBlockEditing, { start: gestureStart, end: gestureEnd, dayMs: gestureDay });
+        setVars(startTop, startH);
+        const col = el.closest('.cal-week-col');
+        const dx = (gestureDay - _calBlockEditing.origDayMs) / 86400000 * (col?.getBoundingClientRect().width || 0);
+        el.style.transform = dx ? `translateX(${dx}px)` : '';
+      }
       dragMode = null;
     });
     // 阻止 iOS 长按弹系统选择/Look Up 菜单
@@ -19532,55 +19578,63 @@ function openQuickTimePickerSheet(currentSched, onSave) {
   let repeatN  = currentSched && currentSched.repeatN ? +currentSched.repeatN : 2;
   let weekdays = Array.isArray(currentSched && currentSched.weekdays) ? currentSched.weekdays.slice() : null;
 
-  function _dtLocalValue(ts) {
-    const d = new Date(ts);
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-  function _dateOnlyValue(ts) {
-    const d = new Date(ts);
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  let panel = 'time';
+  let timePart = mode === 'range' ? 'duration' : 'start';
+  let savedTimedRange = null;
+  const minutes = () => Math.max(1, Math.round((end - start) / 60000));
+  const clockText = ts => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const dateText = ts => { const d = new Date(ts); return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 周${'日一二三四五六'[d.getDay()]}`; };
+  const durationText = () => {
+    if (allDay) return `共 ${Math.max(1, Math.round((startOfDay(new Date(end)) - startOfDay(new Date(start))) / 86400000) + 1)} 天`;
+    const m = minutes(), h = Math.floor(m / 60);
+    return `共 ${h ? h + ' 小时' : ''}${m % 60 ? (h ? ' ' : '') + m % 60 + ' 分钟' : ''}`;
+  };
+  const options = (max, value, suffix) => Array.from({length: max + 1}, (_, n) => `<option value="${n}" ${n === value ? 'selected' : ''}>${n} ${suffix}</option>`).join('');
+  function timeFields() {
+    const range = mode === 'range';
+    const differentDay = tsToDateInput(start) !== tsToDateInput(end);
+    const duration = timePart === 'duration';
+    const selected = new Date(timePart === 'end' ? end : start);
+    const h = duration ? Math.floor(minutes() / 60) : selected.getHours();
+    const m = duration ? minutes() % 60 : selected.getMinutes();
+    return `<div class="sa-summary-grid">
+      <button type="button" class="sa-summary-card ${panel === 'date' ? 'active' : ''}" data-sa-panel="date" aria-expanded="${panel === 'date'}">
+        <span>日期</span><strong>${new Date(start).getMonth()+1}月${new Date(start).getDate()}日 周${'日一二三四五六'[new Date(start).getDay()]}</strong>
+        <small>${range && differentDay ? '至 ' + dateText(end) : new Date(start).getFullYear() + ' 年'}</small>
+      </button>
+      <button type="button" class="sa-summary-card ${panel === 'time' ? 'active' : ''}" data-sa-panel="time" aria-expanded="${panel === 'time'}" ${allDay ? 'disabled' : ''}>
+        <span>时间</span><strong>${allDay ? '全天' : clockText(start) + (range ? ' – ' + clockText(end) : '')}</strong>
+        <small>${range ? durationText() : '指定时间'}</small>
+      </button>
+    </div>
+    <div class="sa-time-editor">
+      ${panel === 'date' || allDay ? ['start', ...(range ? ['end'] : [])].map(part => `<div class="sa-date-row"><span>${part === 'start' ? '开始日期' : '结束日期'}</span><button type="button" class="sa-date-value" data-sa-date="${part}">${dateText(part === 'end' ? end : start)}<span class="ico-chevron-down" aria-hidden="true"></span></button></div>`).join('') : `
+        ${range ? `<div class="sa-time-parts" aria-label="调整时间">${[['start','开始'],['end','结束'],['duration','时长']].map(([part,label]) => `<button type="button" data-sa-part="${part}" class="${timePart === part ? 'active' : ''}" aria-pressed="${timePart === part}">${label}</button>`).join('')}</div>` : ''}
+        ${!duration ? `<button type="button" class="sa-edit-date" data-sa-date="${timePart}">${dateText(timePart === 'end' ? end : start)}<span class="ico-chevron-down" aria-hidden="true"></span></button>` : ''}
+        <div class="sa-time-values">
+          <label><select id="sa-hours" aria-label="${duration ? '时长小时' : '小时'}">${options(duration ? Math.max(168,h) : 23,h,duration ? '小时' : '时')}</select></label>
+          <label><select id="sa-minutes" aria-label="${duration ? '时长分钟' : '分钟'}">${options(59,m,'分')}</select></label>
+        </div>
+        ${duration ? `<div class="sa-duration-presets">${[[30,'30 分钟'],[60,'1 小时'],[120,'2 小时'],[180,'3 小时']].map(([value,label]) => `<button type="button" data-sa-duration="${value}" class="${minutes() === value ? 'active' : ''}" aria-pressed="${minutes() === value}">${label}</button>`).join('')}</div>` : ''}
+      `}
+      <div class="sa-range-summary" role="status">${range ? `${dateText(start)} ${allDay ? '' : clockText(start)}<br>至 ${dateText(end)} ${allDay ? '' : clockText(end)} · ${durationText()}` : `${dateText(start)} ${allDay ? '全天' : clockText(start)}`}</div>
+      <div class="sa-time-error" role="alert"></div>
+    </div>`;
   }
 
   function _render() {
     const repeatOn   = repeat && repeat !== 'none';
     const reminderOn = reminderOffset != null;
-    const startVal = allDay ? _dateOnlyValue(start) : _dtLocalValue(start);
-    const endVal   = allDay ? _dateOnlyValue(end)   : _dtLocalValue(end);
     return `
       <div class="sheet-handle"></div>
       <div class="sa-sheet">
-        <div class="sa-title">加时间</div>
+        <div class="sa-title">${currentSched ? '编辑时间' : '设置时间'}</div>
         <div class="sa-tabs">
           <button class="sa-tab ${mode === 'date'  ? 'active' : ''}" data-sa-mode="date">日期</button>
           <button class="sa-tab ${mode === 'range' ? 'active' : ''}" data-sa-mode="range">时间段</button>
         </div>
         <div class="sa-body">
-          ${mode === 'date' ? `
-            <div class="sa-row">
-              <div class="sa-row-label">日期 / 时间</div>
-              <div class="sa-input-wrap">
-                <span class="ico-calendar sa-input-ico"></span>
-                <input type="${allDay ? 'date' : 'datetime-local'}" class="sa-input" id="sa-start" value="${esc(startVal)}">
-              </div>
-            </div>
-          ` : `
-            <div class="sa-range-row">
-              <div class="sa-row" style="flex:1;">
-                <div class="sa-row-label">开始</div>
-                <div class="sa-input-wrap">
-                  <span class="ico-calendar sa-input-ico"></span>
-                  <input type="${allDay ? 'date' : 'datetime-local'}" class="sa-input" id="sa-start" value="${esc(startVal)}">
-                </div>
-              </div>
-              <div class="sa-row" style="flex:1;">
-                <div class="sa-row-label">结束</div>
-                <div class="sa-input-wrap">
-                  <span class="ico-calendar sa-input-ico"></span>
-                  <input type="${allDay ? 'date' : 'datetime-local'}" class="sa-input" id="sa-end" value="${esc(endVal)}">
-                </div>
-              </div>
-            </div>
-          `}
+          ${timeFields()}
           <div class="sa-toggle-row">
             <span class="sa-toggle-label">全天</span>
             <label class="form-toggle"><input type="checkbox" id="sa-allday" ${allDay?'checked':''}><span></span></label>
@@ -19644,25 +19698,13 @@ function openQuickTimePickerSheet(currentSched, onSave) {
         </div>
         <div class="sa-actions">
           <button class="sa-btn sa-btn-cancel" data-action="cancel">取消</button>
-          <button class="sa-btn sa-btn-save" data-action="save">添加</button>
+          <button class="sa-btn sa-btn-save" data-action="save">完成</button>
         </div>
       </div>
     `;
   }
 
   function _readInputs(body) {
-    const startEl = body.querySelector('#sa-start');
-    const endEl   = body.querySelector('#sa-end');
-    if (startEl && startEl.value) {
-      start = allDay
-        ? combineDateAndTime(startEl.value, '')
-        : new Date(startEl.value).getTime();
-    }
-    if (endEl && endEl.value) {
-      end = allDay
-        ? combineDateAndTime(endEl.value, '')
-        : new Date(endEl.value).getTime();
-    }
     // 兜底读 sa-repeat-n: 用户在输入框里改了数字但 change 事件还没触发 (iOS Safari 偶发)
     // 就点了"保存", 会导致 repeatN 取旧值. _readInputs 在 save / rerender 都跑, 这里同步读最新
     const nEl = body.querySelector('#sa-repeat-n');
@@ -19684,15 +19726,63 @@ function openQuickTimePickerSheet(currentSched, onSave) {
     body.querySelectorAll('[data-sa-mode]').forEach(b => b.onclick = () => {
       _readInputs(body);
       mode = b.dataset.saMode;
+      timePart = mode === 'range' ? 'duration' : 'start';
       if (mode === 'range' && end <= start) end = start + 60 * 60000;
       _rerender();
     });
     const allDayEl = body.querySelector('#sa-allday');
     if (allDayEl) allDayEl.onchange = () => {
       _readInputs(body);
-      allDay = !!allDayEl.checked;
+      const next = !!allDayEl.checked;
+      if (next) {
+        savedTimedRange = {start, end};
+        start = startOfDay(new Date(start)).getTime();
+        end = startOfDay(new Date(end)).getTime();
+        panel = 'date';
+      } else {
+        if (savedTimedRange) {
+          const keepClock = (date, ts) => { const d = new Date(date), t = new Date(ts); d.setHours(t.getHours(), t.getMinutes(), 0, 0); return d.getTime(); };
+          start = keepClock(start, savedTimedRange.start);
+          end = keepClock(end, savedTimedRange.end);
+        }
+        if (end <= start) end = start + 60 * 60000;
+        panel = 'time';
+      }
+      allDay = next;
       _rerender();
     };
+    body.querySelectorAll('[data-sa-panel]').forEach(b => b.onclick = () => { panel = b.dataset.saPanel; _rerender(); });
+    body.querySelectorAll('[data-sa-part]').forEach(b => b.onclick = () => { timePart = b.dataset.saPart; _rerender(); });
+    body.querySelectorAll('[data-sa-date]').forEach(b => b.onclick = () => {
+      const part = b.dataset.saDate;
+      openDatePicker({anchorEl: b, current: part === 'end' ? end : start, onApply: ts => {
+        if (ts == null) return;
+        const d = new Date(ts), old = new Date(part === 'end' ? end : start);
+        d.setHours(allDay ? 0 : old.getHours(), allDay ? 0 : old.getMinutes(), 0, 0);
+        if (part === 'start') { const delta = d.getTime() - start; start += delta; end += delta; }
+        else end = d.getTime();
+        _rerender();
+      }});
+    });
+    const changeTime = () => {
+      const h = +body.querySelector('#sa-hours').value, m = +body.querySelector('#sa-minutes').value;
+      if (timePart === 'duration') end = start + Math.max(1, h * 60 + m) * 60000;
+      else {
+        const d = new Date(timePart === 'end' ? end : start);
+        d.setHours(h, m, 0, 0);
+        if (timePart === 'start') { const delta = d.getTime() - start; start += delta; end += delta; }
+        else {
+          end = d.getTime();
+          // 结束时刻早于起点表示跨夜，保留用户显式选过的其他结束日期。
+          if (end <= start && tsToDateInput(end) === tsToDateInput(start)) { d.setDate(d.getDate()+1); end = d.getTime(); }
+        }
+      }
+      _rerender();
+    };
+    body.querySelectorAll('#sa-hours, #sa-minutes').forEach(el => el.onchange = changeTime);
+    body.querySelectorAll('[data-sa-duration]').forEach(b => b.onclick = () => {
+      end = start + Number(b.dataset.saDuration) * 60000; _rerender();
+    });
     const repeatToggle = body.querySelector('#sa-repeat-toggle');
     if (repeatToggle) repeatToggle.onchange = () => {
       _readInputs(body);
@@ -19740,7 +19830,12 @@ function openQuickTimePickerSheet(currentSched, onSave) {
     };
     body.querySelector('[data-action="save"]').onclick = () => {
       _readInputs(body);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || (mode === 'range' && (allDay ? end < start : end <= start))) {
+        body.querySelector('.sa-time-error').textContent = '结束时间需要晚于开始时间，请调整结束日期或时长。';
+        return;
+      }
       const out = {
+        ...(currentSched || {}),
         // 'legacy' 是「从 t.start 合成的伪 schedule」哨兵,不许继承成真实 id ——
         // 两条都叫 legacy 时按 id 删除会连删多条(2026-07-20 #1 根源)
         id: (currentSched && currentSched.id && currentSched.id !== 'legacy')
@@ -19752,7 +19847,7 @@ function openQuickTimePickerSheet(currentSched, onSave) {
         repeat,
         reminderOffset,
       };
-      if (mode === 'range') out.end = end;
+      if (mode === 'range') out.end = end; else delete out.end;
       // 新增 2 种 repeat 的参数
       if (repeat === 'every-n-days') {
         out.repeatN = Math.max(1, Math.min(365, parseInt(repeatN, 10) || 2));
@@ -19767,13 +19862,21 @@ function openQuickTimePickerSheet(currentSched, onSave) {
     };
   }
 
-  showSheet(_render(), _bind);
+  showSheet(_render(), {
+    onMount: body => {
+      $('sheet').classList.remove('td-p1', 'td-p2');
+      $('sheet').classList.add('schedule-time-sheet');
+      body.style.height = ''; body.style.maxHeight = '';
+      _bind(body);
+    },
+    onClose: () => { closeSingleDatePicker?.(); $('sheet').classList.remove('schedule-time-sheet'); },
+  });
 }
 
 // 子任务 ↔ 检查事项 互转(2026-07-11 #7)— contextmenu(安卓长按触发;iOS Safari 无此事件)
 document.addEventListener('contextmenu', (e) => {
   const li = e.target.closest && e.target.closest('li.dp-sub[data-sub-id]');
-  if (!li) return;
+  if (!li || e.target.closest('input, textarea, select, [contenteditable]')) return;
   const sub = (state && state.tasks || []).find(x => x.id === li.dataset.subId);
   if (!sub || !sub.parentTaskId) return;
   e.preventDefault();

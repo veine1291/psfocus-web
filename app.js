@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20261011-1646';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20261028-0925';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20261011-1646';
+const _PSFOCUS_BUILD = '20261028-0925';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -13806,6 +13806,58 @@ function applyEventTemplate(tmpl, dayMs, opts) {
   return newEv;
 }
 
+// 多任务模板 —— 桌面端「日历框选多个任务块 → 储存为任务模板」产出的 kind='tasks'。
+// 结构与桌面 _applyMultiTaskTemplate 同模型:锚点 = 派生出的起点,payload.tasks[].startOffset 相对锚点。
+// 以前手机只认 task / event 两种 kind,桌面存的任务组在手机上永远列不出来(2026-10-28 修)。
+function applyMultiTaskTemplate(tmpl, dayMs, projectId, opts) {
+  const p = (tmpl && tmpl.payload) || {};
+  const rows = Array.isArray(p.tasks) ? p.tasks : [];
+  if (!rows.length) return [];
+  const anchor = _tmplDeriveStartEnd({ duration: 0 }, dayMs, opts || {}).start;
+  const created = [];
+  const sibs = state.tasks.filter(t => t.projectId === (projectId || null) && !t.parentTaskId && !t.parentEventId);
+  let order = sibs.length ? Math.max(...sibs.map(s => s.order || 0)) : 0;
+  for (const row of rows) {
+    const start  = anchor + (Number(row.startOffset) || 0);
+    const dur    = Number(row.duration);
+    const end    = (Number.isFinite(dur) && dur > 0) ? start + dur : start + 30 * 60000;
+    const allDay = !!row.allDay;
+    // 模板里记的项目仍存在就沿用,否则落到当前清单的项目
+    const pj = (row.projectId && (state.projects || []).some(pp => pp.id === row.projectId))
+      ? row.projectId : (projectId || null);
+    order += 100;
+    const t = {
+      id: genId('t'),
+      title: row.title || '新任务',
+      done: false, doneAt: null,
+      createdAt: Date.now(), updatedAt: Date.now(),
+      projectId: pj,
+      parentTaskId: null, parentEventId: null,
+      dueAt: start,
+      start,
+      end: allDay ? null : end,
+      allDay,
+      color: row.color || '',
+      tags: Array.isArray(row.tags) ? [...row.tags] : [],
+      subtasks: [], images: [], completedOccurrences: [],
+      kanbanColumn: null,
+      order,
+      schedules: [{
+        id: 'sl-' + Math.random().toString(36).slice(2, 10),
+        kind: allDay ? 'date' : 'range',
+        start,
+        end: allDay ? undefined : end,
+        allDay,
+        repeat: 'none',
+        reminderOffset: null,
+      }],
+    };
+    state.tasks.push(t);
+    created.push(t);
+  }
+  return created;
+}
+
 function openSaveTaskAsTemplateSheet(taskId) {
   const t = state.tasks.find(x => x.id === taskId);
   if (!t) return;
@@ -13842,16 +13894,22 @@ function openSaveTaskAsTemplateSheet(taskId) {
   });
 }
 
+// 手机端「从模板创建」是否可用 — task / event / tasks(桌面任务组) 都算
+function hasUsableTemplatesM() {
+  return (state.templates || []).some(t => t && (t.kind === 'task' || t.kind === 'event' || t.kind === 'tasks'));
+}
+
 function openCreateFromTemplatePicker(opts) {
-  // task / event 模板都能用来建任务(对齐桌面 cal-from-template 的混用)
+  // task / event / tasks(桌面存的"任务组") 三种都能用 —— 对齐桌面 cal-from-template 的口径
   opts = opts || {};
-  const all = (state.templates || []).filter(t => t.kind === 'task' || t.kind === 'event');
+  const all = (state.templates || []).filter(t => t && (t.kind === 'task' || t.kind === 'event' || t.kind === 'tasks'));
   if (!all.length) {
     showToast('还没有可用模板,在桌面端创建模板后会同步过来');
     closePopover();
     return;
   }
-  const tasks = all.filter(t => t.kind === 'task');
+  const tasks  = all.filter(t => t.kind === 'task');
+  const groups = all.filter(t => t.kind === 'tasks');
   const events = all.filter(t => t.kind === 'event');
   const items = [];
   const apply = (tmpl) => {
@@ -13863,12 +13921,18 @@ function openCreateFromTemplatePicker(opts) {
     const day = Number.isFinite(opts.startTs) ? null
       : (ui.tab === 'calendar' ? (ui.calSelectedDay || ui.calCursor) : Date.now());
     const tOpts = Number.isFinite(opts.startTs) ? { startTs: opts.startTs } : undefined;
-    // 按模板类型分派 —— 事件模板建事件、任务模板建任务(与桌面一致;以前全建成任务)
+    // 按模板类型分派 —— 事件建事件、任务建任务、任务组建一组任务(与桌面一致)
     if (tmpl.kind === 'event') {
       const newEv = applyEventTemplate(tmpl, day, tOpts);
       pushState();
       renderAll();
       showToast(`已新建事件「${newEv.title}」`);
+    } else if (tmpl.kind === 'tasks') {
+      const made = applyMultiTaskTemplate(tmpl, day, projectId, tOpts);
+      if (!made.length) { showToast('这个任务组模板是空的'); return; }
+      pushState();
+      renderAll();
+      showToast(`已新建 ${made.length} 个任务`);
     } else {
       const newTask = applyTaskTemplate(tmpl, day, projectId, tOpts);
       pushState();
@@ -13879,6 +13943,14 @@ function openCreateFromTemplatePicker(opts) {
   if (tasks.length) {
     items.push({ sectionTitle: '任务模板' });
     for (const tmpl of tasks) items.push({ label: tmpl.name || '未命名', icon: 'ico-template', action: () => apply(tmpl) });
+  }
+  if (groups.length) {
+    if (items.length) items.push({ divider: true });
+    items.push({ sectionTitle: '任务组模板' });
+    for (const tmpl of groups) {
+      const n = (tmpl.payload && Array.isArray(tmpl.payload.tasks)) ? tmpl.payload.tasks.length : 0;
+      items.push({ label: `${tmpl.name || '未命名'} · ${n} 个任务`, icon: 'ico-list', action: () => apply(tmpl) });
+    }
   }
   if (events.length) {
     if (items.length) items.push({ divider: true });
@@ -14164,7 +14236,7 @@ function openListMoreMenu() {
     items.push({ label: '当前清单不可编辑', disabled: true });
   }
   // 通用项:从模板创建(task / event 模板都能用)
-  if ((state.templates || []).some(t => t.kind === 'task' || t.kind === 'event')) {
+  if (hasUsableTemplatesM()) {
     items.push({ divider: true });
     items.push({ label: '从模板创建任务', icon: 'ico-template', action: () => { closePopover(); openCreateFromTemplatePicker(); } });
   }
@@ -18504,6 +18576,7 @@ function renderSettingsTemplates(view) {
   const all = state.templates || [];
   const groups = [
     { kind: 'task',    label: '任务模板', icon: 'ico-folder' },
+    { kind: 'tasks',   label: '多任务模板', icon: 'ico-list' },
     { kind: 'event',   label: '事件模板', icon: 'ico-calendar' },
     { kind: 'project', label: '项目模板', icon: 'ico-template' },
     { kind: 'note',    label: '笔记模板', icon: 'ico-pencil' },
@@ -18521,6 +18594,14 @@ function renderSettingsTemplates(view) {
         const note = (tmpl.payload && tmpl.payload.note) || '';
         const len = note.length;
         if (len) meta.push(`${len} 字`);
+      } else if (g.kind === 'tasks') {
+        // 多任务模板(桌面框选任务块存下来的):显示任务数 + 前几个标题
+        const arr = (tmpl.payload && Array.isArray(tmpl.payload.tasks)) ? tmpl.payload.tasks : [];
+        if (arr.length) {
+          meta.push(`${arr.length} 个任务`);
+          const titles = arr.slice(0, 3).map(x => (x && x.title) || '无标题').join(' / ');
+          if (titles) meta.push(titles);
+        }
       } else {
         const sub = tmpl.payload && Array.isArray(tmpl.payload.subtasks) ? tmpl.payload.subtasks.length : 0;
         const tagCnt = tmpl.payload && Array.isArray(tmpl.payload.tags) ? tmpl.payload.tags.length : 0;
@@ -18554,7 +18635,7 @@ function openTemplateEditSheet(id) {
     <div class="sheet-content">
       <div class="section-title" style="padding:0 0 6px;">编辑模板</div>
       <div class="form-row"><label>名称</label><input type="text" id="tmpl-edit-name" value="${esc(tmpl.name || '')}" maxlength="60"></div>
-      <div class="settings-hint" style="padding:8px 0 0;">类型:${tmpl.kind === 'task' ? '任务' : tmpl.kind === 'event' ? '事件' : tmpl.kind === 'note' ? '笔记' : '项目'} · 创建于 ${new Date(tmpl.createdAt || 0).toLocaleDateString('zh-CN')}</div>
+      <div class="settings-hint" style="padding:8px 0 0;">类型:${tmpl.kind === 'task' ? '任务' : tmpl.kind === 'tasks' ? '多任务' : tmpl.kind === 'event' ? '事件' : tmpl.kind === 'note' ? '笔记' : '项目'} · 创建于 ${new Date(tmpl.createdAt || 0).toLocaleDateString('zh-CN')}</div>
     </div>
     <div class="sheet-actions">
       <button data-action="delete" class="danger">删除</button>
@@ -19294,7 +19375,7 @@ function openCreateTaskSheet(opts) {
         closePopover();
         save({ thenOpenSub: true });
       }});
-      const hasUsable = (state.templates || []).some(t => t.kind === 'task' || t.kind === 'event');
+      const hasUsable = hasUsableTemplatesM();
       if (hasUsable) {
         menuItems.push({ label: '从模板创建', icon: 'ico-template', action: () => {
           closePopover();
@@ -19770,7 +19851,7 @@ function bindGlobalEvents() {
         if (ui.tab === 'summary' || ui.tab === 'ledger') return;   // 这些 tab 的 FAB 无长按动作
         longPressed = true;
         try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
-        if ((state.templates || []).some(t => t.kind === 'task' || t.kind === 'event')) {
+        if (hasUsableTemplatesM()) {
           openCreateFromTemplatePicker();
         } else {
           showToast('还没有可用模板,在桌面端创建后会同步过来');

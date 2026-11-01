@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20261102-0635';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20261102-0652';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20261102-0635';
+const _PSFOCUS_BUILD = '20261102-0652';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -10852,6 +10852,55 @@ function openConsumableEditSheet(existing) {
   if (!m.purchases.length) {
     m.purchases.push({ id: 'cp-' + Math.random().toString(36).slice(2, 10), dateStr: todayStr, qty: '1', price: '' });
   }
+  // 日期按钮点开的内联小月历:哪一行在选 / 当前翻到哪个月(和滴答风一致,单日、无时间)
+  let pickerRow = null;
+  let pickerMonth = null;
+
+  // 日期按钮文案 + 行内小月历(单日,无时间;替换掉原来的 <input type="date">)
+  const _pickDateLabel = (dateStr) => {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '选日期';
+    const diff = Math.round((startOfDay(d).getTime() - startOfDay(new Date()).getTime()) / 86400000);
+    const md = `${d.getMonth() + 1}/${d.getDate()}`;
+    if (diff === 0) return `今天 ${md}`;
+    if (diff === -1) return `昨天 ${md}`;
+    // 列很窄(1.3fr),同年只显示 M月D日,跨年才带年份
+    if (d.getFullYear() === new Date().getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`;
+    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+  };
+  const calendarInlineHtml = () => {
+    if (pickerRow == null) return '';
+    const curRaw = new Date(((m.purchases[pickerRow] || {}).dateStr) || Date.now());
+    const curTs = isNaN(curRaw.getTime()) ? null : startOfDay(curRaw).getTime();
+    const vm = pickerMonth || startOfMonth(isNaN(curRaw.getTime()) ? new Date() : curRaw);
+    const gridStart = startOfWeek(vm);
+    const today0 = startOfDay(new Date()).getTime();
+    let cells = '';
+    for (let k = 0; k < 42; k++) {
+      const d = addDays(gridStart, k);
+      const ts = startOfDay(d).getTime();
+      const cls = ['sa-cal-cell',
+        d.getMonth() === vm.getMonth() ? '' : 'out',
+        ts === today0 ? 'today' : '',
+        ts === curTs ? 'start' : '',
+      ].filter(Boolean).join(' ');
+      cells += `<button type="button" class="${cls}" data-pick-day="${ts}">${d.getDate()}</button>`;
+    }
+    return `<div class="cons-edit-cal"><div class="sa-cal">
+      <div class="sa-cal-head">
+        <button type="button" class="sa-cal-nav" data-pick-nav="-1" aria-label="上个月">‹</button>
+        <span class="sa-cal-title">${vm.getFullYear()} 年 ${vm.getMonth() + 1} 月</span>
+        <button type="button" class="sa-cal-nav" data-pick-nav="1" aria-label="下个月">›</button>
+      </div>
+      <div class="sa-cal-week">${'一二三四五六日'.split('').map(w => `<span>${w}</span>`).join('')}</div>
+      <div class="sa-cal-grid">${cells}</div>
+      <div class="sa-cal-quick">
+        <button type="button" data-pick-quick="today">今天</button>
+        <button type="button" data-pick-quick="yesterday">昨天</button>
+        <button type="button" data-pick-quick="tomorrow">明天</button>
+      </div>
+    </div></div>`;
+  };
 
   const renderBody = () => {
     const previewItem = {
@@ -10883,7 +10932,7 @@ function openConsumableEditSheet(existing) {
     // 只第一行可见 (其它行共享同一 unit 显示成只读小标签更清爽? 用 input 让任一行都能改)
     const rowsHtml = m.purchases.map((p, i) => `
       <div class="cons-edit-row" data-row-i="${i}">
-        <input type="date" class="cons-edit-date" data-field="dateStr" data-i="${i}" value="${esc(p.dateStr || '')}" />
+        <button type="button" class="cons-edit-date" data-pick-date="${i}">${esc(_pickDateLabel(p.dateStr))}</button>
         <input type="text" inputmode="decimal" class="cons-edit-qty" data-field="qty" data-i="${i}" value="${esc(p.qty)}" placeholder="1" />
         <input type="text" class="cons-edit-unit-inline" data-field="unit" value="${esc(m.unit)}" placeholder="单位" />
         <input type="text" inputmode="decimal" class="cons-edit-price" data-field="price" data-i="${i}" value="${esc(p.price)}" placeholder="总价" />
@@ -10906,6 +10955,7 @@ function openConsumableEditSheet(existing) {
           <span>日期</span><span>数量</span><span>单位</span><span>总价</span><span></span>
         </div>
         <div class="cons-edit-rows">${rowsHtml}</div>
+        ${calendarInlineHtml()}
         <button class="cons-edit-add-row">+ 加一笔购买</button>
         <div class="cons-edit-preview">${previewHtml}</div>
         ${m.isNew ? '' : '<button class="cons-edit-delete">删除消耗品</button>'}
@@ -10986,6 +11036,39 @@ function openConsumableEditSheet(existing) {
           refreshPreview();
         });
       });
+      // 日期按钮 → 行内小月历(单日;原来这里是原生 date input)
+      const setRowDate = (i, ts) => {
+        const d = new Date(ts);
+        m.purchases[i].dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        pickerRow = null;
+        rerender();
+      };
+      b.querySelectorAll('[data-pick-date]').forEach(btn => btn.addEventListener('click', () => {
+        syncFromDom(b);
+        const i = +btn.dataset.pickDate;
+        const wasSame = pickerRow === i;
+        const cur = new Date((m.purchases[i] || {}).dateStr || Date.now());
+        pickerMonth = isNaN(cur.getTime()) ? startOfMonth(new Date()) : startOfMonth(cur);
+        pickerRow = wasSame ? null : i;
+        rerender();
+      }));
+      b.querySelectorAll('[data-pick-nav]').forEach(btn => btn.addEventListener('click', () => {
+        syncFromDom(b);
+        pickerMonth = addMonths(pickerMonth || new Date(), parseInt(btn.dataset.pickNav, 10) || 0);
+        rerender();
+      }));
+      b.querySelectorAll('[data-pick-day]').forEach(btn => btn.addEventListener('click', () => {
+        syncFromDom(b);
+        if (pickerRow == null) return;
+        setRowDate(pickerRow, parseInt(btn.dataset.pickDay, 10));
+      }));
+      b.querySelectorAll('[data-pick-quick]').forEach(btn => btn.addEventListener('click', () => {
+        syncFromDom(b);
+        if (pickerRow == null) return;
+        const q = btn.dataset.pickQuick;
+        const off = q === 'yesterday' ? -1 : q === 'tomorrow' ? 1 : 0;
+        setRowDate(pickerRow, startOfDay(new Date()).getTime() + off * 86400000);
+      }));
       // 删某行
       b.querySelectorAll('[data-row-del]').forEach(btn => {
         btn.addEventListener('click', () => {

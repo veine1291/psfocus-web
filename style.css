@@ -8873,3 +8873,29 @@ body.canvas-open { overflow: hidden; }
 @keyframes m-done-check { to { stroke-dashoffset: 0; } }
 .m-done-out { animation: m-done-out .4s .08s ease-in forwards; }
 @keyframes m-done-out { to { opacity: 0; transform: translateX(8px); } }
+
+/* ===== 记账·消耗品购买日期(手机端内联月历,2026-11-02)===== */
+.cons-edit-date {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 6px;
+  font-size: 12.5px;
+  text-align: left;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cons-edit-date:active { border-color: var(--accent); }
+.cons-edit-cal {
+  margin: 8px 0 10px;
+  padding: 10px 8px 6px;
+  background: var(--bg-section);
+  border-radius: 12px;
+}
+.cons-edit-cal .sa-cal { margin: 0; }

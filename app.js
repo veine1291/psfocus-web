@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 const ENV_ID = 'psfocus-1921-d1g0x0og7e99d5502';
 const REGION = 'ap-shanghai';
 const COLLECTION = 'user_states';
-const _SDK_LOCAL = 'cloudbase.full.js?v=20261029-0549';
+const _SDK_LOCAL = 'cloudbase.full.js?v=20261102-0635';
 const _SDK_CDN = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
 let tcbApp, auth, db;
 
@@ -789,7 +789,7 @@ function mapAuthError(e) {
 }
 
 // 客户端构建版本(每次发新代码会改这个,Kayu 能在 sync-bar 看到当前版本号识别是否拿到最新)
-const _PSFOCUS_BUILD = '20261029-0549';
+const _PSFOCUS_BUILD = '20261102-0635';
 console.log('[PSFocus mobile] build', _PSFOCUS_BUILD);
 psLog('LOG', 'PSFOCUS_BUILD=' + _PSFOCUS_BUILD);
 
@@ -12121,8 +12121,37 @@ function toggleTaskDone(id) {
   const willBeDone = !t.done;
   t.done = !t.done;
   t.doneAt = t.done ? Date.now() : null;
-  if (willBeDone) { _markDoneAnim(id); _playCompletionSoundM(); }
-  pushState(); renderAll();
+  let storyPlayed = false;
+  if (willBeDone) {
+    _markDoneAnim(id);
+    _playCompletionSoundM();
+    // 滴答风完成动效:动画层挂 body,列表怎么重渲都不打断(和桌面同一套做法)
+    try {
+      const row = Array.from(document.querySelectorAll('[data-task-id]'))
+        .find(el => el.dataset.taskId === id && el.classList.contains('task-card'));
+      if (row) storyPlayed = _playDoneStoryM(row);
+    } catch (_) {}
+  }
+  pushState();
+  if (storyPlayed) setTimeout(renderAll, 420); else renderAll();
+}
+
+// 移动端完成故事:勾选框画弧 + 打勾 + 暖黄横扫(与桌面同语言,尺寸按手机行高)
+function _playDoneStoryM(rowEl) {
+  const r = rowEl.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  const host = document.createElement('div');
+  host.className = 'm-done-story';
+  host.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;`;
+  host.innerHTML = `<span class="m-done-sweep"></span>
+    <svg class="m-done-ring" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path class="m-done-check" d="M7.4 12.3l3.1 3.1 6.1-6.6"></path>
+    </svg>`;
+  document.body.appendChild(host);
+  rowEl.classList.add('m-done-out');
+  setTimeout(() => { try { host.remove(); } catch (_) {} }, 800);
+  return true;
 }
 
 // ----- 看板视图 -----
@@ -19581,6 +19610,43 @@ function openQuickTimePickerSheet(currentSched, onSave) {
   let panel = 'time';
   let timePart = mode === 'range' ? 'duration' : 'start';
   let savedTimedRange = null;
+  // 滴答风:日期面板直接给月历(不再跳到另一个日期 sheet),range 时点两下选起止
+  let viewMonth = startOfMonth(new Date(start));
+  let pickEnd = false;
+  function calendarHtml() {
+    const gridStart = startOfWeek(viewMonth);
+    const today0 = startOfDay(new Date()).getTime();
+    const startDay = startOfDay(new Date(start)).getTime();
+    const endDay = startOfDay(new Date(end)).getTime();
+    let cells = '';
+    for (let i = 0; i < 42; i++) {
+      const d = addDays(gridStart, i);
+      const ts = startOfDay(d).getTime();
+      const cls = ['sa-cal-cell',
+        d.getMonth() === viewMonth.getMonth() ? '' : 'out',
+        ts === today0 ? 'today' : '',
+        ts === startDay ? 'start' : '',
+        (mode === 'range' && ts === endDay) ? 'end' : '',
+        (mode === 'range' && ts > startDay && ts < endDay) ? 'in' : '',
+      ].filter(Boolean).join(' ');
+      cells += `<button type="button" class="${cls}" data-sa-day="${ts}">${d.getDate()}</button>`;
+    }
+    return `<div class="sa-cal">
+      <div class="sa-cal-head">
+        <button type="button" class="sa-cal-nav" data-sa-nav="-1" aria-label="上个月">‹</button>
+        <span class="sa-cal-title">${viewMonth.getFullYear()} 年 ${viewMonth.getMonth() + 1} 月</span>
+        <button type="button" class="sa-cal-nav" data-sa-nav="1" aria-label="下个月">›</button>
+      </div>
+      <div class="sa-cal-week">${'一二三四五六日'.split('').map(w => `<span>${w}</span>`).join('')}</div>
+      <div class="sa-cal-grid">${cells}</div>
+      <div class="sa-cal-quick">
+        <button type="button" data-sa-quick="today">今天</button>
+        <button type="button" data-sa-quick="tomorrow">明天</button>
+        <button type="button" data-sa-quick="weekend">本周六</button>
+        <button type="button" data-sa-quick="nextweek">下周一</button>
+      </div>
+    </div>`;
+  }
   const minutes = () => Math.max(1, Math.round((end - start) / 60000));
   const clockText = ts => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
   const dateText = ts => { const d = new Date(ts); return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 周${'日一二三四五六'[d.getDay()]}`; };
@@ -19608,7 +19674,7 @@ function openQuickTimePickerSheet(currentSched, onSave) {
       </button>
     </div>
     <div class="sa-time-editor">
-      ${panel === 'date' || allDay ? ['start', ...(range ? ['end'] : [])].map(part => `<div class="sa-date-row"><span>${part === 'start' ? '开始日期' : '结束日期'}</span><button type="button" class="sa-date-value" data-sa-date="${part}">${dateText(part === 'end' ? end : start)}<span class="ico-chevron-down" aria-hidden="true"></span></button></div>`).join('') : `
+      ${panel === 'date' || allDay ? `${calendarHtml()}${['start', ...(range ? ['end'] : [])].map(part => `<div class="sa-date-row"><span>${part === 'start' ? '开始日期' : '结束日期'}</span><button type="button" class="sa-date-value" data-sa-date="${part}">${dateText(part === 'end' ? end : start)}<span class="ico-chevron-down" aria-hidden="true"></span></button></div>`).join('')}` : `
         ${range ? `<div class="sa-time-parts" aria-label="调整时间">${[['start','开始'],['end','结束'],['duration','时长']].map(([part,label]) => `<button type="button" data-sa-part="${part}" class="${timePart === part ? 'active' : ''}" aria-pressed="${timePart === part}">${label}</button>`).join('')}</div>` : ''}
         ${!duration ? `<button type="button" class="sa-edit-date" data-sa-date="${timePart}">${dateText(timePart === 'end' ? end : start)}<span class="ico-chevron-down" aria-hidden="true"></span></button>` : ''}
         <div class="sa-time-values">
@@ -19752,6 +19818,54 @@ function openQuickTimePickerSheet(currentSched, onSave) {
       _rerender();
     };
     body.querySelectorAll('[data-sa-panel]').forEach(b => b.onclick = () => { panel = b.dataset.saPanel; _rerender(); });
+    // 月历:翻月 / 选日 / 快捷日
+    body.querySelectorAll('[data-sa-nav]').forEach(b => b.onclick = () => {
+      viewMonth = addMonths(viewMonth, parseInt(b.dataset.saNav, 10) || 0);
+      _rerender();
+    });
+    const _saSetDay = (dayTs) => {
+      const withDay = (ts, day) => {
+        const d = new Date(ts), base = new Date(day);
+        base.setHours(allDay ? 0 : d.getHours(), allDay ? 0 : d.getMinutes(), 0, 0);
+        return base.getTime();
+      };
+      if (mode === 'range' && pickEnd) {
+        const ns = withDay(start, dayTs);
+        let ne = withDay(end, dayTs);
+        if (ne <= ns) ne = ns + 60 * 60000;
+        start = ns; end = ne; pickEnd = false;
+      } else if (mode === 'range') {
+        const dur = Math.max(60 * 60000, end - start);
+        start = withDay(start, dayTs);
+        end = start + dur;
+        pickEnd = true;
+      } else {
+        const delta = withDay(start, dayTs) - start;
+        start += delta;
+        if (Number.isFinite(end)) end += delta;
+      }
+      viewMonth = startOfMonth(new Date(dayTs));
+      _rerender();
+    };
+    body.querySelectorAll('[data-sa-day]').forEach(b => b.onclick = () => {
+      _readInputs(body);
+      _saSetDay(parseInt(b.dataset.saDay, 10));
+    });
+    body.querySelectorAll('[data-sa-quick]').forEach(b => b.onclick = () => {
+      _readInputs(body);
+      const now = new Date();
+      const today0 = startOfDay(now).getTime();
+      let dayTs = today0;
+      const q = b.dataset.saQuick;
+      if (q === 'tomorrow') dayTs = addDays(new Date(today0), 1).getTime();
+      else if (q === 'weekend') {
+        const dow = (now.getDay() + 6) % 7;                        // 0=周一 … 5=周六
+        dayTs = addDays(new Date(today0), dow <= 5 ? (5 - dow) : 0).getTime();
+      } else if (q === 'nextweek') {
+        dayTs = addDays(startOfWeek(now), 7).getTime();
+      }
+      _saSetDay(dayTs);
+    });
     body.querySelectorAll('[data-sa-part]').forEach(b => b.onclick = () => { timePart = b.dataset.saPart; _rerender(); });
     body.querySelectorAll('[data-sa-date]').forEach(b => b.onclick = () => {
       const part = b.dataset.saDate;

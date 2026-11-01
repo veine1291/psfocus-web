@@ -8819,3 +8819,57 @@ body.canvas-open { overflow: hidden; }
 .sa-sheet button:focus-visible, .sa-sheet select:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 
 #sheet.schedule-time-sheet .sheet-body { max-height: calc(100svh - var(--safe-top) - 12px); }
+
+/* ===== 滴答风:日期面板内联月历(2026-11-02)===== */
+.sa-cal { margin: 2px 0 10px; }
+.sa-cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.sa-cal-title { flex: 1; text-align: center; font-size: 14px; font-weight: 600; color: var(--text); }
+.sa-cal-nav {
+  width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--text-dim); font-size: 18px; line-height: 1; cursor: pointer;
+}
+.sa-cal-nav:active { background: var(--bg-hover); }
+.sa-cal-week, .sa-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.sa-cal-week span { text-align: center; font-size: 11px; color: var(--text-mute); padding: 2px 0 4px; }
+.sa-cal-cell {
+  height: 36px; border: 0; background: transparent; border-radius: 8px;
+  font-size: 14px; color: var(--text); cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.sa-cal-cell.out { color: var(--text-mute); }
+.sa-cal-cell.today { color: var(--accent-text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--accent-soft); }
+.sa-cal-cell.in { background: var(--accent-soft); border-radius: 0; }
+.sa-cal-cell.start, .sa-cal-cell.end { background: var(--accent); color: var(--text-on-accent); font-weight: 600; }
+.sa-cal-quick { display: flex; gap: 6px; margin-top: 8px; }
+.sa-cal-quick button {
+  flex: 1; border: 1px solid var(--border-soft); background: transparent; border-radius: 999px;
+  padding: 6px 0; font-size: 12px; color: var(--text-dim); cursor: pointer;
+}
+.sa-cal-quick button:active { border-color: var(--accent); color: var(--accent-text); }
+
+/* ===== 滴答风完成动效(手机端,2026-11-02)===== */
+.m-done-story { position: fixed; pointer-events: none; z-index: 9997; overflow: hidden; border-radius: 12px; }
+.m-done-sweep {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 0;
+  background: linear-gradient(90deg, rgba(245,158,11,.28), rgba(245,158,11,.06));
+  animation: m-done-sweep .34s cubic-bezier(.2,.8,.3,1) forwards;
+}
+@keyframes m-done-sweep { from { width: 0; opacity: .95; } to { width: 100%; opacity: 0; } }
+.m-done-ring {
+  position: absolute; left: 8px; top: 50%; width: 22px; height: 22px;
+  transform: translateY(-50%) rotate(-90deg); overflow: visible;
+}
+.m-done-ring circle {
+  fill: none; stroke: var(--success, #22A55D); stroke-width: 2.6; stroke-linecap: round;
+  stroke-dasharray: 57; stroke-dashoffset: 57;
+  animation: m-done-ring .34s cubic-bezier(.4,.2,.2,1) forwards;
+}
+@keyframes m-done-ring { to { stroke-dashoffset: 0; } }
+.m-done-check {
+  fill: none; stroke: var(--success, #22A55D); stroke-width: 2.4;
+  stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 20; stroke-dashoffset: 20;
+  animation: m-done-check .2s .16s ease-out forwards;
+}
+@keyframes m-done-check { to { stroke-dashoffset: 0; } }
+.m-done-out { animation: m-done-out .4s .08s ease-in forwards; }
+@keyframes m-done-out { to { opacity: 0; transform: translateX(8px); } }
